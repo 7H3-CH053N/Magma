@@ -20,7 +20,10 @@ use std::path::Path;
 #[serde(rename_all = "camelCase")]
 pub struct LinkCandidate {
     pub path: String,
+    /// Display title (first heading of the note).
     pub title: String,
+    /// The `[[wikilink]]` target to use when linking this note (filename stem).
+    pub name: String,
     /// Relevance score in [0,1]; higher is more related.
     pub score: f32,
     pub snippet: String,
@@ -56,6 +59,7 @@ pub fn find_link_candidates(
         let score = overlap as f32 / query_terms.len() as f32;
         scored.push(LinkCandidate {
             snippet: first_line(&content),
+            name: crate::links::note_name(&note.path).to_string(),
             path: note.path,
             title: note.title,
             score,
@@ -86,8 +90,12 @@ pub struct LinkCheck {
 /// leaving a dead link.
 pub fn validate_links(vault: &Path, content: &str) -> std::io::Result<LinkCheck> {
     let notes = vault::list_notes(vault)?;
-    let titles: Vec<String> = notes.iter().map(|n| n.title.clone()).collect();
-    let lower: HashSet<String> = titles.iter().map(|t| t.to_lowercase()).collect();
+    // Wikilinks target the note name (filename stem), matching Obsidian.
+    let names: Vec<String> = notes
+        .iter()
+        .map(|n| crate::links::note_name(&n.path).to_string())
+        .collect();
+    let lower: HashSet<String> = names.iter().map(|t| t.to_lowercase()).collect();
 
     let mut resolved = Vec::new();
     let mut broken = Vec::new();
@@ -96,7 +104,7 @@ pub fn validate_links(vault: &Path, content: &str) -> std::io::Result<LinkCheck>
             resolved.push(target);
         } else {
             broken.push(BrokenLink {
-                suggestions: closest_titles(&target, &titles, 3),
+                suggestions: closest_titles(&target, &names, 3),
                 target,
             });
         }
@@ -280,11 +288,12 @@ mod tests {
     #[test]
     fn candidates_rank_by_shared_terms() {
         let v = tmp_vault();
-        vault::write_note(&v, "Sourdough.md", "baking bread with wild yeast starter").unwrap();
-        vault::write_note(&v, "Taxes.md", "quarterly filing deadlines").unwrap();
+        vault::write_note(&v, "Sourdough.md", "# Sourdough\n\nbaking bread with wild yeast starter").unwrap();
+        vault::write_note(&v, "Taxes.md", "# Taxes\n\nquarterly filing deadlines").unwrap();
         let c = find_link_candidates(&v, "notes about baking bread yeast", 5).unwrap();
         assert!(!c.is_empty());
         assert_eq!(c[0].title, "Sourdough");
+        assert_eq!(c[0].name, "Sourdough");
         fs::remove_dir_all(&v).ok();
     }
 

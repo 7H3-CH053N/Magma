@@ -48,7 +48,7 @@ fn collect(root: &Path, dir: &Path, out: &mut Vec<NoteMeta>) -> std::io::Result<
             let content = fs::read_to_string(&path).unwrap_or_default();
             out.push(NoteMeta {
                 path: rel_path(root, &path),
-                title: title_of(&path),
+                title: title_of(&path, &content),
                 ai_authored: is_ai_authored(&content),
             });
         }
@@ -61,7 +61,7 @@ pub fn read_note(vault: &Path, rel: &str) -> std::io::Result<Note> {
     let content = fs::read_to_string(&full)?;
     Ok(Note {
         path: rel.to_string(),
-        title: title_of(&full),
+        title: title_of(&full, &content),
         ai_authored: is_ai_authored(&content),
         content,
     })
@@ -82,10 +82,44 @@ fn rel_path(root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
-fn title_of(path: &Path) -> String {
+/// A note's display title: the first heading (or first line of text) in the
+/// content — like Bear/Obsidian — falling back to the filename stem. This is
+/// why typing a title inside the note names it in the sidebar.
+fn title_of(path: &Path, content: &str) -> String {
+    if let Some(t) = title_from_content(content) {
+        return t;
+    }
     path.file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "Untitled".to_string())
+}
+
+fn title_from_content(content: &str) -> Option<String> {
+    let mut lines = content.lines().peekable();
+    // Skip a leading YAML frontmatter block.
+    if lines.peek().map(|l| l.trim_end()) == Some("---") {
+        lines.next();
+        for l in lines.by_ref() {
+            if l.trim_end() == "---" {
+                break;
+            }
+        }
+    }
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // Strip leading heading markers and list/quote markers.
+        let title = trimmed
+            .trim_start_matches('#')
+            .trim_start_matches(['>', '-', '*'])
+            .trim();
+        if !title.is_empty() {
+            return Some(title.chars().take(120).collect());
+        }
+    }
+    None
 }
 
 /// Detect an `author: ai` line inside a leading YAML frontmatter block.
@@ -221,8 +255,24 @@ mod tests {
     }
 
     #[test]
-    fn title_comes_from_stem() {
-        assert_eq!(title_of(Path::new("/v/ideas/second brain.md")), "second brain");
+    fn title_falls_back_to_stem() {
+        assert_eq!(title_of(Path::new("/v/ideas/second brain.md"), ""), "second brain");
+    }
+
+    #[test]
+    fn title_prefers_heading() {
+        assert_eq!(title_of(Path::new("/v/Untitled.md"), "# My Idea\n\nbody"), "My Idea");
+    }
+
+    #[test]
+    fn title_uses_first_text_line() {
+        assert_eq!(title_of(Path::new("/v/Untitled.md"), "just some text\nmore"), "just some text");
+    }
+
+    #[test]
+    fn title_skips_frontmatter() {
+        let md = "---\nauthor: ai\n---\n\n# Real Title\n\nbody";
+        assert_eq!(title_from_content(md), Some("Real Title".to_string()));
     }
 
     #[test]

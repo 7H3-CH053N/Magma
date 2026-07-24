@@ -67,7 +67,7 @@ pub struct Graph {
 /// links (to notes that don't exist yet) are dropped from the graph.
 pub fn build_graph(vault: &Path) -> std::io::Result<Graph> {
     let notes = vault::list_notes(vault)?;
-    let by_title = title_index(&notes);
+    let by_name = name_index(&notes);
 
     let mut degree: HashMap<String, usize> = HashMap::new();
     let mut edges = Vec::new();
@@ -75,7 +75,7 @@ pub fn build_graph(vault: &Path) -> std::io::Result<Graph> {
     for note in &notes {
         let content = std::fs::read_to_string(vault.join(&note.path)).unwrap_or_default();
         for target in extract_links(&content) {
-            if let Some(dest) = by_title.get(&target.to_lowercase()) {
+            if let Some(dest) = by_name.get(&target.to_lowercase()) {
                 if *dest == note.path {
                     continue; // ignore self-links
                 }
@@ -105,7 +105,7 @@ pub fn build_graph(vault: &Path) -> std::io::Result<Graph> {
 /// Notes that link *to* the given note (by its path).
 pub fn backlinks(vault: &Path, target_path: &str) -> std::io::Result<Vec<NoteMeta>> {
     let notes = vault::list_notes(vault)?;
-    let by_title = title_index(&notes);
+    let by_name = name_index(&notes);
     let mut out = Vec::new();
     for note in &notes {
         if note.path == target_path {
@@ -114,7 +114,7 @@ pub fn backlinks(vault: &Path, target_path: &str) -> std::io::Result<Vec<NoteMet
         let content = std::fs::read_to_string(vault.join(&note.path)).unwrap_or_default();
         let links_here = extract_links(&content)
             .into_iter()
-            .any(|t| by_title.get(&t.to_lowercase()).map(|p| p.as_str()) == Some(target_path));
+            .any(|t| by_name.get(&t.to_lowercase()).map(|p| p.as_str()) == Some(target_path));
         if links_here {
             out.push(NoteMeta {
                 path: note.path.clone(),
@@ -176,12 +176,19 @@ fn snippet_around(content: &str, body_lower: &str, q: &str) -> String {
     }
 }
 
-/// Map lowercased title -> note path. Later notes win on collision, which is
-/// acceptable for now (Obsidian warns on duplicate titles too).
-fn title_index(notes: &[NoteMeta]) -> HashMap<String, String> {
+/// The note "name" used as a `[[wikilink]]` target: the filename stem, matching
+/// Obsidian. This is independent of the display title (which comes from the
+/// note's first heading), so links stay stable even if the heading changes.
+pub fn note_name(path: &str) -> &str {
+    let file = path.rsplit('/').next().unwrap_or(path);
+    file.strip_suffix(".md").unwrap_or(file)
+}
+
+/// Map lowercased note name (filename stem) -> note path.
+fn name_index(notes: &[NoteMeta]) -> HashMap<String, String> {
     notes
         .iter()
-        .map(|n| (n.title.to_lowercase(), n.path.clone()))
+        .map(|n| (note_name(&n.path).to_lowercase(), n.path.clone()))
         .collect()
 }
 
@@ -232,9 +239,9 @@ mod tests {
     #[test]
     fn backlinks_finds_referrers() {
         let v = tmp_vault();
-        vault::write_note(&v, "Hub.md", "hub").unwrap();
-        vault::write_note(&v, "A.md", "see [[Hub]]").unwrap();
-        vault::write_note(&v, "B.md", "also [[hub]] here").unwrap();
+        vault::write_note(&v, "Hub.md", "# Hub\n\nhub").unwrap();
+        vault::write_note(&v, "A.md", "# A\n\nsee [[Hub]]").unwrap();
+        vault::write_note(&v, "B.md", "# B\n\nalso [[hub]] here").unwrap();
         let back = backlinks(&v, "Hub.md").unwrap();
         let titles: Vec<_> = back.iter().map(|n| n.title.clone()).collect();
         assert_eq!(back.len(), 2);
@@ -246,8 +253,8 @@ mod tests {
     #[test]
     fn search_matches_title_and_body() {
         let v = tmp_vault();
-        vault::write_note(&v, "Recipes.md", "how to bake sourdough bread").unwrap();
-        vault::write_note(&v, "Other.md", "unrelated").unwrap();
+        vault::write_note(&v, "Recipes.md", "# Recipes\n\nhow to bake sourdough bread").unwrap();
+        vault::write_note(&v, "Other.md", "# Other\n\nunrelated").unwrap();
         let hits = search(&v, "sourdough").unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].title, "Recipes");

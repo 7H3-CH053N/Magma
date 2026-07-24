@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Sidebar from "./components/Sidebar";
 import Editor from "./components/Editor";
 import GraphView from "./components/GraphView";
@@ -20,7 +20,6 @@ import {
   remoteDelete,
   remotePut,
   renameNote,
-  saveAsset,
   search as searchNotes,
   writeNote,
   type Graph,
@@ -68,8 +67,6 @@ export default function App() {
     [remote]
   );
 
-  const titles = useMemo(() => notes.map((n) => n.title), [notes]);
-
   const refreshNotes = useCallback(async (v: string) => {
     setNotes(await listNotes(v));
   }, []);
@@ -94,28 +91,6 @@ export default function App() {
     [vault]
   );
 
-  // Open a note by its title (from a clicked wikilink). Falls back to creating
-  // the note if it doesn't exist yet — links stay useful even before the
-  // target is written.
-  const openByTitle = useCallback(
-    async (title: string) => {
-      if (!vault) return;
-      const found = notes.find((n) => n.title.toLowerCase() === title.toLowerCase());
-      if (found) {
-        await selectNote(found.path);
-      } else {
-        const path = await createNote(vault, title);
-        await refreshNotes(vault);
-        await selectNote(path);
-        if (remote) {
-          const note = await readNote(vault, path);
-          pushRemote(path, note.content);
-        }
-      }
-    },
-    [vault, notes, selectNote, refreshNotes, remote, pushRemote]
-  );
-
   const flushSave = useCallback(() => {
     if (saveTimer.current) {
       window.clearTimeout(saveTimer.current);
@@ -129,10 +104,14 @@ export default function App() {
       if (!vault || !activePath) return;
       if (saveTimer.current) window.clearTimeout(saveTimer.current);
       saveTimer.current = window.setTimeout(() => {
-        void writeNote(vault, activePath, next).then(() => pushRemote(activePath, next));
+        void writeNote(vault, activePath, next).then(() => {
+          pushRemote(activePath, next);
+          // Refresh the list so the sidebar title (first heading) updates live.
+          void refreshNotes(vault);
+        });
       }, AUTOSAVE_MS);
     },
-    [vault, activePath, pushRemote]
+    [vault, activePath, pushRemote, refreshNotes]
   );
 
   const createNewNote = useCallback(async () => {
@@ -180,17 +159,6 @@ export default function App() {
       }
     },
     [vault, activePath, flushSave, refreshNotes, deleteRemote, t]
-  );
-
-  const handlePasteImage = useCallback(
-    async (file: File): Promise<string | null> => {
-      if (!vault) return null;
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      const name = file.name && file.name !== "image.png" ? file.name : "pasted.png";
-      const rel = await saveAsset(vault, name, bytes);
-      return `![](${rel})`;
-    },
-    [vault]
   );
 
   const showGraph = useCallback(async () => {
@@ -289,14 +257,7 @@ export default function App() {
           ) : activePath ? (
             <>
               <div className="flex-1 overflow-hidden">
-                <Editor
-                  key={activePath}
-                  value={content}
-                  onChange={handleChange}
-                  onPasteImage={handlePasteImage}
-                  getNoteTitles={() => titles}
-                  onOpenLink={openByTitle}
-                />
+                <Editor key={activePath} value={content} onChange={handleChange} />
               </div>
               <BacklinksPanel backlinks={links} onSelect={selectNote} />
             </>

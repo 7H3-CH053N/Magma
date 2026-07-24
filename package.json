@@ -12,16 +12,19 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@codemirror/autocomplete": "^6.20.3",
-    "@codemirror/commands": "^6.6.0",
-    "@codemirror/lang-markdown": "^6.3.0",
-    "@codemirror/language": "^6.10.2",
-    "@codemirror/state": "^6.4.1",
-    "@codemirror/view": "^6.28.0",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.0.0",
+    "@tiptap/extension-image": "^2.11.5",
+    "@tiptap/extension-link": "^2.11.5",
+    "@tiptap/extension-placeholder": "^2.11.5",
+    "@tiptap/extension-task-item": "^2.11.5",
+    "@tiptap/extension-task-list": "^2.11.5",
+    "@tiptap/pm": "^2.11.5",
+    "@tiptap/react": "^2.11.5",
+    "@tiptap/starter-kit": "^2.11.5",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "tiptap-markdown": "^0.8.10"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",

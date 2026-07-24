@@ -44,20 +44,111 @@ body {
   font-family: var(--magma-font-ui);
 }
 
-/* CodeMirror: strip the framing so the editor reads like a clean page. */
-.cm-editor {
-  height: 100%;
+/* WYSIWYG editor (TipTap/ProseMirror). Formatting renders live; the markdown
+   is never shown. All sizing/fonts come from the theme vars. */
+.magma-prose {
+  font-family: var(--magma-font-editor);
   font-size: var(--magma-font-size);
   line-height: 1.7;
-}
-.cm-editor.cm-focused {
+  color: var(--magma-ink);
   outline: none;
+  min-height: 60vh;
 }
-.cm-scroller {
-  font-family: var(--magma-font-editor);
-  padding: 1.5rem 2rem;
+.magma-prose > * + * {
+  margin-top: 0.75em;
 }
-.cm-content {
-  max-width: var(--magma-reading-width);
-  margin: 0 auto;
+.magma-prose h1 {
+  font-size: 1.9em;
+  font-weight: 700;
+  line-height: 1.25;
+  margin-top: 0.4em;
+}
+.magma-prose h2 {
+  font-size: 1.45em;
+  font-weight: 700;
+  line-height: 1.3;
+  margin-top: 0.6em;
+}
+.magma-prose h3 {
+  font-size: 1.2em;
+  font-weight: 600;
+}
+.magma-prose strong {
+  font-weight: 700;
+}
+.magma-prose em {
+  font-style: italic;
+}
+.magma-prose a {
+  color: var(--magma-accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+.magma-prose a:hover {
+  text-decoration: underline;
+}
+.magma-prose code {
+  font-family: var(--magma-font-mono);
+  font-size: 0.9em;
+  background: rgba(125, 125, 125, 0.15);
+  border-radius: 4px;
+  padding: 0.05em 0.3em;
+}
+.magma-prose pre {
+  font-family: var(--magma-font-mono);
+  font-size: 0.9em;
+  background: rgba(125, 125, 125, 0.14);
+  border-radius: 8px;
+  padding: 0.8em 1em;
+  overflow-x: auto;
+}
+.magma-prose pre code {
+  background: none;
+  padding: 0;
+}
+.magma-prose blockquote {
+  border-left: 3px solid color-mix(in srgb, var(--magma-accent) 45%, transparent);
+  padding-left: 0.9em;
+  color: var(--magma-muted);
+  font-style: italic;
+}
+.magma-prose ul,
+.magma-prose ol {
+  padding-left: 1.4em;
+}
+.magma-prose ul {
+  list-style: disc;
+}
+.magma-prose ol {
+  list-style: decimal;
+}
+.magma-prose ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0.2em;
+}
+.magma-prose ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5em;
+}
+.magma-prose ul[data-type="taskList"] li > label {
+  margin-top: 0.25em;
+}
+.magma-prose ul[data-type="taskList"] input[type="checkbox"] {
+  accent-color: var(--magma-accent);
+  width: 1em;
+  height: 1em;
+  cursor: pointer;
+}
+.magma-prose hr {
+  border: none;
+  border-top: 1px solid rgba(125, 125, 125, 0.3);
+}
+/* Placeholder for an empty document. */
+.magma-prose p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--magma-muted);
+  float: left;
+  height: 0;
+  pointer-events: none;
 }
