@@ -65,6 +65,21 @@ fn save_asset(vault: String, file_name: String, bytes: Vec<u8>) -> Result<String
     vault::save_asset(&root, &file_name, &bytes).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn build_graph(vault: String) -> Result<vault::Graph, String> {
+    vault::build_graph(&PathBuf::from(vault)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn backlinks(vault: String, path: String) -> Result<Vec<vault::NoteMeta>, String> {
+    vault::backlinks(&PathBuf::from(vault), &path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn search(vault: String, query: String) -> Result<Vec<vault::SearchHit>, String> {
+    vault::search(&PathBuf::from(vault), &query).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -77,7 +92,10 @@ pub fn run() {
             create_note,
             rename_note,
             delete_note,
-            save_asset
+            save_asset,
+            build_graph,
+            backlinks,
+            search
         ])
         .run(tauri::generate_context!())
         .expect("error while running Magma");

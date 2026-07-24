@@ -1,5 +1,6 @@
 import { useState } from "react";
-import type { NoteMeta } from "../lib/api";
+import type { NoteMeta, SearchHit } from "../lib/api";
+import FlameIcon from "./FlameIcon";
 
 interface SidebarProps {
   vault: string | null;
@@ -10,6 +11,10 @@ interface SidebarProps {
   onCreate: () => void;
   onRename: (path: string, currentTitle: string) => void;
   onDelete: (path: string, title: string) => void;
+  query: string;
+  onQuery: (q: string) => void;
+  searchHits: SearchHit[];
+  onOpenSettings: () => void;
 }
 
 export default function Sidebar({
@@ -21,23 +26,37 @@ export default function Sidebar({
   onCreate,
   onRename,
   onDelete,
+  query,
+  onQuery,
+  searchHits,
+  onOpenSettings,
 }: SidebarProps) {
   const [hovered, setHovered] = useState<string | null>(null);
+  const searching = query.trim().length > 0;
 
   return (
     <aside className="flex h-full w-64 shrink-0 flex-col border-r border-black/5 bg-magma-panel/60 dark:border-white/5 dark:bg-white/5">
       <div className="flex items-center gap-2 px-4 py-3">
-        <div className="h-3 w-3 rounded-full bg-magma-accent" />
+        <FlameIcon size={18} />
         <span className="font-semibold tracking-tight">Magma</span>
-        {vault && (
+        <div className="ml-auto flex items-center">
+          {vault && (
+            <button
+              onClick={onCreate}
+              title="New note (Cmd/Ctrl+N)"
+              className="grid h-6 w-6 place-items-center rounded-md text-lg leading-none text-magma-muted transition hover:bg-black/10 dark:hover:bg-white/10"
+            >
+              +
+            </button>
+          )}
           <button
-            onClick={onCreate}
-            title="New note (Cmd/Ctrl+N)"
-            className="ml-auto grid h-6 w-6 place-items-center rounded-md text-lg leading-none text-magma-muted transition hover:bg-black/10 dark:hover:bg-white/10"
+            onClick={onOpenSettings}
+            title="Settings"
+            className="grid h-6 w-6 place-items-center rounded-md text-sm leading-none text-magma-muted transition hover:bg-black/10 dark:hover:bg-white/10"
           >
-            +
+            ⚙
           </button>
-        )}
+        </div>
       </div>
 
       <button
@@ -47,6 +66,36 @@ export default function Sidebar({
         {vault ? shortenPath(vault) : "Open vault…"}
       </button>
 
+      {vault && (
+        <input
+          value={query}
+          onChange={(e) => onQuery(e.target.value)}
+          placeholder="Search notes…"
+          className="mx-3 mb-2 rounded-lg border border-black/10 bg-transparent px-3 py-1.5 text-sm outline-none placeholder:text-magma-muted focus:border-magma-accent dark:border-white/10"
+        />
+      )}
+
+      {searching ? (
+        <nav className="flex-1 overflow-auto px-2 pb-4">
+          {searchHits.length === 0 && (
+            <p className="px-2 py-4 text-sm text-magma-muted">No matches.</p>
+          )}
+          {searchHits.map((h) => (
+            <button
+              key={h.path}
+              onClick={() => onSelect(h.path)}
+              className={`block w-full rounded-md px-2 py-1.5 text-left transition ${
+                activePath === h.path
+                  ? "bg-magma-accent/10"
+                  : "hover:bg-black/5 dark:hover:bg-white/10"
+              }`}
+            >
+              <span className="block truncate text-sm font-medium">{h.title}</span>
+              <span className="block truncate text-xs text-magma-muted">{h.snippet}</span>
+            </button>
+          ))}
+        </nav>
+      ) : (
       <nav className="flex-1 overflow-auto px-2 pb-4">
         {notes.length === 0 && (
           <p className="px-2 py-4 text-sm text-magma-muted">
@@ -99,6 +148,7 @@ export default function Sidebar({
           </div>
         ))}
       </nav>
+      )}
     </aside>
   );
 }

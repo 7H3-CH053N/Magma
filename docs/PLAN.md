@@ -124,7 +124,7 @@ statt Waisen-Notizen abzuladen:
 |---|---|---|---|
 | M0 | Scaffold | Tauri 2 + React + CI (macOS/Windows) | ✅ |
 | M1 | Vault + Editor | Ordner öffnen, Notizen anlegen/umbenennen/löschen, Live-Markdown mit versteckter Syntax, Bild-Paste, Autosave | ✅ |
-| M2 | Links + Suche + Graph | `[[Wikilinks]]`, Backlinks, FTS5-Suche, Tags, Daily Notes, Graph-View | ⬜ |
+| M2 | Links + Suche + Graph | `[[Wikilinks]]` mit Autocomplete + Cmd/Ctrl-Klick, Backlinks-Panel, Volltextsuche, Graph-View (Canvas-Force-Layout, KI-Notizen markiert) | ✅ |
 | M3 | MCP-Server + KI-Mitautor | Server, semantische Suche, `find_link_candidates`, Link-Validierung, `author: ai` | ⬜ |
 | M4 | Polish | Command Palette, Quick Capture, Bild-Paste, Dark Mode, Onboarding | ⬜ |
 | M5 | Packaging | Installer (DMG/MSI), Auto-Update, Code Signing | ⬜ |

@@ -1,7 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Sidebar from "./components/Sidebar";
 import Editor from "./components/Editor";
+import GraphView from "./components/GraphView";
+import BacklinksPanel from "./components/BacklinksPanel";
+import Splash from "./components/Splash";
+import Settings from "./components/Settings";
 import {
+  backlinks as fetchBacklinks,
+  buildGraph,
   createNote,
   deleteNote,
   hasTauri,
@@ -10,18 +16,30 @@ import {
   readNote,
   renameNote,
   saveAsset,
+  search as searchNotes,
   writeNote,
+  type Graph,
   type NoteMeta,
+  type SearchHit,
 } from "./lib/api";
 
 const AUTOSAVE_MS = 600;
+type View = "editor" | "graph";
 
 export default function App() {
   const [vault, setVault] = useState<string | null>(null);
   const [notes, setNotes] = useState<NoteMeta[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [content, setContent] = useState("");
+  const [view, setView] = useState<View>("editor");
+  const [graph, setGraph] = useState<Graph>({ nodes: [], edges: [] });
+  const [links, setLinks] = useState<NoteMeta[]>([]);
+  const [query, setQuery] = useState("");
+  const [hits, setHits] = useState<SearchHit[]>([]);
+  const [showSettings, setShowSettings] = useState(false);
   const saveTimer = useRef<number | null>(null);
+
+  const titles = useMemo(() => notes.map((n) => n.title), [notes]);
 
   const refreshNotes = useCallback(async (v: string) => {
     setNotes(await listNotes(v));
@@ -41,12 +59,30 @@ export default function App() {
       const note = await readNote(vault, path);
       setActivePath(path);
       setContent(note.content);
+      setView("editor");
+      setLinks(await fetchBacklinks(vault, path));
     },
     [vault]
   );
 
-  // Flush any pending autosave immediately — used before structural changes
-  // (create/rename/delete) so we never race the debounce.
+  // Open a note by its title (from a clicked wikilink). Falls back to creating
+  // the note if it doesn't exist yet — links stay useful even before the
+  // target is written.
+  const openByTitle = useCallback(
+    async (title: string) => {
+      if (!vault) return;
+      const found = notes.find((n) => n.title.toLowerCase() === title.toLowerCase());
+      if (found) {
+        await selectNote(found.path);
+      } else {
+        const path = await createNote(vault, title);
+        await refreshNotes(vault);
+        await selectNote(path);
+      }
+    },
+    [vault, notes, selectNote, refreshNotes]
+  );
+
   const flushSave = useCallback(() => {
     if (saveTimer.current) {
       window.clearTimeout(saveTimer.current);
@@ -97,6 +133,7 @@ export default function App() {
       if (activePath === path) {
         setActivePath(null);
         setContent("");
+        setLinks([]);
       }
     },
     [vault, activePath, flushSave, refreshNotes]
@@ -112,6 +149,24 @@ export default function App() {
     },
     [vault]
   );
+
+  const showGraph = useCallback(async () => {
+    if (!vault) return;
+    setGraph(await buildGraph(vault));
+    setView("graph");
+  }, [vault]);
+
+  // Debounced search as the user types.
+  useEffect(() => {
+    if (!vault || query.trim() === "") {
+      setHits([]);
+      return;
+    }
+    const t = window.setTimeout(async () => {
+      setHits(await searchNotes(vault, query));
+    }, 150);
+    return () => window.clearTimeout(t);
+  }, [vault, query]);
 
   // Cmd/Ctrl+N → new note.
   useEffect(() => {
@@ -133,6 +188,8 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden">
+      <Splash />
+      {showSettings && <Settings onClose={() => setShowSettings(false)} />}
       <Sidebar
         vault={vault}
         notes={notes}
@@ -142,21 +199,66 @@ export default function App() {
         onCreate={createNewNote}
         onRename={handleRename}
         onDelete={handleDelete}
+        query={query}
+        onQuery={setQuery}
+        searchHits={hits}
+        onOpenSettings={() => setShowSettings(true)}
       />
 
-      <main className="flex-1 overflow-hidden">
-        {activePath ? (
-          <Editor
-            key={activePath}
-            value={content}
-            onChange={handleChange}
-            onPasteImage={handlePasteImage}
-          />
-        ) : (
-          <EmptyState connected={hasTauri} hasVault={!!vault} onCreate={createNewNote} />
+      <main className="flex flex-1 flex-col overflow-hidden">
+        {vault && (
+          <div className="flex items-center gap-1 border-b border-black/5 px-3 py-1.5 dark:border-white/10">
+            <ViewTab label="Editor" active={view === "editor"} onClick={() => setView("editor")} />
+            <ViewTab label="Graph" active={view === "graph"} onClick={showGraph} />
+          </div>
         )}
+
+        <div className="flex flex-1 flex-col overflow-hidden">
+          {view === "graph" ? (
+            <GraphView graph={graph} activePath={activePath} onSelect={selectNote} />
+          ) : activePath ? (
+            <>
+              <div className="flex-1 overflow-hidden">
+                <Editor
+                  key={activePath}
+                  value={content}
+                  onChange={handleChange}
+                  onPasteImage={handlePasteImage}
+                  getNoteTitles={() => titles}
+                  onOpenLink={openByTitle}
+                />
+              </div>
+              <BacklinksPanel backlinks={links} onSelect={selectNote} />
+            </>
+          ) : (
+            <EmptyState connected={hasTauri} hasVault={!!vault} onCreate={createNewNote} />
+          )}
+        </div>
       </main>
     </div>
+  );
+}
+
+function ViewTab({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-md px-3 py-1 text-sm transition ${
+        active
+          ? "bg-magma-accent/10 text-magma-accent"
+          : "text-magma-muted hover:bg-black/5 dark:hover:bg-white/10"
+      }`}
+    >
+      {label}
+    </button>
   );
 }
 

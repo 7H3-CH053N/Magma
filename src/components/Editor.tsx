@@ -4,12 +4,17 @@ import { EditorView, keymap } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 import { liveMarkdown, liveMarkdownTheme } from "../lib/liveMarkdown";
+import { wikilinkCompletion, wikilinkNavigation } from "../lib/wikilinks";
 
 interface EditorProps {
   value: string;
   onChange: (value: string) => void;
   /** Called when an image is pasted; returns markdown to insert, or null. */
   onPasteImage?: (file: File) => Promise<string | null>;
+  /** Live list of note titles for `[[` autocomplete. */
+  getNoteTitles?: () => string[];
+  /** Cmd/Ctrl-click a `[[wikilink]]` to open that note by title. */
+  onOpenLink?: (title: string) => void;
 }
 
 /**
@@ -17,13 +22,23 @@ interface EditorProps {
  * `liveMarkdown` extension hides syntax as you type, so it reads like a clean
  * page while staying plain text underneath.
  */
-export default function Editor({ value, onChange, onPasteImage }: EditorProps) {
+export default function Editor({
+  value,
+  onChange,
+  onPasteImage,
+  getNoteTitles,
+  onOpenLink,
+}: EditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   const onPasteRef = useRef(onPasteImage);
+  const getTitlesRef = useRef(getNoteTitles);
+  const onOpenLinkRef = useRef(onOpenLink);
   onChangeRef.current = onChange;
   onPasteRef.current = onPasteImage;
+  getTitlesRef.current = getNoteTitles;
+  onOpenLinkRef.current = onOpenLink;
 
   useEffect(() => {
     if (!host.current) return;
@@ -61,6 +76,8 @@ export default function Editor({ value, onChange, onPasteImage }: EditorProps) {
         markdown(),
         liveMarkdown,
         liveMarkdownTheme,
+        wikilinkCompletion(() => getTitlesRef.current?.() ?? []),
+        wikilinkNavigation((title) => onOpenLinkRef.current?.(title)),
         EditorView.lineWrapping,
         pasteHandler,
         EditorView.updateListener.of((u) => {

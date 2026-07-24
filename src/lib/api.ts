@@ -67,4 +67,42 @@ export async function saveAsset(
   });
 }
 
+export interface GraphNode {
+  path: string;
+  title: string;
+  aiAuthored: boolean;
+  degree: number;
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+}
+
+export interface Graph {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
+export interface SearchHit {
+  path: string;
+  title: string;
+  snippet: string;
+}
+
+export async function buildGraph(vault: string): Promise<Graph> {
+  if (!hasTauri) return { nodes: [], edges: [] };
+  return invoke<Graph>("build_graph", { vault });
+}
+
+export async function backlinks(vault: string, path: string): Promise<NoteMeta[]> {
+  if (!hasTauri) return [];
+  return invoke<NoteMeta[]>("backlinks", { vault, path });
+}
+
+export async function search(vault: string, query: string): Promise<SearchHit[]> {
+  if (!hasTauri) return [];
+  return invoke<SearchHit[]>("search", { vault, query });
+}
+
 export { hasTauri };
