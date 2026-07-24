@@ -1,5 +1,7 @@
 # Magma
 
+**English** · [Deutsch](README.de.md)
+
 **Your second brain, minus the setup.** A beautiful, local-first note app with
 the core idea of Obsidian — plain markdown files, `[[wikilinks]]`, backlinks and
 a graph — but simpler to use and LLM-native from day one.
@@ -87,6 +89,13 @@ crates/magma-mcp/    Built-in MCP server (stdio JSON-RPC) over magma-core
 crates/magma-webdav/ Optional remote vault: sync a WebDAV folder to a local cache
 docs/PLAN.md         Product plan, research, and roadmap
 ```
+
+## Make it yours
+
+Everything visual is adjustable in **Settings → Appearance**: light/dark/system
+mode, accent and AI-note colors, interface and editor fonts, font size, and
+reading width. Changes apply live and persist. Fonts use only what's already on
+your system, so nothing is downloaded.
 
 ## Remote vault (optional)
 
