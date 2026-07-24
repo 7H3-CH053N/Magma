@@ -105,4 +105,28 @@ export async function search(vault: string, query: string): Promise<SearchHit[]>
   return invoke<SearchHit[]>("search", { vault, query });
 }
 
+export interface RemoteConfig {
+  url: string;
+  username: string;
+  password: string;
+}
+
+/** Connect a remote WebDAV vault; returns the local cache dir to open. */
+export async function remoteConnect(cfg: RemoteConfig): Promise<string> {
+  return invoke<string>("remote_connect", { ...cfg });
+}
+
+/** Push a note to the remote vault (write-through after a local save). */
+export async function remotePut(
+  cfg: RemoteConfig,
+  path: string,
+  content: string
+): Promise<void> {
+  return invoke("remote_put", { ...cfg, path, content });
+}
+
+export async function remoteDelete(cfg: RemoteConfig, path: string): Promise<void> {
+  return invoke("remote_delete", { ...cfg, path });
+}
+
 export { hasTauri };

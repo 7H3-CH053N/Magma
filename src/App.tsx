@@ -16,12 +16,16 @@ import {
   listNotes,
   pickVault,
   readNote,
+  remoteConnect,
+  remoteDelete,
+  remotePut,
   renameNote,
   saveAsset,
   search as searchNotes,
   writeNote,
   type Graph,
   type NoteMeta,
+  type RemoteConfig,
   type SearchHit,
 } from "./lib/api";
 
@@ -40,7 +44,29 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [showSettings, setShowSettings] = useState(false);
+  const [remote, setRemote] = useState<RemoteConfig | null>(null);
   const saveTimer = useRef<number | null>(null);
+
+  // Write-through to a remote vault, best-effort — a failed push is logged but
+  // never blocks the local edit (which already succeeded).
+  const pushRemote = useCallback(
+    (path: string, content: string) => {
+      if (!remote) return;
+      void remotePut(remote, path, content).catch((e) =>
+        console.error("remote push failed:", e)
+      );
+    },
+    [remote]
+  );
+  const deleteRemote = useCallback(
+    (path: string) => {
+      if (!remote) return;
+      void remoteDelete(remote, path).catch((e) =>
+        console.error("remote delete failed:", e)
+      );
+    },
+    [remote]
+  );
 
   const titles = useMemo(() => notes.map((n) => n.title), [notes]);
 
@@ -81,9 +107,13 @@ export default function App() {
         const path = await createNote(vault, title);
         await refreshNotes(vault);
         await selectNote(path);
+        if (remote) {
+          const note = await readNote(vault, path);
+          pushRemote(path, note.content);
+        }
       }
     },
-    [vault, notes, selectNote, refreshNotes]
+    [vault, notes, selectNote, refreshNotes, remote, pushRemote]
   );
 
   const flushSave = useCallback(() => {
@@ -99,10 +129,10 @@ export default function App() {
       if (!vault || !activePath) return;
       if (saveTimer.current) window.clearTimeout(saveTimer.current);
       saveTimer.current = window.setTimeout(() => {
-        void writeNote(vault, activePath, next);
+        void writeNote(vault, activePath, next).then(() => pushRemote(activePath, next));
       }, AUTOSAVE_MS);
     },
-    [vault, activePath]
+    [vault, activePath, pushRemote]
   );
 
   const createNewNote = useCallback(async () => {
@@ -111,7 +141,11 @@ export default function App() {
     const path = await createNote(vault, "Untitled");
     await refreshNotes(vault);
     await selectNote(path);
-  }, [vault, flushSave, refreshNotes, selectNote]);
+    if (remote) {
+      const note = await readNote(vault, path);
+      pushRemote(path, note.content);
+    }
+  }, [vault, flushSave, refreshNotes, selectNote, remote, pushRemote]);
 
   const handleRename = useCallback(
     async (path: string, currentTitle: string) => {
@@ -122,8 +156,13 @@ export default function App() {
       const newPath = await renameNote(vault, path, next);
       await refreshNotes(vault);
       if (activePath === path) await selectNote(newPath);
+      if (remote) {
+        const note = await readNote(vault, newPath);
+        pushRemote(newPath, note.content);
+        deleteRemote(path);
+      }
     },
-    [vault, activePath, flushSave, refreshNotes, selectNote, t]
+    [vault, activePath, flushSave, refreshNotes, selectNote, remote, pushRemote, deleteRemote, t]
   );
 
   const handleDelete = useCallback(
@@ -132,6 +171,7 @@ export default function App() {
       if (!window.confirm(t("confirm.delete", { title }))) return;
       flushSave();
       await deleteNote(vault, path);
+      deleteRemote(path);
       await refreshNotes(vault);
       if (activePath === path) {
         setActivePath(null);
@@ -139,7 +179,7 @@ export default function App() {
         setLinks([]);
       }
     },
-    [vault, activePath, flushSave, refreshNotes, t]
+    [vault, activePath, flushSave, refreshNotes, deleteRemote, t]
   );
 
   const handlePasteImage = useCallback(
@@ -158,6 +198,26 @@ export default function App() {
     setGraph(await buildGraph(vault));
     setView("graph");
   }, [vault]);
+
+  // Connect a remote WebDAV vault: sync it into a local cache and open that.
+  const connectRemote = useCallback(async (cfg: RemoteConfig) => {
+    const cacheDir = await remoteConnect(cfg);
+    setRemote(cfg);
+    setVault(cacheDir);
+    setNotes(await listNotes(cacheDir));
+    setActivePath(null);
+    setContent("");
+    setLinks([]);
+    // Remember URL + username (never the password) to prefill next time.
+    try {
+      localStorage.setItem(
+        "magma.remote",
+        JSON.stringify({ url: cfg.url, username: cfg.username })
+      );
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   // Debounced search as the user types.
   useEffect(() => {
@@ -192,7 +252,14 @@ export default function App() {
   return (
     <div className="flex h-screen w-screen overflow-hidden">
       <Splash />
-      {showSettings && <Settings onClose={() => setShowSettings(false)} vault={vault} />}
+      {showSettings && (
+        <Settings
+          onClose={() => setShowSettings(false)}
+          vault={vault}
+          onConnectRemote={connectRemote}
+          remoteActive={!!remote}
+        />
+      )}
       <Sidebar
         vault={vault}
         notes={notes}

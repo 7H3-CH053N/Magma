@@ -2,5 +2,5 @@
 # is testable anywhere; `src-tauri` is the desktop shell that pulls in the
 # heavier native dependencies.
 [workspace]
-members = ["crates/magma-core", "crates/magma-mcp", "src-tauri"]
+members = ["crates/magma-core", "crates/magma-mcp", "crates/magma-webdav", "src-tauri"]
 resolver = "2"

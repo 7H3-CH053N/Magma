@@ -128,7 +128,7 @@ statt Waisen-Notizen abzuladen:
 | M3 | MCP-Server + KI-Mitautor | Eingebauter stdio-MCP-Server (`crates/magma-mcp`), `find_link_candidates`, Link-Validierung mit Vorschlägen, `author: ai`-Stempel, „Mit Claude verbinden"-Config in Settings | ✅ |
 | M4 | Polish | Command Palette, Quick Capture, System-Dark-Mode ✅, Onboarding, i18n (DE/EN) ✅ | 🟡 |
 | M5 | Packaging | Installer (DMG/MSI), CI-Download-Artefakte ✅, Auto-Update, Code Signing | 🟡 |
-| M6 | Online-/Remote-Vault | Vault auf Webserver (WebDAV), Ort in Settings, geräteübergreifender Zugriff | ⬜ |
+| M6 | Online-/Remote-Vault | Vault auf Webserver (WebDAV): Sync in lokalen Cache, Write-Through beim Speichern, Settings-UI, https-Pflicht | 🟡 erste Version |
 
 ## M6 — Online-/Remote-Vault (Design)
 
@@ -155,9 +155,17 @@ Server-Code nötig, funktioniert mit dem bestehenden „Ordner mit Dateien"-Mode
 - **MCP**: Der MCP-Server nutzt dieselbe Storage-Abstraktion, kann also auch gegen
   einen Remote-Vault arbeiten.
 
-Aufwand: eigener Meilenstein — Storage-Trait-Refactor + WebDAV-Client + Cache +
-Konflikt-Handling + Settings-UI. Sicherheitskritisch (Auth, Transportverschlüsselung
-via HTTPS erzwingen).
+**Status (erste Version gebaut):** `crates/magma-webdav` implementiert den
+Sync-Ansatz (kein Trait-Refactor nötig): PROPFIND-Listing, Download in einen
+lokalen Cache, `PUT`/`DELETE` fürs Zurückschreiben; HTTPS wird erzwungen,
+Basic-Auth. Die Tauri-Commands `remote_connect`/`remote_put`/`remote_delete`
+(in `src-tauri/src/lib.rs`) synchronisieren beim Verbinden in
+`app_data_dir()/remote-vaults/<hash>` und schreiben Änderungen beim Speichern
+zurück (Write-Through, best-effort). Settings-UI mit URL/Benutzer/Passwort.
+
+**Noch offen (Follow-ups):** Passwort im OS-Keychain statt nur Session-Speicher;
+echtes Konflikt-Handling via `ETag`/`Last-Modified` (aktuell Last-Write-Wins);
+periodisches Re-Sync/Pull; Löschen entfernter Dateien beim Pull.
 
 ## Verifikation
 

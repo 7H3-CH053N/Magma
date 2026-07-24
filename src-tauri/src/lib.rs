@@ -3,7 +3,9 @@
 //! so the LLM and the UI act on identical files.
 
 use magma_core as vault;
+use magma_webdav as webdav;
 use std::path::PathBuf;
+use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 
 #[tauri::command]
@@ -80,6 +82,78 @@ fn search(vault: String, query: String) -> Result<Vec<vault::SearchHit>, String>
     vault::search(&PathBuf::from(vault), &query).map_err(|e| e.to_string())
 }
 
+// --- Optional remote (WebDAV) vault ---------------------------------------
+//
+// A remote vault is synced into a local cache directory, which the rest of the
+// app then treats as an ordinary vault. Writes go to the cache and are pushed
+// back to the server (write-through) by the frontend.
+
+fn remote_client(
+    url: String,
+    username: String,
+    password: String,
+) -> Result<webdav::WebDavClient, String> {
+    webdav::WebDavClient::new(webdav::WebDavConfig {
+        base_url: url,
+        username,
+        password,
+    })
+    .map_err(|e| e.to_string())
+}
+
+/// Connect to a remote WebDAV vault: download all notes into a stable local
+/// cache directory and return that path for the app to open as the vault.
+#[tauri::command]
+fn remote_connect(
+    app: tauri::AppHandle,
+    url: String,
+    username: String,
+    password: String,
+) -> Result<String, String> {
+    let client = remote_client(url.clone(), username, password)?;
+    let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let dir = base.join("remote-vaults").join(format!("{:x}", djb2(&url)));
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    client.download_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
+/// Push a note to the remote vault (write-through after a local save).
+#[tauri::command]
+fn remote_put(
+    url: String,
+    username: String,
+    password: String,
+    path: String,
+    content: String,
+) -> Result<(), String> {
+    remote_client(url, username, password)?
+        .put_text(&path, &content)
+        .map_err(|e| e.to_string())
+}
+
+/// Delete a note from the remote vault.
+#[tauri::command]
+fn remote_delete(
+    url: String,
+    username: String,
+    password: String,
+    path: String,
+) -> Result<(), String> {
+    remote_client(url, username, password)?
+        .delete(&path)
+        .map_err(|e| e.to_string())
+}
+
+/// Small stable hash for naming the per-vault cache folder (no extra deps).
+fn djb2(s: &str) -> u64 {
+    let mut h: u64 = 5381;
+    for b in s.bytes() {
+        h = h.wrapping_mul(33).wrapping_add(b as u64);
+    }
+    h
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -95,7 +169,10 @@ pub fn run() {
             save_asset,
             build_graph,
             backlinks,
-            search
+            search,
+            remote_connect,
+            remote_put,
+            remote_delete
         ])
         .run(tauri::generate_context!())
         .expect("error while running Magma");

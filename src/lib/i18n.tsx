@@ -41,6 +41,16 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "settings.connectBody":
       "Add this to your MCP client config to let Claude read and co-author your vault:",
     "settings.close": "Close",
+    "settings.remoteTitle": "Remote vault (WebDAV)",
+    "settings.remoteBody":
+      "Host your vault on a webserver so it's available on every machine with Magma.",
+    "settings.remoteActive": "Connected to a remote vault. Edits sync back to the server.",
+    "settings.remoteUser": "Username",
+    "settings.remotePass": "Password",
+    "settings.remoteConnect": "Connect & sync",
+    "settings.remoteConnecting": "Syncing…",
+    "settings.remoteNote":
+      "Requires an https:// WebDAV URL. Notes are cached locally and changes are pushed back on save. The password is kept only for this session.",
   },
   de: {
     "app.tagline": "Dein zweites Gehirn – ohne Einrichtungsaufwand.",
@@ -79,6 +89,16 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "settings.connectBody":
       "Füge das in die Konfiguration deines MCP-Clients ein, damit Claude deinen Vault lesen und mitschreiben kann:",
     "settings.close": "Schließen",
+    "settings.remoteTitle": "Remote-Vault (WebDAV)",
+    "settings.remoteBody":
+      "Lege deinen Vault auf einem Webserver ab, damit er auf jedem Rechner mit Magma verfügbar ist.",
+    "settings.remoteActive": "Mit einem Remote-Vault verbunden. Änderungen werden zum Server synchronisiert.",
+    "settings.remoteUser": "Benutzername",
+    "settings.remotePass": "Passwort",
+    "settings.remoteConnect": "Verbinden & synchronisieren",
+    "settings.remoteConnecting": "Synchronisiere…",
+    "settings.remoteNote":
+      "Erfordert eine https://-WebDAV-URL. Notizen werden lokal zwischengespeichert und Änderungen beim Speichern zurück übertragen. Das Passwort wird nur für diese Sitzung behalten.",
   },
 };
 

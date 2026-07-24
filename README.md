@@ -84,8 +84,16 @@ src-tauri/           Tauri desktop shell — thin command layer over magma-core
 crates/magma-core/   Pure Rust vault logic: notes, links, graph, search, and the
                      AI co-authoring rules — testable on any platform
 crates/magma-mcp/    Built-in MCP server (stdio JSON-RPC) over magma-core
+crates/magma-webdav/ Optional remote vault: sync a WebDAV folder to a local cache
 docs/PLAN.md         Product plan, research, and roadmap
 ```
+
+## Remote vault (optional)
+
+Point Magma at a WebDAV URL (Settings → Remote vault) to keep one vault on a
+webserver and edit it from any machine. Magma syncs it into a local cache and
+pushes your edits back on save. HTTPS is required; the password is kept only for
+the session (OS-keychain storage is a planned follow-up).
 
 ## License
 
