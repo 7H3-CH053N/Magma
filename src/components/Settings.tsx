@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import FlameIcon from "./FlameIcon";
 import { useI18n, type Lang } from "../lib/i18n";
 import { useTheme, FONT_PRESETS, type ThemeMode } from "../lib/theme";
-import type { RemoteConfig } from "../lib/api";
+import { hasTauri, installMcp, mcpConfig, type RemoteConfig } from "../lib/api";
 
 interface SettingsProps {
   onClose: () => void;
@@ -20,20 +20,6 @@ function savedRemote(): { url: string; username: string } {
   }
   return { url: "", username: "" };
 }
-
-const MCP_CONFIG = (vault: string) =>
-  JSON.stringify(
-    {
-      mcpServers: {
-        magma: {
-          command: "magma-mcp",
-          args: [vault],
-        },
-      },
-    },
-    null,
-    2
-  );
 
 /**
  * Settings dialog: language, an About panel (icon, name, version, build,
@@ -53,6 +39,31 @@ export default function Settings({
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // MCP setup state.
+  const [mcpBusy, setMcpBusy] = useState(false);
+  const [mcpDone, setMcpDone] = useState<string | null>(null);
+  const [mcpErr, setMcpErr] = useState<string | null>(null);
+  const [showManual, setShowManual] = useState(false);
+  const [configText, setConfigText] = useState("");
+
+  useEffect(() => {
+    if (hasTauri && vault) mcpConfig(vault).then(setConfigText).catch(() => {});
+  }, [vault]);
+
+  const install = async () => {
+    if (!vault) return;
+    setMcpErr(null);
+    setMcpBusy(true);
+    try {
+      const path = await installMcp(vault);
+      setMcpDone(path);
+    } catch (e) {
+      setMcpErr(String(e));
+    } finally {
+      setMcpBusy(false);
+    }
+  };
 
   const connect = async () => {
     setErr(null);
@@ -235,9 +246,38 @@ export default function Settings({
             {t("settings.connectTitle")}
           </label>
           <p className="mb-2 text-xs text-magma-muted">{t("settings.connectBody")}</p>
-          <pre className="overflow-auto rounded-lg bg-black/[0.05] p-3 text-xs leading-relaxed dark:bg-black/40">
-            <code>{MCP_CONFIG(vault ?? "/path/to/your/vault")}</code>
-          </pre>
+
+          {!vault ? (
+            <p className="text-xs text-magma-muted opacity-80">{t("settings.mcpNoVault")}</p>
+          ) : (
+            <>
+              <button
+                onClick={install}
+                disabled={mcpBusy}
+                className="rounded-lg bg-magma-accent px-3 py-1.5 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+              >
+                {mcpBusy ? t("settings.mcpInstalling") : t("settings.mcpInstall")}
+              </button>
+              {mcpDone && (
+                <p className="mt-2 text-xs text-green-600 dark:text-green-400">
+                  {t("settings.mcpInstalled", { path: mcpDone })}
+                </p>
+              )}
+              {mcpErr && <p className="mt-2 text-xs text-red-500">{mcpErr}</p>}
+
+              <button
+                onClick={() => setShowManual((v) => !v)}
+                className="mt-2 block text-xs text-magma-muted underline-offset-2 hover:text-magma-accent hover:underline"
+              >
+                {t("settings.mcpManual")}
+              </button>
+              {showManual && configText && (
+                <pre className="mt-2 overflow-auto rounded-lg bg-black/[0.05] p-3 text-xs leading-relaxed dark:bg-black/40">
+                  <code>{configText}</code>
+                </pre>
+              )}
+            </>
+          )}
         </section>
 
         {/* About */}

@@ -5,6 +5,10 @@ edition = "2021"
 rust-version = "1.77"
 description = "Magma's built-in MCP server — lets Claude and other agents read the vault and co-author correctly linked notes."
 
+[lib]
+name = "magma_mcp"
+path = "src/lib.rs"
+
 [[bin]]
 name = "magma-mcp"
 path = "src/main.rs"

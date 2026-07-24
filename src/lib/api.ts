@@ -129,4 +129,15 @@ export async function remoteDelete(cfg: RemoteConfig, path: string): Promise<voi
   return invoke("remote_delete", { ...cfg, path });
 }
 
+/** The exact MCP config JSON for this machine (real executable path + vault). */
+export async function mcpConfig(vault: string): Promise<string> {
+  if (!hasTauri) return "";
+  return invoke<string>("mcp_config", { vault });
+}
+
+/** One-click: write the Magma server into Claude Desktop's config. */
+export async function installMcp(vault: string): Promise<string> {
+  return invoke<string>("install_mcp", { vault });
+}
+
 export { hasTauri };

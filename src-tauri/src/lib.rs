@@ -4,6 +4,7 @@
 
 use magma_core as vault;
 use magma_webdav as webdav;
+use serde_json::json;
 use std::path::PathBuf;
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
@@ -154,8 +155,100 @@ fn djb2(s: &str) -> u64 {
     h
 }
 
+// --- Foolproof MCP setup --------------------------------------------------
+//
+// Rather than shipping a separate server the user must install, Magma serves
+// MCP from its own executable when launched as `magma --mcp <vault>` (see the
+// early return in `run`). The one-click installer writes that command straight
+// into Claude Desktop's config, so connecting Claude is a single button.
+
+/// The recommended MCP client entry: run *this* executable with `--mcp <vault>`.
+fn mcp_server_entry(vault: &str) -> serde_json::Value {
+    let exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "magma".to_string());
+    json!({ "command": exe, "args": ["--mcp", vault] })
+}
+
+/// Claude Desktop's config file location for this OS.
+fn claude_desktop_config_path() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        std::env::var_os("HOME").map(|h| {
+            PathBuf::from(h).join("Library/Application Support/Claude/claude_desktop_config.json")
+        })
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::env::var_os("APPDATA")
+            .map(|a| PathBuf::from(a).join("Claude/claude_desktop_config.json"))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        std::env::var_os("HOME")
+            .map(|h| PathBuf::from(h).join(".config/Claude/claude_desktop_config.json"))
+    }
+}
+
+/// The exact MCP config JSON for the given vault (for display / manual copy).
+#[tauri::command]
+fn mcp_config(vault: String) -> String {
+    let cfg = json!({ "mcpServers": { "magma": mcp_server_entry(&vault) } });
+    serde_json::to_string_pretty(&cfg).unwrap_or_default()
+}
+
+/// One-click install: merge the Magma server into Claude Desktop's config,
+/// backing up any existing file. Returns the config path that was written.
+#[tauri::command]
+fn install_mcp(vault: String) -> Result<String, String> {
+    let path =
+        claude_desktop_config_path().ok_or("could not locate the Claude Desktop config folder")?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    // Preserve any existing config and back it up before writing.
+    let mut root: serde_json::Value = if path.exists() {
+        let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let _ = std::fs::write(path.with_extension("json.bak"), &text);
+        serde_json::from_str(&text).unwrap_or_else(|_| json!({}))
+    } else {
+        json!({})
+    };
+    if !root.is_object() {
+        root = json!({});
+    }
+    let obj = root.as_object_mut().unwrap();
+    let servers = obj
+        .entry("mcpServers")
+        .or_insert_with(|| json!({}));
+    if !servers.is_object() {
+        *servers = json!({});
+    }
+    servers
+        .as_object_mut()
+        .unwrap()
+        .insert("magma".to_string(), mcp_server_entry(&vault));
+    let pretty = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
+    std::fs::write(&path, pretty).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Serve MCP from this same executable when invoked as `magma --mcp <vault>`
+    // (this is what the one-click installer wires into Claude Desktop). We do
+    // this before any Tauri/GUI init so it works headless when Claude spawns us.
+    let raw_args: Vec<String> = std::env::args().collect();
+    if let Some(i) = raw_args.iter().position(|a| a == "--mcp") {
+        let vault = raw_args.get(i + 1).cloned().unwrap_or_default();
+        let allow_write = !matches!(
+            std::env::var("MAGMA_MCP_ALLOW_WRITE").ok().as_deref(),
+            Some("0") | Some("false") | Some("no")
+        );
+        magma_mcp::serve_stdio(PathBuf::from(vault), allow_write);
+        return;
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
@@ -172,7 +265,9 @@ pub fn run() {
             search,
             remote_connect,
             remote_put,
-            remote_delete
+            remote_delete,
+            mcp_config,
+            install_mcp
         ])
         .run(tauri::generate_context!())
         .expect("error while running Magma");

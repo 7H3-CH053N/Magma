@@ -126,7 +126,7 @@ statt Waisen-Notizen abzuladen:
 | M1 | Vault + Editor | Ordner öffnen, Notizen anlegen/umbenennen/löschen, Live-Markdown mit versteckter Syntax, Bild-Paste, Autosave | ✅ |
 | M2 | Links + Suche + Graph | `[[Wikilinks]]` mit Autocomplete + Cmd/Ctrl-Klick, Backlinks-Panel, Volltextsuche, Graph-View (Canvas-Force-Layout, KI-Notizen markiert) | ✅ |
 | M3 | MCP-Server + KI-Mitautor | Eingebauter stdio-MCP-Server (`crates/magma-mcp`), `find_link_candidates`, Link-Validierung mit Vorschlägen, `author: ai`-Stempel, „Mit Claude verbinden"-Config in Settings | ✅ |
-| M4 | Polish | Command Palette, Quick Capture, System-Dark-Mode ✅, Onboarding, i18n (DE/EN) ✅ | 🟡 |
+| M4 | Polish | Anpassbare Themes (Farben/Schriften/Größe) ✅, System-Dark-Mode ✅, i18n (DE/EN) ✅, Ein-Klick-MCP-Setup ✅; noch offen: Command Palette, Quick Capture, Onboarding | 🟡 |
 | M5 | Packaging | Installer (DMG/MSI), CI-Download-Artefakte ✅, Auto-Update, Code Signing | 🟡 |
 | M6 | Online-/Remote-Vault | Vault auf Webserver (WebDAV): Sync in lokalen Cache, Write-Through beim Speichern, Settings-UI, https-Pflicht | 🟡 erste Version |
 

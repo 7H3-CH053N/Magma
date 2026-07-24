@@ -51,7 +51,12 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "settings.license": "Released under the terms in the project LICENSE.",
     "settings.connectTitle": "Connect to Claude",
     "settings.connectBody":
-      "Add this to your MCP client config to let Claude read and co-author your vault:",
+      "Let Claude read and co-author your vault. One click sets up Claude Desktop for you.",
+    "settings.mcpInstall": "Set up Claude Desktop",
+    "settings.mcpInstalling": "Setting up…",
+    "settings.mcpInstalled": "Done — restart Claude Desktop. Written to {path}",
+    "settings.mcpManual": "Manual setup (other MCP clients)",
+    "settings.mcpNoVault": "Open a vault first to connect Claude.",
     "settings.close": "Close",
     "settings.remoteTitle": "Remote vault (WebDAV)",
     "settings.remoteBody":
@@ -111,7 +116,12 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "settings.license": "Veröffentlicht unter den Bedingungen der LICENSE des Projekts.",
     "settings.connectTitle": "Mit Claude verbinden",
     "settings.connectBody":
-      "Füge das in die Konfiguration deines MCP-Clients ein, damit Claude deinen Vault lesen und mitschreiben kann:",
+      "Lass Claude deinen Vault lesen und mitschreiben. Ein Klick richtet Claude Desktop für dich ein.",
+    "settings.mcpInstall": "Claude Desktop einrichten",
+    "settings.mcpInstalling": "Richte ein…",
+    "settings.mcpInstalled": "Fertig – starte Claude Desktop neu. Geschrieben nach {path}",
+    "settings.mcpManual": "Manuelle Einrichtung (andere MCP-Clients)",
+    "settings.mcpNoVault": "Öffne zuerst einen Vault, um Claude zu verbinden.",
     "settings.close": "Schließen",
     "settings.remoteTitle": "Remote-Vault (WebDAV)",
     "settings.remoteBody":

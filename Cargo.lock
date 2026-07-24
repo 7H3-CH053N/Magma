@@ -1673,6 +1673,7 @@ name = "magma"
 version = "0.1.0"
 dependencies = [
  "magma-core",
+ "magma-mcp",
  "magma-webdav",
  "serde",
  "serde_json",

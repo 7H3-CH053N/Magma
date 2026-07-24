@@ -62,13 +62,17 @@ npm run tauri build        # produce a desktop bundle (DMG / MSI)
 
 ## Connect to Claude
 
-Magma ships an MCP server (`magma-mcp`) so Claude can read your vault and
-co-author correctly linked notes. Add it to your MCP client config:
+Magma is its own MCP server — no separate install. In the app, open
+**Settings → Connect to Claude → Set up Claude Desktop**. One click writes the
+config (backing up any existing one); restart Claude Desktop and you're done.
+
+For other MCP clients, copy the JSON shown under *Manual setup* — it runs the
+Magma executable as the server:
 
 ```json
 {
   "mcpServers": {
-    "magma": { "command": "magma-mcp", "args": ["/path/to/your/vault"] }
+    "magma": { "command": "/path/to/Magma", "args": ["--mcp", "/path/to/vault"] }
   }
 }
 ```
