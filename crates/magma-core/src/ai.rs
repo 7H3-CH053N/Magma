@@ -270,7 +270,7 @@ mod tests {
 
     #[test]
     fn stamp_replaces_existing_author() {
-        let out = stamp_ai_author("---\ntitle: X\nauthor: alex\n---\n\nbody");
+        let out = stamp_ai_author("---\ntitle: X\nauthor: human\n---\n\nbody");
         assert_eq!(out.matches("author:").count(), 1);
         assert!(out.contains("author: ai"));
         assert!(out.contains("title: X"));

@@ -217,7 +217,7 @@ mod tests {
     #[test]
     fn plain_note_is_not_ai() {
         assert!(!is_ai_authored("# Just a heading\n\ntext"));
-        assert!(!is_ai_authored("---\nauthor: alex\n---\ntext"));
+        assert!(!is_ai_authored("---\nauthor: human\n---\ntext"));
     }
 
     #[test]

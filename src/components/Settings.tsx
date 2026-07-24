@@ -1,6 +1,7 @@
 import { useState } from "react";
 import FlameIcon from "./FlameIcon";
 import { useI18n, type Lang } from "../lib/i18n";
+import { useTheme, FONT_PRESETS, type ThemeMode } from "../lib/theme";
 import type { RemoteConfig } from "../lib/api";
 
 interface SettingsProps {
@@ -45,6 +46,7 @@ export default function Settings({
   remoteActive,
 }: SettingsProps) {
   const { t, lang, setLang } = useI18n();
+  const { theme, setTheme, reset } = useTheme();
   const initial = savedRemote();
   const [url, setUrl] = useState(initial.url);
   const [username, setUsername] = useState(initial.username);
@@ -81,6 +83,85 @@ export default function Settings({
             ✕
           </button>
         </div>
+
+        {/* Appearance */}
+        <section className="mb-5">
+          <div className="mb-2 flex items-center justify-between">
+            <label className="block text-xs font-medium uppercase tracking-wide text-magma-muted">
+              {t("settings.appearance")}
+            </label>
+            <button
+              onClick={reset}
+              className="text-xs text-magma-muted underline-offset-2 hover:text-magma-accent hover:underline"
+            >
+              {t("settings.reset")}
+            </button>
+          </div>
+
+          {/* Theme mode */}
+          <div className="mb-3 inline-flex rounded-lg bg-black/[0.04] p-1 dark:bg-white/[0.06]">
+            {(["system", "light", "dark"] as ThemeMode[]).map((m) => (
+              <button
+                key={m}
+                onClick={() => setTheme({ mode: m })}
+                className={`rounded-md px-3 py-1 text-sm transition ${
+                  theme.mode === m
+                    ? "bg-magma-bg text-magma-ink shadow-sm dark:bg-[#332d28] dark:text-[#ece9e4]"
+                    : "text-magma-muted"
+                }`}
+              >
+                {t(`theme.${m}`)}
+              </button>
+            ))}
+          </div>
+
+          {/* Colors */}
+          <div className="mb-3 flex gap-4">
+            <ColorField
+              label={t("settings.accent")}
+              value={theme.accent}
+              onChange={(accent) => setTheme({ accent })}
+            />
+            <ColorField
+              label={t("settings.aiColor")}
+              value={theme.ai}
+              onChange={(ai) => setTheme({ ai })}
+            />
+          </div>
+
+          {/* Fonts */}
+          <div className="mb-3 grid grid-cols-2 gap-3">
+            <FontField
+              label={t("settings.uiFont")}
+              value={theme.uiFont}
+              onChange={(uiFont) => setTheme({ uiFont })}
+            />
+            <FontField
+              label={t("settings.editorFont")}
+              value={theme.editorFont}
+              onChange={(editorFont) => setTheme({ editorFont })}
+            />
+          </div>
+
+          {/* Sizing */}
+          <RangeField
+            label={t("settings.fontSize")}
+            suffix="px"
+            min={13}
+            max={22}
+            value={theme.fontSize}
+            onChange={(fontSize) => setTheme({ fontSize })}
+          />
+          <RangeField
+            label={t("settings.readingWidth")}
+            suffix="px"
+            min={560}
+            max={960}
+            step={20}
+            value={theme.readingWidth}
+            onChange={(readingWidth) => setTheme({ readingWidth })}
+          />
+        </section>
 
         {/* Language */}
         <section className="mb-5">
@@ -184,5 +265,97 @@ export default function Settings({
         </section>
       </div>
     </div>
+  );
+}
+
+function ColorField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <label className="flex items-center gap-2 text-sm">
+      <input
+        type="color"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-7 w-7 cursor-pointer rounded-md border border-black/10 bg-transparent p-0 dark:border-white/10"
+      />
+      <span className="text-magma-muted">{label}</span>
+    </label>
+  );
+}
+
+function FontField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  // A value not in the presets still shows (custom), keyed to itself.
+  const known = FONT_PRESETS.some((p) => p.value === value);
+  return (
+    <label className="block text-sm">
+      <span className="mb-1 block text-magma-muted">{label}</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{ fontFamily: value }}
+        className="w-full rounded-lg border border-black/10 bg-transparent px-2 py-1.5 text-sm outline-none focus:border-magma-accent dark:border-white/10"
+      >
+        {!known && <option value={value}>Custom</option>}
+        {FONT_PRESETS.map((p) => (
+          <option key={p.label} value={p.value} style={{ fontFamily: p.value }}>
+            {p.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function RangeField({
+  label,
+  value,
+  min,
+  max,
+  step = 1,
+  suffix,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  suffix?: string;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <label className="mb-2 block text-sm">
+      <span className="mb-1 flex justify-between text-magma-muted">
+        <span>{label}</span>
+        <span>
+          {value}
+          {suffix}
+        </span>
+      </span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-full accent-magma-accent"
+      />
+    </label>
   );
 }

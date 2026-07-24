@@ -5,19 +5,20 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Magma's warm, minimal palette — one good default, no theme-hunting.
+        // Driven by CSS variables (see src/styles/index.css) so the palette is
+        // live-customizable from Settings, in both light and dark.
         magma: {
-          bg: "#faf9f7",
-          panel: "#f3f1ee",
-          ink: "#1c1a17",
-          muted: "#6b6b6b",
-          accent: "#e0533d",
-          ai: "#7c5cff",
+          bg: "var(--magma-bg)",
+          panel: "var(--magma-panel)",
+          ink: "var(--magma-ink)",
+          muted: "var(--magma-muted)",
+          accent: "var(--magma-accent)",
+          ai: "var(--magma-ai)",
         },
       },
       fontFamily: {
-        sans: ["Inter", "system-ui", "-apple-system", "sans-serif"],
-        mono: ["JetBrains Mono", "ui-monospace", "monospace"],
+        sans: "var(--magma-font-ui)",
+        mono: "var(--magma-font-mono)",
       },
     },
   },

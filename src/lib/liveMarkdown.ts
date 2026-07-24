@@ -181,15 +181,12 @@ export const liveMarkdown = ViewPlugin.fromClass(
 // Visual styling for the rendered marks. Kept with the extension so the
 // look and the logic travel together.
 export const liveMarkdownTheme = EditorView.theme({
-  // Read like a page, not a code editor: proportional font, generous leading.
-  "&": { fontSize: "16px", height: "100%" },
-  ".cm-scroller": {
-    fontFamily:
-      "-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif",
-    lineHeight: "1.7",
-  },
-  ".cm-content": { caretColor: "#e0533d", paddingBottom: "40vh" },
-  ".cm-cursor": { borderLeftColor: "#e0533d" },
+  // Read like a page, not a code editor. Fonts/colors come from theme vars so
+  // Settings can customize them live (see src/lib/theme.tsx).
+  "&": { fontSize: "var(--magma-font-size)", height: "100%" },
+  ".cm-scroller": { fontFamily: "var(--magma-font-editor)", lineHeight: "1.7" },
+  ".cm-content": { caretColor: "var(--magma-accent)", paddingBottom: "40vh" },
+  ".cm-cursor": { borderLeftColor: "var(--magma-accent)" },
   ".cm-line": { padding: "1px 0" },
   ".cm-h1": { fontSize: "1.9em", fontWeight: "700", lineHeight: "1.3" },
   ".cm-h2": { fontSize: "1.45em", fontWeight: "700", lineHeight: "1.3" },
@@ -198,21 +195,21 @@ export const liveMarkdownTheme = EditorView.theme({
   ".cm-strong": { fontWeight: "700" },
   ".cm-em": { fontStyle: "italic" },
   ".cm-code": {
-    fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+    fontFamily: "var(--magma-font-mono)",
     fontSize: "0.9em",
     background: "rgba(125,125,125,0.15)",
     borderRadius: "4px",
     padding: "0.05em 0.3em",
   },
-  ".cm-bullet": { color: "#e0533d", paddingRight: "0.4em" },
+  ".cm-bullet": { color: "var(--magma-accent)", paddingRight: "0.4em" },
   ".cm-quote": {
     fontStyle: "italic",
-    color: "#8a8078",
-    borderLeft: "3px solid rgba(224,83,61,0.4)",
+    color: "var(--magma-muted)",
+    borderLeft: "3px solid color-mix(in srgb, var(--magma-accent) 45%, transparent)",
     paddingLeft: "0.8em",
   },
   ".cm-wikilink": {
-    color: "#e0533d",
+    color: "var(--magma-accent)",
     cursor: "pointer",
     textDecoration: "none",
   },

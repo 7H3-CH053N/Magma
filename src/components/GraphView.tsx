@@ -19,8 +19,13 @@ interface Sim {
   vy: number;
 }
 
-const ACCENT = "#e0533d";
-const AI = "#7c5cff";
+// Read the live theme colors so the graph follows accent/AI customization.
+function themeColor(name: string, fallback: string): string {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
+const ACCENT_FALLBACK = "#e0533d";
+const AI_FALLBACK = "#7c5cff";
 
 /**
  * The graph — Magma's headline view. A small custom force simulation on a
@@ -30,6 +35,8 @@ const AI = "#7c5cff";
  */
 export default function GraphView({ graph, activePath, onSelect }: GraphViewProps) {
   const { t } = useI18n();
+  const ACCENT = themeColor("--magma-accent", ACCENT_FALLBACK);
+  const AI = themeColor("--magma-ai", AI_FALLBACK);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const nodesRef = useRef<Sim[]>([]);
   const activeRef = useRef(activePath);

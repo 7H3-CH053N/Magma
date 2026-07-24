@@ -2,8 +2,34 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Theme tokens as CSS variables so everything — colors, fonts, sizing — can be
+ * customized live from Settings (see src/lib/theme.tsx). Tailwind's magma-*
+ * colors map to these vars, so changing a variable re-themes the whole app.
+ */
 :root {
   color-scheme: light dark;
+
+  --magma-bg: #faf9f7;
+  --magma-panel: #f3f1ee;
+  --magma-ink: #1c1a17;
+  --magma-muted: #6b6b6b;
+  --magma-accent: #e0533d;
+  --magma-ai: #7c5cff;
+
+  --magma-font-ui: Inter, system-ui, -apple-system, sans-serif;
+  --magma-font-editor: -apple-system, BlinkMacSystemFont, Inter, "Segoe UI",
+    system-ui, sans-serif;
+  --magma-font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --magma-font-size: 16px;
+  --magma-reading-width: 720px;
+}
+
+.dark {
+  --magma-bg: #181614;
+  --magma-panel: #201c19;
+  --magma-ink: #ece9e4;
+  --magma-muted: #9a8f82;
 }
 
 html,
@@ -14,26 +40,24 @@ body,
 }
 
 body {
-  @apply bg-magma-bg text-magma-ink font-sans antialiased;
-}
-
-.dark body {
-  @apply bg-[#181614] text-[#ece9e4];
+  @apply bg-magma-bg text-magma-ink antialiased;
+  font-family: var(--magma-font-ui);
 }
 
 /* CodeMirror: strip the framing so the editor reads like a clean page. */
 .cm-editor {
   height: 100%;
-  font-size: 16px;
+  font-size: var(--magma-font-size);
   line-height: 1.7;
 }
 .cm-editor.cm-focused {
   outline: none;
 }
 .cm-scroller {
-  font-family: "Inter", system-ui, sans-serif;
+  font-family: var(--magma-font-editor);
   padding: 1.5rem 2rem;
 }
 .cm-content {
-  max-width: 720px;
+  max-width: var(--magma-reading-width);
+  margin: 0 auto;
 }
