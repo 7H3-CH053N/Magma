@@ -6,6 +6,7 @@ import BacklinksPanel from "./components/BacklinksPanel";
 import Splash from "./components/Splash";
 import Settings from "./components/Settings";
 import FlameIcon from "./components/FlameIcon";
+import PromptDialog from "./components/PromptDialog";
 import { useI18n } from "./lib/i18n";
 import { splitFrontmatter, joinFrontmatter } from "./lib/markdown";
 import {
@@ -49,6 +50,12 @@ export default function App() {
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [remote, setRemote] = useState<RemoteConfig | null>(null);
+  // In-app text prompt (window.prompt doesn't work in the Tauri webview).
+  const [dialog, setDialog] = useState<{
+    title: string;
+    initial: string;
+    onSubmit: (value: string) => void;
+  } | null>(null);
   // The active note's frontmatter, kept out of the editor and re-attached on save.
   const frontmatter = useRef("");
   const saveTimer = useRef<number | null>(null);
@@ -75,9 +82,13 @@ export default function App() {
   );
 
   const refreshNotes = useCallback(async (v: string) => {
-    const [n, f] = await Promise.all([listNotes(v), listFolders(v)]);
-    setNotes(n);
-    setFolders(f);
+    setNotes(await listNotes(v));
+    // Folders are optional — never let their loading break the note list.
+    try {
+      setFolders(await listFolders(v));
+    } catch {
+      setFolders([]);
+    }
   }, []);
 
   const openVault = useCallback(async () => {
@@ -154,19 +165,24 @@ export default function App() {
   }, [vault, flushSave, refreshNotes, selectNote, remote, pushRemote]);
 
   const handleRename = useCallback(
-    async (path: string, currentTitle: string) => {
+    (path: string, currentTitle: string) => {
       if (!vault) return;
-      const next = window.prompt(t("prompt.rename"), currentTitle);
-      if (!next || next === currentTitle) return;
-      flushSave();
-      const newPath = await renameNote(vault, path, next);
-      await refreshNotes(vault);
-      if (activePath === path) await selectNote(newPath);
-      if (remote) {
-        const note = await readNote(vault, newPath);
-        pushRemote(newPath, note.content);
-        deleteRemote(path);
-      }
+      setDialog({
+        title: t("prompt.rename"),
+        initial: currentTitle,
+        onSubmit: async (next) => {
+          if (!next.trim() || next === currentTitle) return;
+          flushSave();
+          const newPath = await renameNote(vault, path, next.trim());
+          await refreshNotes(vault);
+          if (activePath === path) await selectNote(newPath);
+          if (remote) {
+            const note = await readNote(vault, newPath);
+            pushRemote(newPath, note.content);
+            deleteRemote(path);
+          }
+        },
+      });
     },
     [vault, activePath, flushSave, refreshNotes, selectNote, remote, pushRemote, deleteRemote, t]
   );
@@ -188,28 +204,37 @@ export default function App() {
     [vault, activePath, flushSave, refreshNotes, deleteRemote, t]
   );
 
-  const handleCreateFolder = useCallback(async () => {
+  const handleCreateFolder = useCallback(() => {
     if (!vault) return;
-    const name = window.prompt(t("sidebar.newFolderPrompt"));
-    if (!name || !name.trim()) return;
-    await createFolder(vault, name.trim());
-    await refreshNotes(vault);
+    setDialog({
+      title: t("sidebar.newFolderPrompt"),
+      initial: "",
+      onSubmit: async (name) => {
+        if (!name.trim()) return;
+        await createFolder(vault, name.trim());
+        await refreshNotes(vault);
+      },
+    });
   }, [vault, refreshNotes, t]);
 
   const handleMove = useCallback(
-    async (path: string) => {
+    (path: string) => {
       if (!vault) return;
-      const folder = window.prompt(t("sidebar.movePrompt"), "");
-      if (folder === null) return; // cancelled ("" is allowed → move to root)
-      flushSave();
-      const newPath = await moveNote(vault, path, folder.trim());
-      await refreshNotes(vault);
-      if (remote) {
-        const note = await readNote(vault, newPath);
-        pushRemote(newPath, note.content);
-        deleteRemote(path);
-      }
-      if (activePath === path) setActivePath(newPath);
+      setDialog({
+        title: t("sidebar.movePrompt"),
+        initial: "",
+        onSubmit: async (folder) => {
+          flushSave();
+          const newPath = await moveNote(vault, path, folder.trim());
+          await refreshNotes(vault);
+          if (remote) {
+            const note = await readNote(vault, newPath);
+            pushRemote(newPath, note.content);
+            deleteRemote(path);
+          }
+          if (activePath === path) setActivePath(newPath);
+        },
+      });
     },
     [vault, activePath, flushSave, refreshNotes, remote, pushRemote, deleteRemote, t]
   );
@@ -287,6 +312,19 @@ export default function App() {
   return (
     <div className="flex h-screen w-screen overflow-hidden">
       <Splash />
+      {dialog && (
+        <PromptDialog
+          title={dialog.title}
+          initial={dialog.initial}
+          confirmLabel={t("dialog.ok")}
+          cancelLabel={t("dialog.cancel")}
+          onSubmit={(v) => {
+            dialog.onSubmit(v);
+            setDialog(null);
+          }}
+          onCancel={() => setDialog(null)}
+        />
+      )}
       {showSettings && (
         <Settings
           onClose={() => setShowSettings(false)}
