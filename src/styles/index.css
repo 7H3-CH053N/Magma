@@ -144,6 +144,37 @@ body {
   border: none;
   border-top: 1px solid rgba(125, 125, 125, 0.3);
 }
+/* Wikilinks: styled and clickable; the [[…]] text stays in the markdown. */
+.magma-prose .wikilink {
+  color: var(--magma-accent);
+  cursor: pointer;
+  border-radius: 3px;
+}
+.magma-prose .wikilink:hover {
+  text-decoration: underline;
+}
+/* Tables */
+.magma-prose table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.5em 0;
+  overflow: hidden;
+  font-size: 0.95em;
+}
+.magma-prose th,
+.magma-prose td {
+  border: 1px solid rgba(125, 125, 125, 0.35);
+  padding: 0.4em 0.6em;
+  text-align: left;
+  vertical-align: top;
+}
+.magma-prose th {
+  background: rgba(125, 125, 125, 0.12);
+  font-weight: 600;
+}
+.magma-prose .tableWrapper {
+  overflow-x: auto;
+}
 /* Placeholder for an empty document. */
 .magma-prose p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);

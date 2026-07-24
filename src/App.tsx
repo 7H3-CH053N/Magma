@@ -7,6 +7,7 @@ import Splash from "./components/Splash";
 import Settings from "./components/Settings";
 import FlameIcon from "./components/FlameIcon";
 import { useI18n } from "./lib/i18n";
+import { splitFrontmatter, joinFrontmatter } from "./lib/markdown";
 import {
   backlinks as fetchBacklinks,
   buildGraph,
@@ -44,6 +45,8 @@ export default function App() {
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [remote, setRemote] = useState<RemoteConfig | null>(null);
+  // The active note's frontmatter, kept out of the editor and re-attached on save.
+  const frontmatter = useRef("");
   const saveTimer = useRef<number | null>(null);
 
   // Write-through to a remote vault, best-effort — a failed push is logged but
@@ -83,12 +86,28 @@ export default function App() {
     async (path: string) => {
       if (!vault) return;
       const note = await readNote(vault, path);
+      const { frontmatter: fm, body } = splitFrontmatter(note.content);
+      frontmatter.current = fm;
       setActivePath(path);
-      setContent(note.content);
+      setContent(body);
       setView("editor");
       setLinks(await fetchBacklinks(vault, path));
     },
     [vault]
+  );
+
+  // Open a note by its `[[wikilink]]` name (filename stem).
+  const openByName = useCallback(
+    async (name: string) => {
+      if (!vault) return;
+      const stem = (p: string) => {
+        const f = p.split("/").pop() ?? p;
+        return f.replace(/\.md$/i, "");
+      };
+      const found = notes.find((n) => stem(n.path).toLowerCase() === name.toLowerCase());
+      if (found) await selectNote(found.path);
+    },
+    [vault, notes, selectNote]
   );
 
   const flushSave = useCallback(() => {
@@ -102,10 +121,12 @@ export default function App() {
     (next: string) => {
       setContent(next);
       if (!vault || !activePath) return;
+      // Re-attach the note's frontmatter (kept out of the editor) before saving.
+      const full = joinFrontmatter(frontmatter.current, next);
       if (saveTimer.current) window.clearTimeout(saveTimer.current);
       saveTimer.current = window.setTimeout(() => {
-        void writeNote(vault, activePath, next).then(() => {
-          pushRemote(activePath, next);
+        void writeNote(vault, activePath, full).then(() => {
+          pushRemote(activePath, full);
           // Refresh the list so the sidebar title (first heading) updates live.
           void refreshNotes(vault);
         });
@@ -271,7 +292,12 @@ export default function App() {
           ) : activePath ? (
             <>
               <div className="flex-1 overflow-hidden">
-                <Editor key={activePath} value={content} onChange={handleChange} />
+                <Editor
+                  key={activePath}
+                  value={content}
+                  onChange={handleChange}
+                  onOpenLink={openByName}
+                />
               </div>
               <BacklinksPanel backlinks={links} onSelect={selectNote} />
             </>
