@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { Graph } from "../lib/api";
+import { useI18n } from "../lib/i18n";
 
 interface GraphViewProps {
   graph: Graph;
@@ -28,6 +29,7 @@ const AI = "#7c5cff";
  * what Claude contributed.
  */
 export default function GraphView({ graph, activePath, onSelect }: GraphViewProps) {
+  const { t } = useI18n();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const nodesRef = useRef<Sim[]>([]);
   const activeRef = useRef(activePath);
@@ -185,16 +187,18 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
     <div className="relative h-full w-full">
       {graph.nodes.length === 0 && (
         <div className="absolute inset-0 grid place-items-center text-sm text-magma-muted">
-          No notes to graph yet.
+          {t("graph.empty")}
         </div>
       )}
       <canvas ref={canvasRef} className="h-full w-full cursor-pointer" />
       <div className="pointer-events-none absolute bottom-3 right-4 flex gap-4 text-xs text-magma-muted">
         <span className="flex items-center gap-1">
-          <span className="h-2 w-2 rounded-full" style={{ background: ACCENT }} /> note
+          <span className="h-2 w-2 rounded-full" style={{ background: ACCENT }} />{" "}
+          {t("graph.legendNote")}
         </span>
         <span className="flex items-center gap-1">
-          <span className="h-2 w-2 rounded-full" style={{ background: AI }} /> AI-written
+          <span className="h-2 w-2 rounded-full" style={{ background: AI }} />{" "}
+          {t("graph.legendAi")}
         </span>
       </div>
     </div>

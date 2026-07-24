@@ -3,9 +3,14 @@
 //! build on this crate, so the LLM and the user always act on the same model
 //! of the vault.
 
+pub mod ai;
 pub mod links;
 pub mod vault;
 
+pub use ai::{
+    ai_create_note, ai_update_note, find_link_candidates, stamp_ai_author, validate_links,
+    AiWriteResult, BrokenLink, LinkCandidate, LinkCheck,
+};
 pub use links::{
     backlinks, build_graph, extract_links, search, Graph, GraphEdge, GraphNode, SearchHit,
 };

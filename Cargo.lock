@@ -1688,6 +1688,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "magma-mcp"
+version = "0.1.0"
+dependencies = [
+ "magma-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "markup5ever"
 version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

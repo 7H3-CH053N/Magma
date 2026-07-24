@@ -125,9 +125,39 @@ statt Waisen-Notizen abzuladen:
 | M0 | Scaffold | Tauri 2 + React + CI (macOS/Windows) | ✅ |
 | M1 | Vault + Editor | Ordner öffnen, Notizen anlegen/umbenennen/löschen, Live-Markdown mit versteckter Syntax, Bild-Paste, Autosave | ✅ |
 | M2 | Links + Suche + Graph | `[[Wikilinks]]` mit Autocomplete + Cmd/Ctrl-Klick, Backlinks-Panel, Volltextsuche, Graph-View (Canvas-Force-Layout, KI-Notizen markiert) | ✅ |
-| M3 | MCP-Server + KI-Mitautor | Server, semantische Suche, `find_link_candidates`, Link-Validierung, `author: ai` | ⬜ |
-| M4 | Polish | Command Palette, Quick Capture, Bild-Paste, Dark Mode, Onboarding | ⬜ |
-| M5 | Packaging | Installer (DMG/MSI), Auto-Update, Code Signing | ⬜ |
+| M3 | MCP-Server + KI-Mitautor | Eingebauter stdio-MCP-Server (`crates/magma-mcp`), `find_link_candidates`, Link-Validierung mit Vorschlägen, `author: ai`-Stempel, „Mit Claude verbinden"-Config in Settings | ✅ |
+| M4 | Polish | Command Palette, Quick Capture, System-Dark-Mode ✅, Onboarding, i18n (DE/EN) ✅ | 🟡 |
+| M5 | Packaging | Installer (DMG/MSI), CI-Download-Artefakte ✅, Auto-Update, Code Signing | 🟡 |
+| M6 | Online-/Remote-Vault | Vault auf Webserver (WebDAV), Ort in Settings, geräteübergreifender Zugriff | ⬜ |
+
+## M6 — Online-/Remote-Vault (Design)
+
+Ziel: Der Vault kann optional auf einem Webserver liegen; der User trägt den Ort
+in den Settings ein, und jeder Rechner mit Magma greift darauf zu — Daten
+überall verfügbar, ohne dass Magma selbst eine Cloud betreibt.
+
+**Empfohlener Ansatz: WebDAV.** Ein Vault ist ein Ordner mit `.md`-Dateien —
+WebDAV bildet genau das über HTTP ab und wird von gängigem Webspace, Nextcloud,
+Synology u. v. m. unterstützt. Vorteile: offener Standard, kein eigener
+Server-Code nötig, funktioniert mit dem bestehenden „Ordner mit Dateien"-Modell.
+
+- **Storage-Abstraktion**: `magma-core` bekommt ein `VaultBackend`-Trait
+  (`list_notes`, `read_note`, `write_note`, …). Heute: `LocalBackend` (Dateisystem).
+  Neu: `WebDavBackend` (HTTP via `reqwest`, Basic/Bearer-Auth). Die ganze bestehende
+  Logik (Links, Graph, Suche, KI-Mitautor) läuft unverändert über das Trait.
+- **Settings**: Vault-Quelle wählbar — „Lokaler Ordner" oder „Remote (WebDAV)"
+  mit URL + Zugangsdaten. Credentials verschlüsselt im OS-Keychain (Tauri
+  `keyring`), nicht im Klartext.
+- **Lokaler Cache + Offline**: Remote-Dateien werden lokal gecacht; Schreibvorgänge
+  gehen an den Server und aktualisieren den Cache. Einfache
+  Last-Write-Wins-Auflösung mit `ETag`/`Last-Modified`-Prüfung; bei Konflikt eine
+  `.conflict`-Kopie statt Datenverlust.
+- **MCP**: Der MCP-Server nutzt dieselbe Storage-Abstraktion, kann also auch gegen
+  einen Remote-Vault arbeiten.
+
+Aufwand: eigener Meilenstein — Storage-Trait-Refactor + WebDAV-Client + Cache +
+Konflikt-Handling + Settings-UI. Sicherheitskritisch (Auth, Transportverschlüsselung
+via HTTPS erzwingen).
 
 ## Verifikation
 

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { NoteMeta, SearchHit } from "../lib/api";
+import { useI18n } from "../lib/i18n";
 import FlameIcon from "./FlameIcon";
 
 interface SidebarProps {
@@ -31,6 +32,7 @@ export default function Sidebar({
   searchHits,
   onOpenSettings,
 }: SidebarProps) {
+  const { t } = useI18n();
   const [hovered, setHovered] = useState<string | null>(null);
   const searching = query.trim().length > 0;
 
@@ -43,7 +45,7 @@ export default function Sidebar({
           {vault && (
             <button
               onClick={onCreate}
-              title="New note (Cmd/Ctrl+N)"
+              title={t("sidebar.newNote")}
               className="grid h-6 w-6 place-items-center rounded-md text-lg leading-none text-magma-muted transition hover:bg-black/10 dark:hover:bg-white/10"
             >
               +
@@ -51,7 +53,7 @@ export default function Sidebar({
           )}
           <button
             onClick={onOpenSettings}
-            title="Settings"
+            title={t("sidebar.settings")}
             className="grid h-6 w-6 place-items-center rounded-md text-sm leading-none text-magma-muted transition hover:bg-black/10 dark:hover:bg-white/10"
           >
             ⚙
@@ -63,14 +65,14 @@ export default function Sidebar({
         onClick={onOpenVault}
         className="mx-3 mb-2 rounded-lg bg-black/5 px-3 py-1.5 text-left text-sm text-magma-muted transition hover:bg-black/10 dark:bg-white/10 dark:hover:bg-white/20"
       >
-        {vault ? shortenPath(vault) : "Open vault…"}
+        {vault ? shortenPath(vault) : t("sidebar.openVault")}
       </button>
 
       {vault && (
         <input
           value={query}
           onChange={(e) => onQuery(e.target.value)}
-          placeholder="Search notes…"
+          placeholder={t("sidebar.search")}
           className="mx-3 mb-2 rounded-lg border border-black/10 bg-transparent px-3 py-1.5 text-sm outline-none placeholder:text-magma-muted focus:border-magma-accent dark:border-white/10"
         />
       )}
@@ -78,7 +80,7 @@ export default function Sidebar({
       {searching ? (
         <nav className="flex-1 overflow-auto px-2 pb-4">
           {searchHits.length === 0 && (
-            <p className="px-2 py-4 text-sm text-magma-muted">No matches.</p>
+            <p className="px-2 py-4 text-sm text-magma-muted">{t("sidebar.noMatches")}</p>
           )}
           {searchHits.map((h) => (
             <button
@@ -99,7 +101,7 @@ export default function Sidebar({
       <nav className="flex-1 overflow-auto px-2 pb-4">
         {notes.length === 0 && (
           <p className="px-2 py-4 text-sm text-magma-muted">
-            {vault ? "No notes yet." : "Open a folder of markdown files to begin."}
+            {vault ? t("sidebar.noNotes") : t("sidebar.openToBegin")}
           </p>
         )}
         {notes.map((n) => (
@@ -131,14 +133,14 @@ export default function Sidebar({
               <div className="flex shrink-0 items-center">
                 <button
                   onClick={() => onRename(n.path, n.title)}
-                  title="Rename"
+                  title={t("sidebar.rename")}
                   className="grid h-6 w-6 place-items-center rounded text-magma-muted hover:bg-black/10 dark:hover:bg-white/20"
                 >
                   ✎
                 </button>
                 <button
                   onClick={() => onDelete(n.path, n.title)}
-                  title="Delete"
+                  title={t("sidebar.delete")}
                   className="grid h-6 w-6 place-items-center rounded text-magma-muted hover:bg-black/10 dark:hover:bg-white/20"
                 >
                   🗑

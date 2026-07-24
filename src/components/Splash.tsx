@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import FlameIcon from "./FlameIcon";
+import { useI18n } from "../lib/i18n";
 
 /**
  * Startup splash: the flame and the name, then it fades away. Shown as an
  * in-app overlay so it behaves identically on macOS and Windows.
  */
 export default function Splash() {
+  const { t } = useI18n();
   const [leaving, setLeaving] = useState(false);
   const [gone, setGone] = useState(false);
 
@@ -31,7 +33,7 @@ export default function Splash() {
           <FlameIcon size={72} />
         </div>
         <div className="text-2xl font-semibold tracking-tight text-[#f3ede4]">Magma</div>
-        <div className="text-xs text-[#9a8f82]">Your second brain, minus the setup.</div>
+        <div className="text-xs text-[#9a8f82]">{t("app.tagline")}</div>
       </div>
     </div>
   );

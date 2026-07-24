@@ -5,6 +5,8 @@ import GraphView from "./components/GraphView";
 import BacklinksPanel from "./components/BacklinksPanel";
 import Splash from "./components/Splash";
 import Settings from "./components/Settings";
+import FlameIcon from "./components/FlameIcon";
+import { useI18n } from "./lib/i18n";
 import {
   backlinks as fetchBacklinks,
   buildGraph,
@@ -27,6 +29,7 @@ const AUTOSAVE_MS = 600;
 type View = "editor" | "graph";
 
 export default function App() {
+  const { t } = useI18n();
   const [vault, setVault] = useState<string | null>(null);
   const [notes, setNotes] = useState<NoteMeta[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
@@ -113,20 +116,20 @@ export default function App() {
   const handleRename = useCallback(
     async (path: string, currentTitle: string) => {
       if (!vault) return;
-      const next = window.prompt("Rename note", currentTitle);
+      const next = window.prompt(t("prompt.rename"), currentTitle);
       if (!next || next === currentTitle) return;
       flushSave();
       const newPath = await renameNote(vault, path, next);
       await refreshNotes(vault);
       if (activePath === path) await selectNote(newPath);
     },
-    [vault, activePath, flushSave, refreshNotes, selectNote]
+    [vault, activePath, flushSave, refreshNotes, selectNote, t]
   );
 
   const handleDelete = useCallback(
     async (path: string, title: string) => {
       if (!vault) return;
-      if (!window.confirm(`Delete "${title}"? This cannot be undone.`)) return;
+      if (!window.confirm(t("confirm.delete", { title }))) return;
       flushSave();
       await deleteNote(vault, path);
       await refreshNotes(vault);
@@ -136,7 +139,7 @@ export default function App() {
         setLinks([]);
       }
     },
-    [vault, activePath, flushSave, refreshNotes]
+    [vault, activePath, flushSave, refreshNotes, t]
   );
 
   const handlePasteImage = useCallback(
@@ -189,7 +192,7 @@ export default function App() {
   return (
     <div className="flex h-screen w-screen overflow-hidden">
       <Splash />
-      {showSettings && <Settings onClose={() => setShowSettings(false)} />}
+      {showSettings && <Settings onClose={() => setShowSettings(false)} vault={vault} />}
       <Sidebar
         vault={vault}
         notes={notes}
@@ -208,8 +211,8 @@ export default function App() {
       <main className="flex flex-1 flex-col overflow-hidden">
         {vault && (
           <div className="flex items-center gap-1 border-b border-black/5 px-3 py-1.5 dark:border-white/10">
-            <ViewTab label="Editor" active={view === "editor"} onClick={() => setView("editor")} />
-            <ViewTab label="Graph" active={view === "graph"} onClick={showGraph} />
+            <ViewTab label={t("view.editor")} active={view === "editor"} onClick={() => setView("editor")} />
+            <ViewTab label={t("view.graph")} active={view === "graph"} onClick={showGraph} />
           </div>
         )}
 
@@ -231,7 +234,12 @@ export default function App() {
               <BacklinksPanel backlinks={links} onSelect={selectNote} />
             </>
           ) : (
-            <EmptyState connected={hasTauri} hasVault={!!vault} onCreate={createNewNote} />
+            <EmptyState
+              connected={hasTauri}
+              hasVault={!!vault}
+              onCreate={createNewNote}
+              onOpenVault={openVault}
+            />
           )}
         </div>
       </main>
@@ -266,35 +274,31 @@ function EmptyState({
   connected,
   hasVault,
   onCreate,
+  onOpenVault,
 }: {
   connected: boolean;
   hasVault: boolean;
   onCreate: () => void;
+  onOpenVault: () => void;
 }) {
+  const { t } = useI18n();
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-magma-muted">
-      <div className="h-10 w-10 rounded-full bg-magma-accent/20" />
-      <h1 className="text-lg font-medium text-magma-ink dark:text-[#ece9e4]">
-        Your second brain, minus the setup.
+    <div className="flex h-full flex-col items-center justify-center gap-4 px-8 text-center text-magma-muted">
+      <FlameIcon size={44} />
+      <h1 className="text-xl font-semibold tracking-tight text-magma-ink dark:text-[#ece9e4]">
+        {t("app.tagline")}
       </h1>
-      <p className="max-w-sm text-sm">
-        {hasVault
-          ? "Pick a note on the left, or create a new one."
-          : "Open a folder of markdown files to start. Your notes stay plain files on your disk — readable by you and, when you turn it on, by Claude."}
+      <p className="max-w-sm text-sm leading-relaxed">
+        {hasVault ? t("empty.pickOrCreate") : t("empty.openVault")}
       </p>
-      {hasVault && (
-        <button
-          onClick={onCreate}
-          className="mt-1 rounded-lg bg-magma-accent px-3 py-1.5 text-sm font-medium text-white transition hover:opacity-90"
-        >
-          New note
-        </button>
-      )}
+      <button
+        onClick={hasVault ? onCreate : onOpenVault}
+        className="mt-1 rounded-xl bg-magma-accent px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:opacity-90 active:scale-[0.98]"
+      >
+        {hasVault ? t("empty.newNote") : t("sidebar.openVault")}
+      </button>
       {!connected && (
-        <p className="mt-2 text-xs opacity-60">
-          (Running in the browser preview — launch the desktop app for full vault
-          access.)
-        </p>
+        <p className="mt-2 text-xs opacity-60">{t("empty.browserPreview")}</p>
       )}
     </div>
   );

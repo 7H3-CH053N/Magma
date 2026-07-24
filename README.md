@@ -9,9 +9,12 @@ embedded MCP server so Claude (and other agents) can read your vault *and* write
 new notes that are correctly, logically linked into what you already have — not
 orphaned dumps.
 
-> Status: early. This repo currently contains milestone **M0** — a running
-> Tauri 2 + React scaffold and CI. See [`docs/PLAN.md`](docs/PLAN.md) for the
-> full product plan, the Obsidian research it's based on, and the roadmap.
+> Status: early but usable. Milestones **M0–M3** are in: vault CRUD, a
+> live-markdown editor, `[[wikilinks]]` with autocomplete, backlinks, full-text
+> search, a graph view, and a built-in MCP server for Claude. Plus a flame icon,
+> startup splash, an About/Settings panel, and German/English localization.
+> See [`docs/PLAN.md`](docs/PLAN.md) for the research, roadmap, and the remote
+> vault design (M6).
 
 ## Why Magma
 
@@ -55,13 +58,32 @@ cargo test -p magma-core   # run the vault/core unit tests
 npm run tauri build        # produce a desktop bundle (DMG / MSI)
 ```
 
+## Connect to Claude
+
+Magma ships an MCP server (`magma-mcp`) so Claude can read your vault and
+co-author correctly linked notes. Add it to your MCP client config:
+
+```json
+{
+  "mcpServers": {
+    "magma": { "command": "magma-mcp", "args": ["/path/to/your/vault"] }
+  }
+}
+```
+
+The write tools guide the model to call `find_link_candidates` first, then
+validate every `[[wikilink]]` it writes — broken links come back with
+suggestions instead of dead ends. AI-written notes are stamped `author: ai` and
+shown in violet in the graph. Set `MAGMA_MCP_ALLOW_WRITE=0` for read-only.
+
 ## Layout
 
 ```
-src/                 React UI (Sidebar, live-markdown Editor, app shell)
+src/                 React UI (Sidebar, live-markdown Editor, Graph, Settings)
 src-tauri/           Tauri desktop shell — thin command layer over magma-core
-crates/magma-core/   Pure Rust vault logic (list/read/write notes, AI-authored
-                     detection, path safety) — testable on any platform
+crates/magma-core/   Pure Rust vault logic: notes, links, graph, search, and the
+                     AI co-authoring rules — testable on any platform
+crates/magma-mcp/    Built-in MCP server (stdio JSON-RPC) over magma-core
 docs/PLAN.md         Product plan, research, and roadmap
 ```
 

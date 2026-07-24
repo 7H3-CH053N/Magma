@@ -21,8 +21,8 @@ jobs:
       - run: npm ci
       - name: Build frontend
         run: npm run build
-      - name: Core crate tests
-        run: cargo test -p magma-core --locked
+      - name: Rust tests (core + MCP server)
+        run: cargo test -p magma-core -p magma-mcp --locked
 
   # Full desktop bundle build on the platforms Magma targets.
   bundle:
@@ -39,8 +39,16 @@ jobs:
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: "src-tauri -> target"
       - run: npm ci
       - name: Build desktop app
         run: npm run tauri build
+      - name: Upload desktop bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: magma-${{ matrix.os }}
+          path: |
+            target/release/bundle/dmg/*.dmg
+            target/release/bundle/macos/*.app.tar.gz
+            target/release/bundle/nsis/*.exe
+            target/release/bundle/msi/*.msi
+          if-no-files-found: ignore
