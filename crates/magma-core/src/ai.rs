@@ -120,14 +120,16 @@ pub struct AiWriteResult {
 }
 
 /// Create a note authored by the AI: stamp `author: ai` into frontmatter, write
-/// it, and return the link check so the caller sees any broken links.
+/// it (optionally inside `folder` to group related notes), and return the link
+/// check so the caller sees any broken links.
 pub fn ai_create_note(
     vault: &Path,
+    folder: Option<&str>,
     title: &str,
     content: &str,
 ) -> std::io::Result<AiWriteResult> {
     let stamped = stamp_ai_author(content);
-    let path = vault::create_note(vault, title, &stamped)?;
+    let path = vault::create_note_in(vault, folder.unwrap_or(""), title, &stamped)?;
     let link_check = validate_links(vault, &stamped)?;
     Ok(AiWriteResult { path, link_check })
 }
@@ -313,7 +315,7 @@ mod tests {
     fn ai_create_stamps_and_checks() {
         let v = tmp_vault();
         vault::write_note(&v, "Bread.md", "about bread").unwrap();
-        let res = ai_create_note(&v, "Sourdough", "A [[Bread]] variant. See [[Missing]].").unwrap();
+        let res = ai_create_note(&v, None, "Sourdough", "A [[Bread]] variant. See [[Missing]].").unwrap();
         assert_eq!(res.path, "Sourdough.md");
         let content = vault::read_note(&v, &res.path).unwrap().content;
         assert!(content.contains("author: ai"));
@@ -322,6 +324,15 @@ mod tests {
         assert_eq!(res.link_check.broken[0].target, "Missing");
         // The freshly created note is detected as AI-authored by the vault.
         assert!(vault::read_note(&v, &res.path).unwrap().ai_authored);
+        fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn ai_create_places_note_in_folder() {
+        let v = tmp_vault();
+        let res = ai_create_note(&v, Some("Profil Alex"), "Tech-Stack", "notes").unwrap();
+        assert_eq!(res.path, "Profil Alex/Tech-Stack.md");
+        assert!(v.join("Profil Alex/Tech-Stack.md").exists());
         fs::remove_dir_all(&v).ok();
     }
 }

@@ -170,15 +170,44 @@ pub fn slugify(title: &str) -> String {
 /// Create a new note from a title, returning its vault-relative path. If a note
 /// with that name exists, a numeric suffix is appended so nothing is clobbered.
 pub fn create_note(vault: &Path, title: &str, content: &str) -> std::io::Result<String> {
+    create_note_in(vault, "", title, content)
+}
+
+/// Like `create_note`, but places the note inside `folder` (a vault-relative
+/// subdirectory, created if needed). Used to group related notes together —
+/// e.g. an LLM filing a batch of linked notes under one folder.
+pub fn create_note_in(
+    vault: &Path,
+    folder: &str,
+    title: &str,
+    content: &str,
+) -> std::io::Result<String> {
     let stem = slugify(title);
-    let mut rel = format!("{stem}.md");
+    let dir = sanitize_folder(folder);
+    let prefix = if dir.is_empty() {
+        String::new()
+    } else {
+        format!("{dir}/")
+    };
+    let mut rel = format!("{prefix}{stem}.md");
     let mut n = 2;
     while vault.join(&rel).exists() {
-        rel = format!("{stem} {n}.md");
+        rel = format!("{prefix}{stem} {n}.md");
         n += 1;
     }
     write_note(vault, &rel, content)?;
     Ok(rel)
+}
+
+/// Clean a folder path: slugify each segment, drop empty/`..` segments.
+fn sanitize_folder(folder: &str) -> String {
+    folder
+        .split(['/', '\\'])
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty() && *s != "..")
+        .map(slugify)
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// Rename a note to a new title within the same folder. Returns the new

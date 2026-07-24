@@ -36,6 +36,63 @@ export default function Sidebar({
   const [hovered, setHovered] = useState<string | null>(null);
   const searching = query.trim().length > 0;
 
+  // Group notes: root-level ones, then a section per folder (so related notes
+  // Claude or you filed under a folder show together).
+  const rootNotes = notes.filter((n) => folderOf(n.path) === "");
+  const folders = Array.from(
+    notes.reduce((map, n) => {
+      const f = folderOf(n.path);
+      if (f) map.set(f, [...(map.get(f) ?? []), n]);
+      return map;
+    }, new Map<string, NoteMeta[]>())
+  ).sort(([a], [b]) => a.localeCompare(b));
+
+  const renderNote = (n: NoteMeta) => (
+    <div
+      key={n.path}
+      onMouseEnter={() => setHovered(n.path)}
+      onMouseLeave={() => setHovered((h) => (h === n.path ? null : h))}
+      className={`group flex items-center gap-1 rounded-md pr-1 transition ${
+        activePath === n.path
+          ? "bg-magma-accent/10"
+          : "hover:bg-black/5 dark:hover:bg-white/10"
+      }`}
+    >
+      <button
+        onClick={() => onSelect(n.path)}
+        className={`flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm ${
+          activePath === n.path ? "text-magma-accent" : ""
+        }`}
+      >
+        <span className="truncate">{n.title}</span>
+        {n.aiAuthored && (
+          <span
+            title="Written by an AI assistant"
+            className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-magma-ai"
+          />
+        )}
+      </button>
+      {hovered === n.path && (
+        <div className="flex shrink-0 items-center">
+          <button
+            onClick={() => onRename(n.path, n.title)}
+            title={t("sidebar.rename")}
+            className="grid h-6 w-6 place-items-center rounded text-magma-muted hover:bg-black/10 dark:hover:bg-white/20"
+          >
+            ✎
+          </button>
+          <button
+            onClick={() => onDelete(n.path, n.title)}
+            title={t("sidebar.delete")}
+            className="grid h-6 w-6 place-items-center rounded text-magma-muted hover:bg-black/10 dark:hover:bg-white/20"
+          >
+            🗑
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <aside className="flex h-full w-64 shrink-0 flex-col border-r border-black/5 bg-magma-panel/60 dark:border-white/5 dark:bg-white/5">
       <div className="flex items-center gap-2 px-4 py-3">
@@ -98,61 +155,32 @@ export default function Sidebar({
           ))}
         </nav>
       ) : (
-      <nav className="flex-1 overflow-auto px-2 pb-4">
-        {notes.length === 0 && (
-          <p className="px-2 py-4 text-sm text-magma-muted">
-            {vault ? t("sidebar.noNotes") : t("sidebar.openToBegin")}
-          </p>
-        )}
-        {notes.map((n) => (
-          <div
-            key={n.path}
-            onMouseEnter={() => setHovered(n.path)}
-            onMouseLeave={() => setHovered((h) => (h === n.path ? null : h))}
-            className={`group flex items-center gap-1 rounded-md pr-1 transition ${
-              activePath === n.path
-                ? "bg-magma-accent/10"
-                : "hover:bg-black/5 dark:hover:bg-white/10"
-            }`}
-          >
-            <button
-              onClick={() => onSelect(n.path)}
-              className={`flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm ${
-                activePath === n.path ? "text-magma-accent" : ""
-              }`}
-            >
-              <span className="truncate">{n.title}</span>
-              {n.aiAuthored && (
-                <span
-                  title="Written by an AI assistant"
-                  className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-magma-ai"
-                />
-              )}
-            </button>
-            {hovered === n.path && (
-              <div className="flex shrink-0 items-center">
-                <button
-                  onClick={() => onRename(n.path, n.title)}
-                  title={t("sidebar.rename")}
-                  className="grid h-6 w-6 place-items-center rounded text-magma-muted hover:bg-black/10 dark:hover:bg-white/20"
-                >
-                  ✎
-                </button>
-                <button
-                  onClick={() => onDelete(n.path, n.title)}
-                  title={t("sidebar.delete")}
-                  className="grid h-6 w-6 place-items-center rounded text-magma-muted hover:bg-black/10 dark:hover:bg-white/20"
-                >
-                  🗑
-                </button>
+        <nav className="flex-1 overflow-auto px-2 pb-4">
+          {notes.length === 0 && (
+            <p className="px-2 py-4 text-sm text-magma-muted">
+              {vault ? t("sidebar.noNotes") : t("sidebar.openToBegin")}
+            </p>
+          )}
+          {/* Root-level notes first, then one section per folder. */}
+          {rootNotes.map(renderNote)}
+          {folders.map(([folder, items]) => (
+            <div key={folder} className="mt-2">
+              <div className="flex items-center gap-1 px-2 py-1 text-xs font-medium uppercase tracking-wide text-magma-muted">
+                <span>▾</span>
+                <span className="truncate">{folder}</span>
               </div>
-            )}
-          </div>
-        ))}
-      </nav>
+              <div className="pl-2">{items.map(renderNote)}</div>
+            </div>
+          ))}
+        </nav>
       )}
     </aside>
   );
+}
+
+function folderOf(path: string): string {
+  const i = path.lastIndexOf("/");
+  return i === -1 ? "" : path.slice(0, i);
 }
 
 function shortenPath(p: string): string {

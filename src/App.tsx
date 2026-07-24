@@ -211,6 +211,20 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [createNewNote]);
 
+  // Keep the sidebar in sync with the files on disk — notes created by Claude
+  // (via MCP) or edited elsewhere appear without restarting. Refresh when the
+  // window regains focus and on a gentle interval while a vault is open.
+  useEffect(() => {
+    if (!vault) return;
+    const sync = () => void refreshNotes(vault);
+    window.addEventListener("focus", sync);
+    const id = window.setInterval(sync, 4000);
+    return () => {
+      window.removeEventListener("focus", sync);
+      window.clearInterval(id);
+    };
+  }, [vault, refreshNotes]);
+
   useEffect(() => {
     return () => {
       if (saveTimer.current) window.clearTimeout(saveTimer.current);

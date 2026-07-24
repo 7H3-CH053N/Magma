@@ -138,7 +138,8 @@ impl Server {
                 self.ensure_write()?;
                 let title = str_arg(args, "title")?;
                 let content = str_arg(args, "content")?;
-                let res = core::ai_create_note(v, &title, &content).map_err(io)?;
+                let folder = args.get("folder").and_then(|f| f.as_str());
+                let res = core::ai_create_note(v, folder, &title, &content).map_err(io)?;
                 Ok(json!(res))
             }
             "update_note" => {
@@ -207,12 +208,13 @@ fn tools_spec() -> Value {
         },
         {
             "name": "create_note",
-            "description": "Create a new note authored by the AI (frontmatter author: ai is added automatically). Reference related notes with [[Title]] wikilinks — call find_link_candidates first to know which. The response reports resolved and broken links; fix any broken ones with a follow-up update_note.",
+            "description": "Create a new note authored by the AI (frontmatter author: ai is added automatically). Reference related notes with [[Name]] wikilinks — call find_link_candidates first and link by each candidate's `name`. When creating several related notes in one task, pass the SAME `folder` for all of them so they are grouped together instead of cluttering the vault root. The response reports resolved and broken links; fix any broken ones with a follow-up update_note.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "title": { "type": "string" },
-                    "content": { "type": "string", "description": "Markdown body. Use [[Title]] to link existing notes." }
+                    "content": { "type": "string", "description": "Markdown body. Use [[Name]] to link existing notes (a note's link name is its filename, returned as `name` by find_link_candidates)." },
+                    "folder": { "type": "string", "description": "Optional vault-relative folder to file the note under (e.g. \"Profil Alex Januschewsky\"). Use the same folder for a related batch." }
                 },
                 "required": ["title", "content"]
             }
