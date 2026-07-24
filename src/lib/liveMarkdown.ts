@@ -34,6 +34,33 @@ class BulletWidget extends WidgetType {
 }
 const bullet = Decoration.replace({ widget: new BulletWidget() });
 
+class WikiWidget extends WidgetType {
+  constructor(readonly title: string) {
+    super();
+  }
+  eq(other: WikiWidget) {
+    return other.title === this.title;
+  }
+  toDOM() {
+    const span = document.createElement("span");
+    span.className = "cm-wikilink";
+    span.textContent = this.title;
+    return span;
+  }
+}
+
+/** All `[[wikilink]]` spans within [from,to), as absolute doc offsets. */
+function wikilinkRanges(text: string, offset: number) {
+  const out: { from: number; to: number; title: string }[] = [];
+  const re = /\[\[([^\]\n]+)\]\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const shown = m[1].split("|").pop()!.trim();
+    out.push({ from: offset + m.index, to: offset + m.index + m[0].length, title: shown });
+  }
+  return out;
+}
+
 function activeLines(view: EditorView): Set<number> {
   const lines = new Set<number>();
   for (const r of view.state.selection.ranges) {
@@ -49,6 +76,25 @@ function buildDecorations(view: EditorView): DecorationSet {
   const active = activeLines(view);
   const doc = view.state.doc;
 
+  // Wikilinks first: compute their spans so we can (a) render them cleanly and
+  // (b) tell the lezer pass to leave link marks inside them alone (avoids
+  // overlapping replace decorations).
+  const wikis: { from: number; to: number; title: string }[] = [];
+  for (const { from, to } of view.visibleRanges) {
+    wikis.push(...wikilinkRanges(doc.sliceString(from, to), from));
+  }
+  const insideWiki = (pos: number) => wikis.some((w) => pos >= w.from && pos < w.to);
+  for (const w of wikis) {
+    const lineNo = doc.lineAt(w.from).number;
+    if (active.has(lineNo)) {
+      marks.push(Decoration.mark({ class: "cm-wikilink" }).range(w.from, w.to));
+    } else {
+      marks.push(
+        Decoration.replace({ widget: new WikiWidget(w.title) }).range(w.from, w.to)
+      );
+    }
+  }
+
   for (const { from, to } of view.visibleRanges) {
     syntaxTree(view.state).iterate({
       from,
@@ -56,6 +102,7 @@ function buildDecorations(view: EditorView): DecorationSet {
       enter: (node) => {
         const lineNo = doc.lineAt(node.from).number;
         const isActive = active.has(lineNo);
+        if (insideWiki(node.from)) return; // handled by the wikilink pass
 
         // Heading styling applies to the whole line.
         const hClass = HEADING_CLASS[node.name];
@@ -72,6 +119,9 @@ function buildDecorations(view: EditorView): DecorationSet {
             break;
           case "InlineCode":
             marks.push(Decoration.mark({ class: "cm-code" }).range(node.from, node.to));
+            break;
+          case "Blockquote":
+            marks.push(Decoration.mark({ class: "cm-quote" }).range(node.from, node.to));
             break;
         }
 
@@ -90,6 +140,13 @@ function buildDecorations(view: EditorView): DecorationSet {
           case "LinkMark":
             if (node.to > node.from) marks.push(hidden.range(node.from, node.to));
             break;
+          case "QuoteMark": {
+            // Hide "> " including a trailing space.
+            let end = node.to;
+            if (doc.sliceString(end, end + 1) === " ") end += 1;
+            marks.push(hidden.range(node.from, end));
+            break;
+          }
           case "ListMark": {
             // Render "-", "*", "+" bullets as a real bullet glyph.
             const ch = doc.sliceString(node.from, node.to);
@@ -124,8 +181,18 @@ export const liveMarkdown = ViewPlugin.fromClass(
 // Visual styling for the rendered marks. Kept with the extension so the
 // look and the logic travel together.
 export const liveMarkdownTheme = EditorView.theme({
-  ".cm-h1": { fontSize: "1.7em", fontWeight: "700", lineHeight: "1.3" },
-  ".cm-h2": { fontSize: "1.4em", fontWeight: "700", lineHeight: "1.3" },
+  // Read like a page, not a code editor: proportional font, generous leading.
+  "&": { fontSize: "16px", height: "100%" },
+  ".cm-scroller": {
+    fontFamily:
+      "-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif",
+    lineHeight: "1.7",
+  },
+  ".cm-content": { caretColor: "#e0533d", paddingBottom: "40vh" },
+  ".cm-cursor": { borderLeftColor: "#e0533d" },
+  ".cm-line": { padding: "1px 0" },
+  ".cm-h1": { fontSize: "1.9em", fontWeight: "700", lineHeight: "1.3" },
+  ".cm-h2": { fontSize: "1.45em", fontWeight: "700", lineHeight: "1.3" },
   ".cm-h3": { fontSize: "1.2em", fontWeight: "600" },
   ".cm-h4, .cm-h5, .cm-h6": { fontWeight: "600" },
   ".cm-strong": { fontWeight: "700" },
@@ -138,4 +205,15 @@ export const liveMarkdownTheme = EditorView.theme({
     padding: "0.05em 0.3em",
   },
   ".cm-bullet": { color: "#e0533d", paddingRight: "0.4em" },
+  ".cm-quote": {
+    fontStyle: "italic",
+    color: "#8a8078",
+    borderLeft: "3px solid rgba(224,83,61,0.4)",
+    paddingLeft: "0.8em",
+  },
+  ".cm-wikilink": {
+    color: "#e0533d",
+    cursor: "pointer",
+    textDecoration: "none",
+  },
 });
