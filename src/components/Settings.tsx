@@ -2,7 +2,13 @@ import { useEffect, useState } from "react";
 import FlameIcon from "./FlameIcon";
 import { useI18n, type Lang } from "../lib/i18n";
 import { useTheme, FONT_PRESETS, type ThemeMode } from "../lib/theme";
-import { hasTauri, installMcp, mcpConfig, type RemoteConfig } from "../lib/api";
+import {
+  hasTauri,
+  importWordpress,
+  installMcp,
+  mcpConfig,
+  type RemoteConfig,
+} from "../lib/api";
 
 interface SettingsProps {
   onClose: () => void;
@@ -50,6 +56,33 @@ export default function Settings({
   useEffect(() => {
     if (hasTauri && vault) mcpConfig(vault).then(setConfigText).catch(() => {});
   }, [vault]);
+
+  // WordPress import state.
+  const [impUrl, setImpUrl] = useState("");
+  const [impFolder, setImpFolder] = useState("");
+  const [impBusy, setImpBusy] = useState(false);
+  const [impDone, setImpDone] = useState<string | null>(null);
+  const [impErr, setImpErr] = useState<string | null>(null);
+
+  const runImport = async () => {
+    if (!vault || !impUrl.trim()) return;
+    setImpErr(null);
+    setImpDone(null);
+    setImpBusy(true);
+    try {
+      const count = await importWordpress(vault, impFolder.trim(), impUrl.trim());
+      setImpDone(
+        t("settings.importDone", {
+          count: String(count),
+          folder: impFolder.trim() || "/",
+        })
+      );
+    } catch (e) {
+      setImpErr(String(e));
+    } finally {
+      setImpBusy(false);
+    }
+  };
 
   const install = async () => {
     if (!vault) return;
@@ -238,6 +271,43 @@ export default function Settings({
               {t("settings.remoteNote")}
             </p>
           </div>
+        </section>
+
+        {/* Import WordPress */}
+        <section className="mb-5">
+          <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-magma-muted">
+            {t("settings.importTitle")}
+          </label>
+          <p className="mb-2 text-xs text-magma-muted">{t("settings.importBody")}</p>
+          {!vault ? (
+            <p className="text-xs text-magma-muted opacity-80">{t("settings.mcpNoVault")}</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <input
+                value={impUrl}
+                onChange={(e) => setImpUrl(e.target.value)}
+                placeholder={t("settings.importUrl")}
+                className="rounded-lg border border-black/10 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-magma-accent dark:border-white/10"
+              />
+              <input
+                value={impFolder}
+                onChange={(e) => setImpFolder(e.target.value)}
+                placeholder={t("settings.importFolder")}
+                className="rounded-lg border border-black/10 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-magma-accent dark:border-white/10"
+              />
+              <button
+                onClick={runImport}
+                disabled={impBusy || !impUrl.trim()}
+                className="self-start rounded-lg bg-magma-accent px-3 py-1.5 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+              >
+                {impBusy ? t("settings.importing") : t("settings.importRun")}
+              </button>
+              {impDone && (
+                <p className="text-xs text-green-600 dark:text-green-400">{impDone}</p>
+              )}
+              {impErr && <p className="text-xs text-red-500">{impErr}</p>}
+            </div>
+          )}
         </section>
 
         {/* Connect to Claude */}

@@ -55,6 +55,14 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "settings.description":
       "A beautiful, local-first, LLM-native second brain. Your notes stay plain markdown files on your disk.",
     "settings.license": "Released under the terms in the project LICENSE.",
+    "settings.importTitle": "Import WordPress blog",
+    "settings.importBody":
+      "Pull every post into a folder as linked notes — grouped by category and tag, then searchable and available to Claude.",
+    "settings.importFolder": "Target folder",
+    "settings.importUrl": "Blog URL (e.g. https://myblog.com)",
+    "settings.importRun": "Import",
+    "settings.importing": "Importing… this can take a minute",
+    "settings.importDone": "Imported {count} notes into \"{folder}\".",
     "settings.connectTitle": "Connect to Claude",
     "settings.connectBody":
       "Let Claude read and co-author your vault. One click sets up Claude Desktop for you.",
@@ -126,6 +134,14 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "settings.description":
       "Ein schönes, lokales, LLM-natives zweites Gehirn. Deine Notizen bleiben einfache Markdown-Dateien auf deiner Festplatte.",
     "settings.license": "Veröffentlicht unter den Bedingungen der LICENSE des Projekts.",
+    "settings.importTitle": "WordPress-Blog importieren",
+    "settings.importBody":
+      "Hol alle Beiträge als verlinkte Notizen in einen Ordner — gruppiert nach Kategorie und Tag, dann durchsuchbar und für Claude verfügbar.",
+    "settings.importFolder": "Zielordner",
+    "settings.importUrl": "Blog-URL (z. B. https://meinblog.at)",
+    "settings.importRun": "Importieren",
+    "settings.importing": "Importiere… das kann eine Minute dauern",
+    "settings.importDone": "{count} Notizen in „{folder}“ importiert.",
     "settings.connectTitle": "Mit Claude verbinden",
     "settings.connectBody":
       "Lass Claude deinen Vault lesen und mitschreiben. Ein Klick richtet Claude Desktop für dich ein.",

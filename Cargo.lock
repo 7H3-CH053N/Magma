@@ -1673,6 +1673,7 @@ name = "magma"
 version = "0.1.0"
 dependencies = [
  "magma-core",
+ "magma-import",
  "magma-mcp",
  "magma-webdav",
  "serde",
@@ -1687,6 +1688,16 @@ name = "magma-core"
 version = "0.1.0"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "magma-import"
+version = "0.1.0"
+dependencies = [
+ "magma-core",
+ "regex",
+ "serde_json",
+ "ureq",
 ]
 
 [[package]]

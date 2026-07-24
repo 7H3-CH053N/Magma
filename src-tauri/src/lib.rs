@@ -79,6 +79,21 @@ fn list_folders(vault: String) -> Result<Vec<String>, String> {
     vault::list_folders(&PathBuf::from(vault)).map_err(|e| e.to_string())
 }
 
+/// Import a WordPress blog into a folder, returning how many notes were written.
+#[tauri::command]
+async fn import_wordpress(
+    vault: String,
+    folder: String,
+    site_url: String,
+) -> Result<usize, String> {
+    // Network + file writes can take a while — run off the main thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        magma_import::import_wordpress(&PathBuf::from(vault), &folder, &site_url)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn save_asset(vault: String, file_name: String, bytes: Vec<u8>) -> Result<String, String> {
     let root = PathBuf::from(vault);
@@ -279,6 +294,7 @@ pub fn run() {
             move_note,
             create_folder,
             list_folders,
+            import_wordpress,
             save_asset,
             build_graph,
             backlinks,

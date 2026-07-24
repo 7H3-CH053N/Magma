@@ -17,6 +17,7 @@ tauri-build = { version = "2", features = [] }
 magma-core = { path = "../crates/magma-core" }
 magma-mcp = { path = "../crates/magma-mcp" }
 magma-webdav = { path = "../crates/magma-webdav" }
+magma-import = { path = "../crates/magma-import" }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }

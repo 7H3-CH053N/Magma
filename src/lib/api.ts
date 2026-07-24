@@ -72,6 +72,15 @@ export async function listFolders(vault: string): Promise<string[]> {
   return invoke<string[]>("list_folders", { vault });
 }
 
+/** Import a WordPress blog into a folder; returns the number of notes written. */
+export async function importWordpress(
+  vault: string,
+  folder: string,
+  siteUrl: string
+): Promise<number> {
+  return invoke<number>("import_wordpress", { vault, folder, siteUrl });
+}
+
 /** Save pasted image bytes into the vault; returns the vault-relative path. */
 export async function saveAsset(
   vault: string,
