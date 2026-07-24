@@ -1,0 +1,9 @@
+[package]
+name = "magma-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+description = "Vault indexing and note operations for Magma — shared by the desktop app and the MCP server."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }

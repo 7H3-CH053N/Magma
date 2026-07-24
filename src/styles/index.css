@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  @apply bg-magma-bg text-magma-ink font-sans antialiased;
+}
+
+.dark body {
+  @apply bg-[#181614] text-[#ece9e4];
+}
+
+/* CodeMirror: strip the framing so the editor reads like a clean page. */
+.cm-editor {
+  height: 100%;
+  font-size: 16px;
+  line-height: 1.7;
+}
+.cm-editor.cm-focused {
+  outline: none;
+}
+.cm-scroller {
+  font-family: "Inter", system-ui, sans-serif;
+  padding: 1.5rem 2rem;
+}
+.cm-content {
+  max-width: 720px;
+}
