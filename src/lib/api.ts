@@ -54,6 +54,24 @@ export async function deleteNote(vault: string, path: string): Promise<void> {
   return invoke("delete_note", { vault, path });
 }
 
+/** Move a note into a folder ("" = root); returns the new path. */
+export async function moveNote(
+  vault: string,
+  path: string,
+  folder: string
+): Promise<string> {
+  return invoke<string>("move_note", { vault, path, folder });
+}
+
+export async function createFolder(vault: string, name: string): Promise<string> {
+  return invoke<string>("create_folder", { vault, name });
+}
+
+export async function listFolders(vault: string): Promise<string[]> {
+  if (!hasTauri) return [];
+  return invoke<string[]>("list_folders", { vault });
+}
+
 /** Save pasted image bytes into the vault; returns the vault-relative path. */
 export async function saveAsset(
   vault: string,

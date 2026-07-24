@@ -11,10 +11,13 @@ import { splitFrontmatter, joinFrontmatter } from "./lib/markdown";
 import {
   backlinks as fetchBacklinks,
   buildGraph,
+  createFolder,
   createNote,
   deleteNote,
   hasTauri,
+  listFolders,
   listNotes,
+  moveNote,
   pickVault,
   readNote,
   remoteConnect,
@@ -36,6 +39,7 @@ export default function App() {
   const { t } = useI18n();
   const [vault, setVault] = useState<string | null>(null);
   const [notes, setNotes] = useState<NoteMeta[]>([]);
+  const [folders, setFolders] = useState<string[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [content, setContent] = useState("");
   const [view, setView] = useState<View>("editor");
@@ -71,7 +75,9 @@ export default function App() {
   );
 
   const refreshNotes = useCallback(async (v: string) => {
-    setNotes(await listNotes(v));
+    const [n, f] = await Promise.all([listNotes(v), listFolders(v)]);
+    setNotes(n);
+    setFolders(f);
   }, []);
 
   const openVault = useCallback(async () => {
@@ -182,6 +188,32 @@ export default function App() {
     [vault, activePath, flushSave, refreshNotes, deleteRemote, t]
   );
 
+  const handleCreateFolder = useCallback(async () => {
+    if (!vault) return;
+    const name = window.prompt(t("sidebar.newFolderPrompt"));
+    if (!name || !name.trim()) return;
+    await createFolder(vault, name.trim());
+    await refreshNotes(vault);
+  }, [vault, refreshNotes, t]);
+
+  const handleMove = useCallback(
+    async (path: string) => {
+      if (!vault) return;
+      const folder = window.prompt(t("sidebar.movePrompt"), "");
+      if (folder === null) return; // cancelled ("" is allowed → move to root)
+      flushSave();
+      const newPath = await moveNote(vault, path, folder.trim());
+      await refreshNotes(vault);
+      if (remote) {
+        const note = await readNote(vault, newPath);
+        pushRemote(newPath, note.content);
+        deleteRemote(path);
+      }
+      if (activePath === path) setActivePath(newPath);
+    },
+    [vault, activePath, flushSave, refreshNotes, remote, pushRemote, deleteRemote, t]
+  );
+
   const showGraph = useCallback(async () => {
     if (!vault) return;
     setGraph(await buildGraph(vault));
@@ -266,12 +298,15 @@ export default function App() {
       <Sidebar
         vault={vault}
         notes={notes}
+        folders={folders}
         activePath={activePath}
         onOpenVault={openVault}
         onSelect={selectNote}
         onCreate={createNewNote}
+        onCreateFolder={handleCreateFolder}
         onRename={handleRename}
         onDelete={handleDelete}
+        onMove={handleMove}
         query={query}
         onQuery={setQuery}
         searchHits={hits}

@@ -63,6 +63,23 @@ fn delete_note(vault: String, path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn move_note(vault: String, path: String, folder: String) -> Result<String, String> {
+    let root = PathBuf::from(vault);
+    vault::safe_join(&root, &path).ok_or_else(|| "invalid path".to_string())?;
+    vault::move_note(&root, &path, &folder).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn create_folder(vault: String, name: String) -> Result<String, String> {
+    vault::create_folder(&PathBuf::from(vault), &name).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn list_folders(vault: String) -> Result<Vec<String>, String> {
+    vault::list_folders(&PathBuf::from(vault)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn save_asset(vault: String, file_name: String, bytes: Vec<u8>) -> Result<String, String> {
     let root = PathBuf::from(vault);
     vault::save_asset(&root, &file_name, &bytes).map_err(|e| e.to_string())
@@ -259,6 +276,9 @@ pub fn run() {
             create_note,
             rename_note,
             delete_note,
+            move_note,
+            create_folder,
+            list_folders,
             save_asset,
             build_graph,
             backlinks,

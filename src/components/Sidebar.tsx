@@ -6,12 +6,15 @@ import FlameIcon from "./FlameIcon";
 interface SidebarProps {
   vault: string | null;
   notes: NoteMeta[];
+  folders: string[];
   activePath: string | null;
   onOpenVault: () => void;
   onSelect: (path: string) => void;
   onCreate: () => void;
+  onCreateFolder: () => void;
   onRename: (path: string, currentTitle: string) => void;
   onDelete: (path: string, title: string) => void;
+  onMove: (path: string) => void;
   query: string;
   onQuery: (q: string) => void;
   searchHits: SearchHit[];
@@ -21,12 +24,15 @@ interface SidebarProps {
 export default function Sidebar({
   vault,
   notes,
+  folders,
   activePath,
   onOpenVault,
   onSelect,
   onCreate,
+  onCreateFolder,
   onRename,
   onDelete,
+  onMove,
   query,
   onQuery,
   searchHits,
@@ -36,16 +42,19 @@ export default function Sidebar({
   const [hovered, setHovered] = useState<string | null>(null);
   const searching = query.trim().length > 0;
 
-  // Group notes: root-level ones, then a section per folder (so related notes
-  // Claude or you filed under a folder show together).
+  // Group notes: root-level ones, then a section per folder — including empty
+  // folders you created, so you can move notes into them.
   const rootNotes = notes.filter((n) => folderOf(n.path) === "");
-  const folders = Array.from(
-    notes.reduce((map, n) => {
-      const f = folderOf(n.path);
-      if (f) map.set(f, [...(map.get(f) ?? []), n]);
-      return map;
-    }, new Map<string, NoteMeta[]>())
-  ).sort(([a], [b]) => a.localeCompare(b));
+  const notesByFolder = notes.reduce((map, n) => {
+    const f = folderOf(n.path);
+    if (f) map.set(f, [...(map.get(f) ?? []), n]);
+    return map;
+  }, new Map<string, NoteMeta[]>());
+  const folderSections = Array.from(
+    new Set([...notesByFolder.keys(), ...folders])
+  )
+    .sort((a, b) => a.localeCompare(b))
+    .map((f) => [f, notesByFolder.get(f) ?? []] as const);
 
   const renderNote = (n: NoteMeta) => (
     <div
@@ -75,6 +84,13 @@ export default function Sidebar({
       {hovered === n.path && (
         <div className="flex shrink-0 items-center">
           <button
+            onClick={() => onMove(n.path)}
+            title={t("sidebar.move")}
+            className="grid h-6 w-6 place-items-center rounded text-magma-muted hover:bg-black/10 dark:hover:bg-white/20"
+          >
+            📁
+          </button>
+          <button
             onClick={() => onRename(n.path, n.title)}
             title={t("sidebar.rename")}
             className="grid h-6 w-6 place-items-center rounded text-magma-muted hover:bg-black/10 dark:hover:bg-white/20"
@@ -100,13 +116,22 @@ export default function Sidebar({
         <span className="font-semibold tracking-tight">Magma</span>
         <div className="ml-auto flex items-center">
           {vault && (
-            <button
-              onClick={onCreate}
-              title={t("sidebar.newNote")}
-              className="grid h-6 w-6 place-items-center rounded-md text-lg leading-none text-magma-muted transition hover:bg-black/10 dark:hover:bg-white/10"
-            >
-              +
-            </button>
+            <>
+              <button
+                onClick={onCreateFolder}
+                title={t("sidebar.newFolder")}
+                className="grid h-6 w-6 place-items-center rounded-md text-sm leading-none text-magma-muted transition hover:bg-black/10 dark:hover:bg-white/10"
+              >
+                🗀
+              </button>
+              <button
+                onClick={onCreate}
+                title={t("sidebar.newNote")}
+                className="grid h-6 w-6 place-items-center rounded-md text-lg leading-none text-magma-muted transition hover:bg-black/10 dark:hover:bg-white/10"
+              >
+                +
+              </button>
+            </>
           )}
           <button
             onClick={onOpenSettings}
@@ -163,13 +188,19 @@ export default function Sidebar({
           )}
           {/* Root-level notes first, then one section per folder. */}
           {rootNotes.map(renderNote)}
-          {folders.map(([folder, items]) => (
+          {folderSections.map(([folder, items]) => (
             <div key={folder} className="mt-2">
               <div className="flex items-center gap-1 px-2 py-1 text-xs font-medium uppercase tracking-wide text-magma-muted">
-                <span>▾</span>
+                <span>🗀</span>
                 <span className="truncate">{folder}</span>
               </div>
-              <div className="pl-2">{items.map(renderNote)}</div>
+              <div className="pl-2">
+                {items.length === 0 ? (
+                  <p className="px-2 py-1 text-xs text-magma-muted/70">—</p>
+                ) : (
+                  items.map(renderNote)
+                )}
+              </div>
             </div>
           ))}
         </nav>

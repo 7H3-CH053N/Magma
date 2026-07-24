@@ -241,6 +241,74 @@ pub fn delete_note(vault: &Path, rel: &str) -> std::io::Result<()> {
     fs::remove_file(vault.join(rel))
 }
 
+/// Move a note into `folder` (vault-relative; "" means the root), keeping its
+/// filename. Wikilinks still resolve afterwards because they match on the
+/// filename, not the folder. Returns the new vault-relative path.
+pub fn move_note(vault: &Path, rel: &str, folder: &str) -> std::io::Result<String> {
+    let filename = rel.rsplit(['/', '\\']).next().unwrap_or(rel);
+    let (base, ext) = split_ext(filename);
+    let dir = sanitize_folder(folder);
+    let prefix = if dir.is_empty() {
+        String::new()
+    } else {
+        format!("{dir}/")
+    };
+    let mut new_rel = format!("{prefix}{filename}");
+    let mut n = 2;
+    let old = vault.join(rel);
+    while vault.join(&new_rel).exists() && vault.join(&new_rel) != old {
+        new_rel = match &ext {
+            Some(e) => format!("{prefix}{base} {n}.{e}"),
+            None => format!("{prefix}{base} {n}"),
+        };
+        n += 1;
+    }
+    if let Some(parent) = vault.join(&new_rel).parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::rename(old, vault.join(&new_rel))?;
+    Ok(new_rel)
+}
+
+/// Create an (empty) folder in the vault. Returns its sanitized relative path.
+pub fn create_folder(vault: &Path, name: &str) -> std::io::Result<String> {
+    let dir = sanitize_folder(name);
+    if dir.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "empty folder name",
+        ));
+    }
+    fs::create_dir_all(vault.join(&dir))?;
+    Ok(dir)
+}
+
+/// List every subfolder in the vault (relative paths, forward slashes),
+/// skipping hidden dirs and the `assets` image folder.
+pub fn list_folders(vault: &Path) -> std::io::Result<Vec<String>> {
+    let mut out = Vec::new();
+    collect_dirs(vault, vault, &mut out)?;
+    out.sort();
+    Ok(out)
+}
+
+fn collect_dirs(root: &Path, dir: &Path, out: &mut Vec<String>) -> std::io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') || name == "assets" {
+            continue;
+        }
+        out.push(rel_path(root, &path));
+        collect_dirs(root, &path, out)?;
+    }
+    Ok(())
+}
+
 /// Save pasted image bytes into the vault's `assets/` folder under a
 /// caller-provided name, returning the vault-relative path for embedding.
 pub fn save_asset(vault: &Path, file_name: &str, bytes: &[u8]) -> std::io::Result<String> {
@@ -362,6 +430,29 @@ mod tests {
         let a = create_note(&v, "Doomed", "x").unwrap();
         delete_note(&v, &a).unwrap();
         assert!(!v.join(&a).exists());
+        fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn move_note_into_folder_keeps_filename() {
+        let v = tmp_vault();
+        create_note(&v, "Tech-Stack", "# Tech-Stack").unwrap();
+        let moved = move_note(&v, "Tech-Stack.md", "Profil Alex").unwrap();
+        assert_eq!(moved, "Profil Alex/Tech-Stack.md");
+        assert!(v.join("Profil Alex/Tech-Stack.md").exists());
+        assert!(!v.join("Tech-Stack.md").exists());
+        fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn create_and_list_folders() {
+        let v = tmp_vault();
+        create_folder(&v, "Ideas").unwrap();
+        create_folder(&v, "Work/Clients").unwrap();
+        let folders = list_folders(&v).unwrap();
+        assert!(folders.contains(&"Ideas".to_string()));
+        assert!(folders.contains(&"Work".to_string()));
+        assert!(folders.contains(&"Work/Clients".to_string()));
         fs::remove_dir_all(&v).ok();
     }
 
