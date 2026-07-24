@@ -37,6 +37,34 @@ fn write_note(vault: String, path: String, content: String) -> Result<(), String
     vault::write_note(&root, &path, &content).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn create_note(vault: String, title: String) -> Result<String, String> {
+    let root = PathBuf::from(vault);
+    // Seed with an H1 of the title so the note isn't blank on open.
+    let body = format!("# {}\n\n", title.trim());
+    vault::create_note(&root, &title, &body).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn rename_note(vault: String, path: String, new_title: String) -> Result<String, String> {
+    let root = PathBuf::from(vault);
+    vault::safe_join(&root, &path).ok_or_else(|| "invalid path".to_string())?;
+    vault::rename_note(&root, &path, &new_title).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_note(vault: String, path: String) -> Result<(), String> {
+    let root = PathBuf::from(vault);
+    vault::safe_join(&root, &path).ok_or_else(|| "invalid path".to_string())?;
+    vault::delete_note(&root, &path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn save_asset(vault: String, file_name: String, bytes: Vec<u8>) -> Result<String, String> {
+    let root = PathBuf::from(vault);
+    vault::save_asset(&root, &file_name, &bytes).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -45,7 +73,11 @@ pub fn run() {
             pick_vault,
             list_notes,
             read_note,
-            write_note
+            write_note,
+            create_note,
+            rename_note,
+            delete_note,
+            save_asset
         ])
         .run(tauri::generate_context!())
         .expect("error while running Magma");

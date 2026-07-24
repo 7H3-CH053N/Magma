@@ -5,4 +5,7 @@
 
 pub mod vault;
 
-pub use vault::{list_notes, read_note, safe_join, write_note, Note, NoteMeta};
+pub use vault::{
+    create_note, delete_note, list_notes, read_note, rename_note, safe_join, save_asset, slugify,
+    write_note, Note, NoteMeta,
+};

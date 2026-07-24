@@ -114,6 +114,96 @@ pub fn safe_join(vault: &Path, rel: &str) -> Option<PathBuf> {
     Some(vault.join(rel))
 }
 
+/// Turn a title into a safe file stem: keep letters, digits, spaces, dashes
+/// and underscores; collapse the rest. Empty titles fall back to "Untitled".
+pub fn slugify(title: &str) -> String {
+    let cleaned: String = title
+        .trim()
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
+            _ => c,
+        })
+        .collect();
+    let cleaned = cleaned.trim().to_string();
+    if cleaned.is_empty() {
+        "Untitled".to_string()
+    } else {
+        cleaned
+    }
+}
+
+/// Create a new note from a title, returning its vault-relative path. If a note
+/// with that name exists, a numeric suffix is appended so nothing is clobbered.
+pub fn create_note(vault: &Path, title: &str, content: &str) -> std::io::Result<String> {
+    let stem = slugify(title);
+    let mut rel = format!("{stem}.md");
+    let mut n = 2;
+    while vault.join(&rel).exists() {
+        rel = format!("{stem} {n}.md");
+        n += 1;
+    }
+    write_note(vault, &rel, content)?;
+    Ok(rel)
+}
+
+/// Rename a note to a new title within the same folder. Returns the new
+/// vault-relative path.
+pub fn rename_note(vault: &Path, rel: &str, new_title: &str) -> std::io::Result<String> {
+    let old = vault.join(rel);
+    let parent = Path::new(rel).parent();
+    let stem = slugify(new_title);
+    let mut new_rel = match parent {
+        Some(p) if !p.as_os_str().is_empty() => {
+            format!("{}/{stem}.md", p.to_string_lossy().replace('\\', "/"))
+        }
+        _ => format!("{stem}.md"),
+    };
+    let mut n = 2;
+    while vault.join(&new_rel).exists() && vault.join(&new_rel) != old {
+        new_rel = match parent {
+            Some(p) if !p.as_os_str().is_empty() => {
+                format!("{}/{stem} {n}.md", p.to_string_lossy().replace('\\', "/"))
+            }
+            _ => format!("{stem} {n}.md"),
+        };
+        n += 1;
+    }
+    fs::rename(old, vault.join(&new_rel))?;
+    Ok(new_rel)
+}
+
+/// Delete a note from the vault.
+pub fn delete_note(vault: &Path, rel: &str) -> std::io::Result<()> {
+    fs::remove_file(vault.join(rel))
+}
+
+/// Save pasted image bytes into the vault's `assets/` folder under a
+/// caller-provided name, returning the vault-relative path for embedding.
+pub fn save_asset(vault: &Path, file_name: &str, bytes: &[u8]) -> std::io::Result<String> {
+    let dir = vault.join("assets");
+    fs::create_dir_all(&dir)?;
+    let mut rel = format!("assets/{file_name}");
+    let (base, ext) = split_ext(file_name);
+    let mut n = 2;
+    while vault.join(&rel).exists() {
+        rel = match &ext {
+            Some(e) => format!("assets/{base} {n}.{e}"),
+            None => format!("assets/{base} {n}"),
+        };
+        n += 1;
+    }
+    fs::write(vault.join(&rel), bytes)?;
+    Ok(rel)
+}
+
+fn split_ext(name: &str) -> (String, Option<String>) {
+    match name.rsplit_once('.') {
+        Some((b, e)) if !b.is_empty() => (b.to_string(), Some(e.to_string())),
+        _ => (name.to_string(), None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,5 +230,70 @@ mod tests {
         let v = Path::new("/vault");
         assert!(safe_join(v, "../etc/passwd").is_none());
         assert!(safe_join(v, "notes/ok.md").is_some());
+    }
+
+    #[test]
+    fn slugify_strips_illegal_chars() {
+        assert_eq!(slugify("  My/Note:2  "), "My-Note-2");
+        assert_eq!(slugify(""), "Untitled");
+        assert_eq!(slugify("   "), "Untitled");
+    }
+
+    fn tmp_vault() -> PathBuf {
+        let mut p = std::env::temp_dir();
+        // Vary by nanos to keep parallel tests isolated without Date/Random.
+        let uniq = format!(
+            "magma-test-{:?}-{}",
+            std::thread::current().id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        );
+        p.push(uniq);
+        fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn create_avoids_clobbering() {
+        let v = tmp_vault();
+        let a = create_note(&v, "Idea", "one").unwrap();
+        let b = create_note(&v, "Idea", "two").unwrap();
+        assert_eq!(a, "Idea.md");
+        assert_eq!(b, "Idea 2.md");
+        assert_eq!(read_note(&v, &b).unwrap().content, "two");
+        fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn rename_moves_content() {
+        let v = tmp_vault();
+        let a = create_note(&v, "Old", "body").unwrap();
+        let renamed = rename_note(&v, &a, "New Name").unwrap();
+        assert_eq!(renamed, "New Name.md");
+        assert!(!v.join(&a).exists());
+        assert_eq!(read_note(&v, &renamed).unwrap().content, "body");
+        fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn delete_removes_file() {
+        let v = tmp_vault();
+        let a = create_note(&v, "Doomed", "x").unwrap();
+        delete_note(&v, &a).unwrap();
+        assert!(!v.join(&a).exists());
+        fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn save_asset_writes_and_dedupes() {
+        let v = tmp_vault();
+        let p1 = save_asset(&v, "pasted.png", &[1, 2, 3]).unwrap();
+        let p2 = save_asset(&v, "pasted.png", &[4, 5, 6]).unwrap();
+        assert_eq!(p1, "assets/pasted.png");
+        assert_eq!(p2, "assets/pasted 2.png");
+        assert!(v.join(&p2).exists());
+        fs::remove_dir_all(&v).ok();
     }
 }

@@ -38,4 +38,33 @@ export async function writeNote(
   return invoke("write_note", { vault, path, content });
 }
 
+export async function createNote(vault: string, title: string): Promise<string> {
+  return invoke<string>("create_note", { vault, title });
+}
+
+export async function renameNote(
+  vault: string,
+  path: string,
+  newTitle: string
+): Promise<string> {
+  return invoke<string>("rename_note", { vault, path, newTitle });
+}
+
+export async function deleteNote(vault: string, path: string): Promise<void> {
+  return invoke("delete_note", { vault, path });
+}
+
+/** Save pasted image bytes into the vault; returns the vault-relative path. */
+export async function saveAsset(
+  vault: string,
+  fileName: string,
+  bytes: Uint8Array
+): Promise<string> {
+  return invoke<string>("save_asset", {
+    vault,
+    fileName,
+    bytes: Array.from(bytes),
+  });
+}
+
 export { hasTauri };

@@ -3,26 +3,55 @@ import { EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
-import { syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
+import { liveMarkdown, liveMarkdownTheme } from "../lib/liveMarkdown";
 
 interface EditorProps {
   value: string;
   onChange: (value: string) => void;
+  /** Called when an image is pasted; returns markdown to insert, or null. */
+  onPasteImage?: (file: File) => Promise<string | null>;
 }
 
 /**
- * Live-markdown editor. One mode only — no edit/preview toggle. This is the
- * seed of Magma's "syntax fades away while you type" experience; richer
- * decorations (hidden markers, wikilink chips) build on this foundation.
+ * Live-markdown editor. One mode only — no edit/preview toggle. The
+ * `liveMarkdown` extension hides syntax as you type, so it reads like a clean
+ * page while staying plain text underneath.
  */
-export default function Editor({ value, onChange }: EditorProps) {
+export default function Editor({ value, onChange, onPasteImage }: EditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
+  const onPasteRef = useRef(onPasteImage);
   onChangeRef.current = onChange;
+  onPasteRef.current = onPasteImage;
 
   useEffect(() => {
     if (!host.current) return;
+
+    const pasteHandler = EditorView.domEventHandlers({
+      paste(event, v) {
+        const items = event.clipboardData?.items;
+        if (!items || !onPasteRef.current) return false;
+        for (const item of items) {
+          if (item.type.startsWith("image/")) {
+            const file = item.getAsFile();
+            if (!file) continue;
+            event.preventDefault();
+            void onPasteRef.current(file).then((md) => {
+              if (md) {
+                const pos = v.state.selection.main.from;
+                v.dispatch({
+                  changes: { from: pos, insert: md },
+                  selection: { anchor: pos + md.length },
+                });
+              }
+            });
+            return true;
+          }
+        }
+        return false;
+      },
+    });
 
     const state = EditorState.create({
       doc: value,
@@ -30,8 +59,10 @@ export default function Editor({ value, onChange }: EditorProps) {
         history(),
         keymap.of([...defaultKeymap, ...historyKeymap]),
         markdown(),
-        syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+        liveMarkdown,
+        liveMarkdownTheme,
         EditorView.lineWrapping,
+        pasteHandler,
         EditorView.updateListener.of((u) => {
           if (u.docChanged) onChangeRef.current(u.state.doc.toString());
         }),
@@ -41,11 +72,10 @@ export default function Editor({ value, onChange }: EditorProps) {
     const v = new EditorView({ state, parent: host.current });
     view.current = v;
     return () => v.destroy();
-    // Recreate only when switching notes (keyed by parent via `key` prop).
+    // Editor is remounted per note via a `key` prop on the parent.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Sync external value changes (e.g. loading a different note).
   useEffect(() => {
     const v = view.current;
     if (v && value !== v.state.doc.toString()) {
