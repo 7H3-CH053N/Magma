@@ -304,8 +304,12 @@ export default function Sidebar({
                   : "hover:bg-black/5 dark:hover:bg-white/10"
               }`}
             >
-              <span className="block truncate text-sm font-medium">{h.title}</span>
-              <span className="block truncate text-xs text-magma-muted">{h.snippet}</span>
+              <span className="block truncate text-sm font-medium">
+                <Highlight text={h.title} term={query} />
+              </span>
+              <span className="block truncate text-xs text-magma-muted">
+                <Highlight text={h.snippet} term={query} />
+              </span>
             </button>
           ))}
         </nav>
@@ -333,6 +337,46 @@ export default function Sidebar({
         </nav>
       )}
     </aside>
+  );
+}
+
+/**
+ * Show where the match actually is. A search result that only says "some note
+ * mentions this" is half an answer — the hit itself has to be visible, in the
+ * title and in the surrounding text.
+ */
+function Highlight({ text, term }: { text: string; term: string }) {
+  const needle = term.trim();
+  if (!needle) return <>{text}</>;
+  const parts: (string | { hit: string })[] = [];
+  const hay = text.toLowerCase();
+  const nee = needle.toLowerCase();
+  let at = 0;
+  for (;;) {
+    const i = hay.indexOf(nee, at);
+    if (i === -1) {
+      parts.push(text.slice(at));
+      break;
+    }
+    if (i > at) parts.push(text.slice(at, i));
+    parts.push({ hit: text.slice(i, i + needle.length) });
+    at = i + needle.length;
+  }
+  return (
+    <>
+      {parts.map((p, i) =>
+        typeof p === "string" ? (
+          <span key={i}>{p}</span>
+        ) : (
+          <mark
+            key={i}
+            className="rounded-[3px] bg-magma-accent/25 px-0.5 text-magma-ink dark:text-[#ece9e4]"
+          >
+            {p.hit}
+          </mark>
+        )
+      )}
+    </>
   );
 }
 
