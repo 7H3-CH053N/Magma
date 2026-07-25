@@ -30,6 +30,7 @@ export const WikiLink = Extension.create<WikiLinkOptions>({
         props: {
           decorations(state) {
             const decos: Decoration[] = [];
+            const sel = state.selection.from;
             state.doc.descendants((node, pos) => {
               if (!node.isText || !node.text) return;
               WIKI.lastIndex = 0;
@@ -37,15 +38,31 @@ export const WikiLink = Extension.create<WikiLinkOptions>({
               while ((m = WIKI.exec(node.text))) {
                 const from = pos + m.index;
                 const to = from + m[0].length;
-                const name = m[1].split("|")[0].split(/[#^]/)[0].trim();
-                // A link to a note that doesn't exist yet is marked, so you can
-                // see at a glance what is still missing (and click to create it).
+                const inner = m[1];
+                const name = inner.split("|")[0].split(/[#^]/)[0].trim();
+                const cls = exists(name) ? "wikilink" : "wikilink wikilink-missing";
                 decos.push(
-                  Decoration.inline(from, to, {
-                    class: exists(name) ? "wikilink" : "wikilink wikilink-missing",
-                    "data-name": name,
-                  })
+                  Decoration.inline(from, to, { class: cls, "data-name": name })
                 );
+
+                // Show only the readable part: `[[Birgit Januschewsky|Birgit]]`
+                // reads as "Birgit". The text stays literal in the document, so
+                // markdown round-trips — the brackets are only hidden visually,
+                // and reappear while the caret is inside so it stays editable.
+                // Strictly inside: sitting right before or after a link must
+                // not unmask it, or the last link in a note is always raw.
+                const caretInside = sel > from && sel < to;
+                if (!caretInside) {
+                  const pipe = inner.indexOf("|");
+                  // Hide "[[" plus, for an aliased link, "Target|".
+                  const headEnd = from + 2 + (pipe >= 0 ? pipe + 1 : 0);
+                  decos.push(
+                    Decoration.inline(from, headEnd, { class: "wikilink-syntax" })
+                  );
+                  decos.push(
+                    Decoration.inline(to - 2, to, { class: "wikilink-syntax" })
+                  );
+                }
               }
             });
             return DecorationSet.create(state.doc, decos);

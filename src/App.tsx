@@ -301,10 +301,13 @@ export default function App() {
   // Keep the graph current while it is on screen: moving a note changes its
   // path, and the node's colour comes from its folder — so a move has to be
   // reflected immediately, not only after leaving and re-entering the view.
+  // Only the set of paths matters here: editing a note's text must not restart
+  // the layout, but moving one (which changes its folder colour) must.
+  const notePathsKey = notes.map((n) => n.path).join("|");
   useEffect(() => {
     if (view !== "graph" || !vault) return;
     void buildGraph(vault).then(setGraph);
-  }, [notes, view, vault]);
+  }, [notePathsKey, view, vault]);
 
   const showGraph = useCallback(async () => {
     if (!vault) return;
