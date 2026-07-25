@@ -77,20 +77,32 @@ pub fn import_wordpress(
     authors.sort();
     authors.dedup();
 
-    // Note names already present *outside* the import folder. Hub notes reuse
-    // those rather than adding a duplicate; inside the folder we still
-    // overwrite, so re-importing a blog refreshes it.
-    let dir = folder.trim().trim_matches('/');
-    let existing: HashSet<String> = magma_core::list_notes(vault)
-        .unwrap_or_default()
-        .iter()
-        .filter(|n| {
-            dir.is_empty() || !n.path.to_lowercase().starts_with(&format!("{}/", dir.to_lowercase()))
-        })
-        .map(|n| magma_core::note_name(&n.path).to_lowercase())
-        .collect();
+    // Split the vault into notes the user (or the AI) wrote, and notes a previous
+    // import generated. The former are never duplicated — a hub whose name
+    // already belongs to one of them is skipped so the posts' [[Name]] links
+    // resolve to the real note. The latter are ours, so a duplicate an earlier
+    // import created can be cleaned up instead of lingering forever.
+    let mut protected: HashSet<String> = HashSet::new();
+    let mut generated: Vec<(String, String)> = Vec::new(); // (name, path)
+    for n in magma_core::list_notes(vault).unwrap_or_default() {
+        let name = magma_core::note_name(&n.path).to_lowercase();
+        if is_import_generated(vault, &n.path) {
+            generated.push((name, n.path));
+        } else {
+            protected.insert(name);
+        }
+    }
 
-    let notes = build_notes(&posts, folder, &existing);
+    let notes = build_notes(&posts, folder, &protected);
+
+    // Drop import-made notes that duplicate one of the protected names. Done
+    // before writing, so nothing from this run is removed.
+    for (name, path) in &generated {
+        if protected.contains(name) {
+            let _ = magma_core::delete_note(vault, path);
+        }
+    }
+
     let summary = ImportSummary {
         notes: notes.len(),
         posts: posts.len(),
@@ -151,6 +163,26 @@ fn fetch_posts(site_url: &str) -> Result<Vec<Post>, String> {
         }
     }
     Ok(posts)
+}
+
+/// True when a note carries the `source: import` stamp this importer writes,
+/// i.e. Magma generated it rather than the user or the AI.
+fn is_import_generated(vault: &Path, rel: &str) -> bool {
+    let content = match std::fs::read_to_string(vault.join(rel)) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let rest = match content.strip_prefix("---") {
+        Some(r) => r,
+        None => return false,
+    };
+    let end = match rest.find("\n---") {
+        Some(i) => i,
+        None => return false,
+    };
+    rest[..end]
+        .lines()
+        .any(|l| l.trim() == "source: import")
 }
 
 /// Normalize a post URL so REST links and RSS links compare equal.
@@ -732,6 +764,27 @@ mod tests {
         let author_hub = notes.iter().find(|n| n.rel == "Blog/Jane Baker.md").unwrap();
         assert!(author_hub.markdown.contains("[[Sourdough Guide]]"));
         assert!(author_hub.markdown.contains("Autor"));
+    }
+
+    #[test]
+    fn import_generated_notes_are_recognised_by_their_stamp() {
+        let v = std::env::temp_dir().join(format!(
+            "magma-import-stamp-{:?}",
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&v).unwrap();
+        // What the importer writes.
+        magma_core::write_note(&v, "Blog/Alex Januschewsky.md", "---\nsource: import\n---\n\n# Alex")
+            .unwrap();
+        // What the user or the AI writes.
+        magma_core::write_note(&v, "Persoenlich/Alex Januschewsky.md", "---\nauthor: ai\n---\n\n# Alex")
+            .unwrap();
+        magma_core::write_note(&v, "Plain.md", "# No frontmatter at all").unwrap();
+
+        assert!(is_import_generated(&v, "Blog/Alex Januschewsky.md"));
+        assert!(!is_import_generated(&v, "Persoenlich/Alex Januschewsky.md"));
+        assert!(!is_import_generated(&v, "Plain.md"));
+        std::fs::remove_dir_all(&v).ok();
     }
 
     #[test]

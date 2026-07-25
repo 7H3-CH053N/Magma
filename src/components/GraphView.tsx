@@ -28,6 +28,17 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 
 /** Ideal link length in world units. The view auto-fits, so only ratios matter. */
 const K = 55;
+/**
+ * Pull toward the centre, proportional to distance. Without it, groups that
+ * share no links (an imported blog and your own notes, say) only ever repel
+ * each other and drift apart until they sit in opposite corners.
+ */
+const GRAVITY = 0.9;
+/**
+ * Repulsion is ignored beyond this distance. Far-apart clusters stop shoving
+ * one another, and skipping distant pairs keeps big vaults fast.
+ */
+const REPULSION_CUTOFF = K * 10;
 /** Node radius in *screen* pixels — constant, so nodes stay visible when zoomed out. */
 const nodeRadius = (degree: number) => 2.5 + Math.min(7, degree * 1.2);
 
@@ -124,6 +135,7 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
           let dx = a.x - b.x;
           let dy = a.y - b.y;
           let d2 = dx * dx + dy * dy;
+          if (d2 > REPULSION_CUTOFF * REPULSION_CUTOFF) continue;
           if (d2 < 0.01) {
             // Coincident nodes: nudge them apart deterministically.
             dx = ((i % 13) + 1) * 0.05;
@@ -154,6 +166,11 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
         disp[i * 2 + 1] -= uy;
         disp[j * 2] += ux;
         disp[j * 2 + 1] += uy;
+      }
+      // Gravity toward the centre keeps unlinked groups in one picture.
+      for (let i = 0; i < n; i++) {
+        disp[i * 2] -= nodes[i].x * GRAVITY;
+        disp[i * 2 + 1] -= nodes[i].y * GRAVITY;
       }
       // Apply, capped by the temperature. The dragged node stays under the cursor.
       let sx = 0;

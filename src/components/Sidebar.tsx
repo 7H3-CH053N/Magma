@@ -1,7 +1,21 @@
-import { useState, type DragEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import type { NoteMeta, SearchHit } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import FlameIcon from "./FlameIcon";
+import {
+  ChevronIcon,
+  FolderIcon,
+  NewFolderIcon,
+  PencilIcon,
+  PlusIcon,
+  SearchIcon,
+  SettingsIcon,
+  TrashIcon,
+} from "./Icons";
+
+const MIN_WIDTH = 200;
+const MAX_WIDTH = 520;
+const WIDTH_KEY = "magma.sidebarWidth";
 
 interface SidebarProps {
   vault: string | null;
@@ -47,6 +61,39 @@ export default function Sidebar({
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const searching = query.trim().length > 0;
+
+  // Drag the right edge to resize; the width is remembered across restarts.
+  const [width, setWidth] = useState(() => {
+    const saved = Number(localStorage.getItem(WIDTH_KEY));
+    return saved >= MIN_WIDTH && saved <= MAX_WIDTH ? saved : 260;
+  });
+  const resizing = useRef(false);
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      if (!resizing.current) return;
+      setWidth(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, e.clientX)));
+    };
+    const onUp = () => {
+      if (!resizing.current) return;
+      resizing.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, []);
+  useEffect(() => {
+    localStorage.setItem(WIDTH_KEY, String(width));
+  }, [width]);
+  const startResize = useCallback(() => {
+    resizing.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, []);
 
   const toggleFolder = (f: string) =>
     setCollapsed((prev) => {
@@ -112,23 +159,23 @@ export default function Sidebar({
           <button
             onClick={() => onMove(n.path)}
             title={t("sidebar.move")}
-            className="grid h-6 w-6 place-items-center rounded text-magma-muted hover:bg-black/10 dark:hover:bg-white/20"
+            className="grid h-6 w-6 place-items-center rounded-md text-magma-muted transition hover:bg-black/10 hover:text-magma-text dark:hover:bg-white/20"
           >
-            📁
+            <FolderIcon size={14} />
           </button>
           <button
             onClick={() => onRename(n.path, n.title)}
             title={t("sidebar.rename")}
-            className="grid h-6 w-6 place-items-center rounded text-magma-muted hover:bg-black/10 dark:hover:bg-white/20"
+            className="grid h-6 w-6 place-items-center rounded-md text-magma-muted transition hover:bg-black/10 hover:text-magma-text dark:hover:bg-white/20"
           >
-            ✎
+            <PencilIcon size={14} />
           </button>
           <button
             onClick={() => onDelete(n.path, n.title)}
             title={t("sidebar.delete")}
-            className="grid h-6 w-6 place-items-center rounded text-magma-muted hover:bg-black/10 dark:hover:bg-white/20"
+            className="grid h-6 w-6 place-items-center rounded-md text-magma-muted transition hover:bg-red-500/15 hover:text-red-500 dark:hover:bg-red-500/20"
           >
-            🗑
+            <TrashIcon size={14} />
           </button>
         </div>
       )}
@@ -136,35 +183,45 @@ export default function Sidebar({
   );
 
   return (
-    <aside className="flex h-full w-64 shrink-0 flex-col border-r border-black/5 bg-magma-panel/60 dark:border-white/5 dark:bg-white/5">
+    <aside
+      style={{ width }}
+      className="relative flex h-full shrink-0 flex-col border-r border-black/5 bg-magma-panel/60 dark:border-white/5 dark:bg-white/5"
+    >
+      {/* Drag handle for resizing — invisible until you reach for it. */}
+      <div
+        onPointerDown={startResize}
+        onDoubleClick={() => setWidth(260)}
+        title={t("sidebar.resize")}
+        className="absolute right-0 top-0 z-10 h-full w-1.5 cursor-col-resize transition-colors hover:bg-magma-accent/40"
+      />
       <div className="flex items-center gap-2 px-4 py-3">
         <FlameIcon size={18} />
         <span className="font-semibold tracking-tight">Magma</span>
-        <div className="ml-auto flex items-center">
+        <div className="ml-auto flex items-center gap-0.5">
           {vault && (
             <>
               <button
                 onClick={onCreateFolder}
                 title={t("sidebar.newFolder")}
-                className="grid h-6 w-6 place-items-center rounded-md text-sm leading-none text-magma-muted transition hover:bg-black/10 dark:hover:bg-white/10"
+                className="grid h-7 w-7 place-items-center rounded-md text-magma-muted transition hover:bg-black/10 hover:text-magma-text dark:hover:bg-white/10"
               >
-                🗀
+                <NewFolderIcon size={16} />
               </button>
               <button
                 onClick={onCreate}
                 title={t("sidebar.newNote")}
-                className="grid h-6 w-6 place-items-center rounded-md text-lg leading-none text-magma-muted transition hover:bg-black/10 dark:hover:bg-white/10"
+                className="grid h-7 w-7 place-items-center rounded-md text-magma-muted transition hover:bg-black/10 hover:text-magma-text dark:hover:bg-white/10"
               >
-                +
+                <PlusIcon size={16} />
               </button>
             </>
           )}
           <button
             onClick={onOpenSettings}
             title={t("sidebar.settings")}
-            className="grid h-6 w-6 place-items-center rounded-md text-sm leading-none text-magma-muted transition hover:bg-black/10 dark:hover:bg-white/10"
+            className="grid h-7 w-7 place-items-center rounded-md text-magma-muted transition hover:bg-black/10 hover:text-magma-text dark:hover:bg-white/10"
           >
-            ⚙
+            <SettingsIcon size={16} />
           </button>
         </div>
       </div>
@@ -177,12 +234,18 @@ export default function Sidebar({
       </button>
 
       {vault && (
-        <input
-          value={query}
-          onChange={(e) => onQuery(e.target.value)}
-          placeholder={t("sidebar.search")}
-          className="mx-3 mb-2 rounded-lg border border-black/10 bg-transparent px-3 py-1.5 text-sm outline-none placeholder:text-magma-muted focus:border-magma-accent dark:border-white/10"
-        />
+        <div className="relative mx-3 mb-2">
+          <SearchIcon
+            size={14}
+            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-magma-muted"
+          />
+          <input
+            value={query}
+            onChange={(e) => onQuery(e.target.value)}
+            placeholder={t("sidebar.search")}
+            className="w-full rounded-lg border border-black/10 bg-transparent py-1.5 pl-8 pr-3 text-sm outline-none placeholder:text-magma-muted focus:border-magma-accent dark:border-white/10"
+          />
+        </div>
       )}
 
       {searching ? (
@@ -246,16 +309,18 @@ export default function Sidebar({
                     onClick={() => toggleFolder(folder)}
                     className="flex min-w-0 flex-1 items-center gap-1 px-2 py-1 text-left text-xs font-medium uppercase tracking-wide text-magma-muted"
                   >
-                    <span className="w-3">{isOpen ? "▾" : "▸"}</span>
+                    <ChevronIcon size={12} open={isOpen} className="shrink-0" />
                     <span className="truncate">{folder}</span>
-                    <span className="ml-auto pl-1 opacity-60">{items.length || ""}</span>
+                    <span className="ml-auto pl-1 tabular-nums opacity-60">
+                      {items.length || ""}
+                    </span>
                   </button>
                   <button
                     onClick={() => onDeleteFolder(folder)}
                     title={t("sidebar.deleteFolder")}
-                    className="grid h-6 w-6 shrink-0 place-items-center rounded text-magma-muted opacity-0 transition hover:bg-black/10 group-hover:opacity-100 dark:hover:bg-white/20"
+                    className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-magma-muted opacity-0 transition hover:bg-red-500/15 hover:text-red-500 group-hover:opacity-100 dark:hover:bg-red-500/20"
                   >
-                    🗑
+                    <TrashIcon size={14} />
                   </button>
                 </div>
                 {isOpen && (
