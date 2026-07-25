@@ -203,3 +203,21 @@ body {
 .magma-prose .wikilink-syntax {
   display: none;
 }
+
+/* Pencil after a wikilink. Clicking the link opens the note, so this is the
+   handle for editing the link itself. Quiet until you reach for it. */
+.magma-prose .wikilink-edit {
+  display: inline-block;
+  margin-left: 0.15em;
+  font-size: 0.72em;
+  vertical-align: 0.15em;
+  color: var(--magma-muted);
+  opacity: 0.45;
+  cursor: pointer;
+  user-select: none;
+  transition: opacity 120ms, color 120ms;
+}
+.magma-prose .wikilink-edit:hover {
+  opacity: 1;
+  color: var(--magma-accent);
+}
