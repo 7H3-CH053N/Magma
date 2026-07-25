@@ -93,9 +93,17 @@ export async function importWordpress(
   vault: string,
   folder: string,
   siteUrl: string,
-  author?: string
+  author?: string,
+  /** Vault-relative path of the note the author should link to (optional). */
+  authorNote?: string
 ): Promise<ImportSummary> {
-  return invoke<ImportSummary>("import_wordpress", { vault, folder, siteUrl, author });
+  return invoke<ImportSummary>("import_wordpress", {
+    vault,
+    folder,
+    siteUrl,
+    author,
+    authorNote,
+  });
 }
 
 /** Save pasted image bytes into the vault; returns the vault-relative path. */

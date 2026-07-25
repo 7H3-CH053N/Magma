@@ -7,6 +7,7 @@ import {
   importWordpress,
   installMcp,
   mcpConfig,
+  type NoteMeta,
   type RemoteConfig,
 } from "../lib/api";
 
@@ -14,6 +15,7 @@ interface SettingsProps {
   onClose: () => void;
   vault: string | null;
   folders: string[];
+  notes: NoteMeta[];
   onConnectRemote: (cfg: RemoteConfig) => Promise<void>;
   remoteActive: boolean;
 }
@@ -36,6 +38,7 @@ export default function Settings({
   onClose,
   vault,
   folders,
+  notes,
   onConnectRemote,
   remoteActive,
 }: SettingsProps) {
@@ -63,6 +66,7 @@ export default function Settings({
   const [impUrl, setImpUrl] = useState("");
   const [impFolder, setImpFolder] = useState("");
   const [impAuthor, setImpAuthor] = useState("");
+  const [impAuthorNote, setImpAuthorNote] = useState("");
   const [impBusy, setImpBusy] = useState(false);
   const [impDone, setImpDone] = useState<string | null>(null);
   const [impWarn, setImpWarn] = useState<string | null>(null);
@@ -81,7 +85,8 @@ export default function Settings({
         vault,
         impFolder.trim(),
         impUrl.trim(),
-        impAuthor.trim()
+        impAuthor.trim(),
+        impAuthorNote
       );
       setImpDone(
         t("settings.importDone", {
@@ -331,6 +336,18 @@ export default function Settings({
                 placeholder={t("settings.importAuthor")}
                 className="rounded-lg border border-black/10 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-magma-accent dark:border-white/10"
               />
+              <select
+                value={impAuthorNote}
+                onChange={(e) => setImpAuthorNote(e.target.value)}
+                className="rounded-lg border border-black/10 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-magma-accent dark:border-white/10"
+              >
+                <option value="">{t("settings.importAuthorNoteNone")}</option>
+                {notes.map((n) => (
+                  <option key={n.path} value={n.path}>
+                    {n.title} — {n.path}
+                  </option>
+                ))}
+              </select>
               <button
                 onClick={runImport}
                 disabled={impBusy || !impUrl.trim()}

@@ -406,6 +406,7 @@ export default function App() {
           onClose={() => setShowSettings(false)}
           vault={vault}
           folders={folders}
+          notes={notes}
           onConnectRemote={connectRemote}
           remoteActive={!!remote}
         />

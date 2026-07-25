@@ -70,6 +70,7 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "settings.importFolder": "Target folder",
     "settings.importAuthor": "Author (optional — normally detected automatically)",
     "settings.importAuthors": "author: {authors}",
+    "settings.importAuthorNoteNone": "Author note: detect automatically",
     "settings.importMerged": "linked into your existing note: {info}",
     "settings.importCreated": "new author note created (no note of that name existed): {info}",
     "settings.importNoAuthor":
@@ -164,6 +165,7 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "settings.importFolder": "Zielordner",
     "settings.importAuthor": "Autor (optional — wird normalerweise automatisch erkannt)",
     "settings.importAuthors": "Autor: {authors}",
+    "settings.importAuthorNoteNone": "Autor-Notiz: automatisch erkennen",
     "settings.importMerged": "mit deiner vorhandenen Notiz verknüpft: {info}",
     "settings.importCreated": "neue Autor-Notiz angelegt (es gab keine Notiz dieses Namens): {info}",
     "settings.importNoAuthor":

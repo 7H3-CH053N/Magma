@@ -109,6 +109,7 @@ pub fn import_wordpress(
     folder: &str,
     site_url: &str,
     author_override: &str,
+    author_note: &str,
 ) -> Result<ImportSummary, String> {
     let mut posts = fetch_posts(site_url)?;
     if posts.is_empty() {
@@ -144,14 +145,25 @@ pub fn import_wordpress(
     for n in magma_core::list_notes(vault).unwrap_or_default() {
         let stem = magma_core::note_name(&n.path).to_string();
         if is_import_generated(vault, &n.path) {
-            generated.push((stem.to_lowercase(), n.path));
+            generated.push((match_key(&stem), n.path));
         } else {
-            path_of_stem.insert(stem.to_lowercase(), n.path.clone());
-            protected.insert(stem.to_lowercase(), stem.clone());
-            let title = n.title.trim().to_lowercase();
+            path_of_stem.insert(match_key(&stem), n.path.clone());
+            protected.insert(match_key(&stem), stem.clone());
+            let title = match_key(&n.title);
             if !title.is_empty() {
                 protected.entry(title).or_insert(stem);
             }
+        }
+    }
+
+    // An explicitly chosen author note settles it outright: no name matching,
+    // no guessing. Every author found points at exactly this note.
+    let chosen = author_note.trim();
+    if !chosen.is_empty() {
+        let stem = magma_core::note_name(chosen).to_string();
+        path_of_stem.insert(match_key(&stem), chosen.to_string());
+        for a in &authors {
+            protected.insert(match_key(a), stem.clone());
         }
     }
 
@@ -179,7 +191,7 @@ pub fn import_wordpress(
         .filter(|h| author_names.contains(&h.name))
         .map(|h| {
             let path = path_of_stem
-                .get(&h.stem.to_lowercase())
+                .get(&match_key(&h.stem))
                 .cloned()
                 .unwrap_or_else(|| format!("{}.md", h.stem));
             format!("{} → {}", h.name, path)
@@ -215,7 +227,7 @@ pub fn import_wordpress(
     // about) get the post list written into a managed block. Without this the
     // link is one-way: the posts point at the note, but the note shows nothing.
     for hub in &built.existing_hubs {
-        let path = match path_of_stem.get(&hub.stem.to_lowercase()) {
+        let path = match path_of_stem.get(&match_key(&hub.stem)) {
             Some(p) => p.clone(),
             None => continue,
         };
@@ -279,6 +291,22 @@ fn fetch_posts(site_url: &str) -> Result<Vec<Post>, String> {
         }
     }
     Ok(posts)
+}
+
+/// Key used to decide whether two names refer to the same note.
+///
+/// Plain lowercasing is not enough: WordPress happily emits non-breaking spaces
+/// (`&nbsp;` / U+00A0) and trailing whitespace in titles and `<dc:creator>`, so
+/// "Alex\u{a0}Januschewsky" would silently fail to match the note titled
+/// "Alex Januschewsky" — and a duplicate would be created with no hint why.
+pub fn match_key(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_whitespace() { ' ' } else { c })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 /// True when a note carries the `source: import` stamp this importer writes,
@@ -541,7 +569,7 @@ pub fn build_notes(
                 continue;
             }
             let stem = existing
-                .get(&name.to_lowercase())
+                .get(&match_key(name))
                 .cloned()
                 .unwrap_or_else(|| slugify(name));
             target.insert(name.clone(), stem);
@@ -586,7 +614,7 @@ pub fn build_notes(
     let mut existing_hubs = Vec::new();
     let mut hub = |name: &str, kind: &str, titles: &[String], notes: &mut Vec<Note>| {
         let stem = target.get(name).cloned().unwrap_or_else(|| slugify(name));
-        if existing.contains_key(&name.to_lowercase()) {
+        if existing.contains_key(&match_key(name)) {
             existing_hubs.push(ExistingHub {
                 stem,
                 name: name.to_string(),
@@ -992,6 +1020,43 @@ mod tests {
             "byline must link the existing file, got: {}",
             post.markdown
         );
+    }
+
+    #[test]
+    fn match_key_survives_the_whitespace_wordpress_emits() {
+        // A non-breaking space is what &nbsp; decodes to, and WP puts them in
+        // titles and <dc:creator> constantly. Plain lowercasing misses it, which
+        // silently produced a duplicate note.
+        assert_eq!(match_key("Alex\u{a0}Januschewsky"), match_key("Alex Januschewsky"));
+        assert_eq!(match_key("  Alex   Januschewsky  "), match_key("alex januschewsky"));
+        assert_eq!(match_key("Alex\tJanuschewsky"), match_key("Alex Januschewsky"));
+        // Genuinely different names must still differ.
+        assert_ne!(match_key("Alex Januschewsky"), match_key("Profil Alex Januschewsky"));
+    }
+
+    #[test]
+    fn hub_matching_uses_the_normalized_key() {
+        let posts = vec![Post {
+            title: "Beitrag".into(),
+            // As it arrives from the feed: with a non-breaking space.
+            author: "Alex\u{a0}Januschewsky".into(),
+            content_html: "<p>x</p>".into(),
+            ..Default::default()
+        }];
+        // As stored in the vault: with an ordinary space.
+        let existing: HashMap<String, String> = [(
+            match_key("Alex Januschewsky"),
+            "Profil Alex Januschewsky".to_string(),
+        )]
+        .into_iter()
+        .collect();
+        let built = build_notes(&posts, "Blog", &existing);
+        assert!(
+            !built.notes.iter().any(|n| n.rel.contains("Januschewsky")),
+            "no duplicate author note may be created"
+        );
+        assert_eq!(built.existing_hubs.len(), 1);
+        assert_eq!(built.existing_hubs[0].stem, "Profil Alex Januschewsky");
     }
 
     #[test]

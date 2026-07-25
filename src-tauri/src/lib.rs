@@ -93,11 +93,19 @@ async fn import_wordpress(
     folder: String,
     site_url: String,
     author: Option<String>,
+    author_note: Option<String>,
 ) -> Result<magma_import::ImportSummary, String> {
     // Network + file writes can take a while — run off the main thread.
     let author = author.unwrap_or_default();
+    let author_note = author_note.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
-        magma_import::import_wordpress(&PathBuf::from(vault), &folder, &site_url, &author)
+        magma_import::import_wordpress(
+            &PathBuf::from(vault),
+            &folder,
+            &site_url,
+            &author,
+            &author_note,
+        )
     })
     .await
     .map_err(|e| e.to_string())?
