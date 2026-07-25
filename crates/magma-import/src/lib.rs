@@ -30,19 +30,60 @@ pub struct Note {
     pub markdown: String,
 }
 
-/// Import a WordPress blog into `folder` inside the vault. Returns how many
-/// notes were written (posts + category/tag hubs).
-pub fn import_wordpress(vault: &Path, folder: &str, site_url: &str) -> Result<usize, String> {
-    let posts = fetch_posts(site_url)?;
+/// What an import actually produced, so the UI can report it honestly instead
+/// of silently succeeding with missing data.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportSummary {
+    /// Notes written (posts + category/tag/author hubs).
+    pub notes: usize,
+    /// Posts imported.
+    pub posts: usize,
+    /// Distinct author names found (empty when the site hides them).
+    pub authors: Vec<String>,
+}
+
+/// Import a WordPress blog into `folder` inside the vault.
+///
+/// `author_override` (empty = auto-detect) forces the byline for every post.
+/// It exists because plenty of hardened WordPress sites block the `users`
+/// endpoint *and* author embedding, leaving the REST API with no author name
+/// at all — in that case the user can supply it once instead of getting notes
+/// with no byline.
+pub fn import_wordpress(
+    vault: &Path,
+    folder: &str,
+    site_url: &str,
+    author_override: &str,
+) -> Result<ImportSummary, String> {
+    let mut posts = fetch_posts(site_url)?;
     if posts.is_empty() {
         return Err("no posts found — is this a WordPress site with the REST API enabled?".into());
     }
+    let forced = author_override.trim();
+    if !forced.is_empty() {
+        for p in &mut posts {
+            p.author = forced.to_string();
+        }
+    }
+    let mut authors: Vec<String> = posts
+        .iter()
+        .filter(|p| !p.author.is_empty())
+        .map(|p| p.author.clone())
+        .collect();
+    authors.sort();
+    authors.dedup();
+
     let notes = build_notes(&posts, folder);
-    let count = notes.len();
+    let summary = ImportSummary {
+        notes: notes.len(),
+        posts: posts.len(),
+        authors,
+    };
     for note in notes {
         magma_core::write_note(vault, &note.rel, &note.markdown).map_err(|e| e.to_string())?;
     }
-    Ok(count)
+    Ok(summary)
 }
 
 /// Fetch all posts from `<site>/wp-json/wp/v2/posts`, following pagination.

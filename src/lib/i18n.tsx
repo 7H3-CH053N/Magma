@@ -35,10 +35,12 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "empty.browserPreview":
       "(Running in the browser preview — launch the desktop app for full vault access.)",
     "prompt.rename": "Rename note",
-    "confirm.delete": "Delete \"{title}\"? This cannot be undone.",
-    "confirm.deleteFolder": "Delete the folder \"{folder}\" and all {count} notes inside it? This cannot be undone.",
+    "confirm.delete": "Delete \"{title}\"?",
+    "confirm.deleteFolder": "Delete the folder \"{folder}\" and all {count} notes inside it?",
     "dialog.ok": "OK",
     "dialog.cancel": "Cancel",
+    "dialog.delete": "Delete",
+    "confirm.undone": "This cannot be undone.",
     "settings.title": "Settings",
     "settings.appearance": "Appearance",
     "settings.theme": "Theme",
@@ -62,6 +64,10 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "settings.importBody":
       "Pull every post into a folder as linked notes — grouped by category and tag, then searchable and available to Claude.",
     "settings.importFolder": "Target folder",
+    "settings.importAuthor": "Author (optional — only if the site hides it)",
+    "settings.importAuthors": "author: {authors}",
+    "settings.importNoAuthor":
+      "The site's REST API returned no author (the users endpoint is usually blocked by a security plugin). Enter the author above and import again to get bylines and an author note.",
     "settings.importUrl": "Blog URL (e.g. https://myblog.com)",
     "settings.importRun": "Import",
     "settings.importing": "Importing… this can take a minute",
@@ -117,10 +123,12 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "empty.browserPreview":
       "(Läuft in der Browser-Vorschau – starte die Desktop-App für vollen Vault-Zugriff.)",
     "prompt.rename": "Notiz umbenennen",
-    "confirm.delete": "„{title}“ löschen? Das kann nicht rückgängig gemacht werden.",
-    "confirm.deleteFolder": "Ordner „{folder}“ mit allen {count} Notizen darin löschen? Das kann nicht rückgängig gemacht werden.",
+    "confirm.delete": "„{title}“ löschen?",
+    "confirm.deleteFolder": "Ordner „{folder}“ mit allen {count} Notizen darin löschen?",
     "dialog.ok": "OK",
     "dialog.cancel": "Abbrechen",
+    "dialog.delete": "Löschen",
+    "confirm.undone": "Das kann nicht rückgängig gemacht werden.",
     "settings.title": "Einstellungen",
     "settings.appearance": "Darstellung",
     "settings.theme": "Modus",
@@ -144,6 +152,10 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "settings.importBody":
       "Hol alle Beiträge als verlinkte Notizen in einen Ordner — gruppiert nach Kategorie und Tag, dann durchsuchbar und für Claude verfügbar.",
     "settings.importFolder": "Zielordner",
+    "settings.importAuthor": "Autor (optional — nur falls die Seite ihn nicht ausgibt)",
+    "settings.importAuthors": "Autor: {authors}",
+    "settings.importNoAuthor":
+      "Die REST-API der Seite hat keinen Autor geliefert (der users-Endpunkt ist meist von einem Security-Plugin gesperrt). Trag den Autor oben ein und importiere erneut — dann gibt es Autorenzeilen und eine Autor-Notiz.",
     "settings.importUrl": "Blog-URL (z. B. https://meinblog.at)",
     "settings.importRun": "Importieren",
     "settings.importing": "Importiere… das kann eine Minute dauern",

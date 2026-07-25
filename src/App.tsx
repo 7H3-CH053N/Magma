@@ -7,6 +7,7 @@ import Splash from "./components/Splash";
 import Settings from "./components/Settings";
 import FlameIcon from "./components/FlameIcon";
 import PromptDialog from "./components/PromptDialog";
+import ConfirmDialog from "./components/ConfirmDialog";
 import { useI18n } from "./lib/i18n";
 import { splitFrontmatter, joinFrontmatter } from "./lib/markdown";
 import {
@@ -58,6 +59,13 @@ export default function App() {
     initial: string;
     suggestions?: string[];
     onSubmit: (value: string) => void;
+  } | null>(null);
+  // Destructive actions route through an in-app confirmation (window.confirm
+  // is not surfaced by the desktop webview).
+  const [confirm, setConfirm] = useState<{
+    title: string;
+    detail?: string;
+    onConfirm: () => void;
   } | null>(null);
   // The active note's frontmatter, kept out of the editor and re-attached on save.
   const frontmatter = useRef("");
@@ -191,41 +199,46 @@ export default function App() {
   );
 
   const handleDelete = useCallback(
-    async (path: string, title: string) => {
+    (path: string, title: string) => {
       if (!vault) return;
-      if (!window.confirm(t("confirm.delete", { title }))) return;
-      flushSave();
-      await deleteNote(vault, path);
-      deleteRemote(path);
-      await refreshNotes(vault);
-      if (activePath === path) {
-        setActivePath(null);
-        setContent("");
-        setLinks([]);
-      }
+      setConfirm({
+        title: t("confirm.delete", { title }),
+        detail: t("confirm.undone"),
+        onConfirm: async () => {
+          flushSave();
+          await deleteNote(vault, path);
+          deleteRemote(path);
+          await refreshNotes(vault);
+          if (activePath === path) {
+            setActivePath(null);
+            setContent("");
+            setLinks([]);
+          }
+        },
+      });
     },
     [vault, activePath, flushSave, refreshNotes, deleteRemote, t]
   );
 
   const handleDeleteFolder = useCallback(
-    async (folder: string) => {
+    (folder: string) => {
       if (!vault || !folder) return;
       const inFolder = notes.filter((n) => n.path.startsWith(`${folder}/`));
-      if (
-        !window.confirm(
-          t("confirm.deleteFolder", { folder, count: String(inFolder.length) })
-        )
-      )
-        return;
-      flushSave();
-      await deleteFolder(vault, folder);
-      for (const n of inFolder) deleteRemote(n.path);
-      await refreshNotes(vault);
-      if (activePath && activePath.startsWith(`${folder}/`)) {
-        setActivePath(null);
-        setContent("");
-        setLinks([]);
-      }
+      setConfirm({
+        title: t("confirm.deleteFolder", { folder, count: String(inFolder.length) }),
+        detail: t("confirm.undone"),
+        onConfirm: async () => {
+          flushSave();
+          await deleteFolder(vault, folder);
+          for (const n of inFolder) deleteRemote(n.path);
+          await refreshNotes(vault);
+          if (activePath && activePath.startsWith(`${folder}/`)) {
+            setActivePath(null);
+            setContent("");
+            setLinks([]);
+          }
+        },
+      });
     },
     [vault, notes, activePath, flushSave, refreshNotes, deleteRemote, t]
   );
@@ -358,6 +371,20 @@ export default function App() {
             setDialog(null);
           }}
           onCancel={() => setDialog(null)}
+        />
+      )}
+      {confirm && (
+        <ConfirmDialog
+          title={confirm.title}
+          detail={confirm.detail}
+          destructive
+          confirmLabel={t("dialog.delete")}
+          cancelLabel={t("dialog.cancel")}
+          onConfirm={() => {
+            confirm.onConfirm();
+            setConfirm(null);
+          }}
+          onCancel={() => setConfirm(null)}
         />
       )}
       {showSettings && (

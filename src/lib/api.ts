@@ -78,12 +78,20 @@ export async function listFolders(vault: string): Promise<string[]> {
 }
 
 /** Import a WordPress blog into a folder; returns the number of notes written. */
+export interface ImportSummary {
+  notes: number;
+  posts: number;
+  /** Author names found (empty when the site's REST API hides them). */
+  authors: string[];
+}
+
 export async function importWordpress(
   vault: string,
   folder: string,
-  siteUrl: string
-): Promise<number> {
-  return invoke<number>("import_wordpress", { vault, folder, siteUrl });
+  siteUrl: string,
+  author?: string
+): Promise<ImportSummary> {
+  return invoke<ImportSummary>("import_wordpress", { vault, folder, siteUrl, author });
 }
 
 /** Save pasted image bytes into the vault; returns the vault-relative path. */

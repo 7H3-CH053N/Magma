@@ -62,23 +62,34 @@ export default function Settings({
   // WordPress import state.
   const [impUrl, setImpUrl] = useState("");
   const [impFolder, setImpFolder] = useState("");
+  const [impAuthor, setImpAuthor] = useState("");
   const [impBusy, setImpBusy] = useState(false);
   const [impDone, setImpDone] = useState<string | null>(null);
+  const [impWarn, setImpWarn] = useState<string | null>(null);
   const [impErr, setImpErr] = useState<string | null>(null);
 
   const runImport = async () => {
     if (!vault || !impUrl.trim()) return;
     setImpErr(null);
     setImpDone(null);
+    setImpWarn(null);
     setImpBusy(true);
     try {
-      const count = await importWordpress(vault, impFolder.trim(), impUrl.trim());
+      const res = await importWordpress(
+        vault,
+        impFolder.trim(),
+        impUrl.trim(),
+        impAuthor.trim()
+      );
       setImpDone(
         t("settings.importDone", {
-          count: String(count),
+          count: String(res.notes),
           folder: impFolder.trim() || "/",
         })
       );
+      // Say so when the site gave us no author, rather than silently omitting it.
+      if (res.authors.length === 0) setImpWarn(t("settings.importNoAuthor"));
+      else setImpDone((d) => `${d} · ${t("settings.importAuthors", { authors: res.authors.join(", ") })}`);
     } catch (e) {
       setImpErr(String(e));
     } finally {
@@ -303,6 +314,12 @@ export default function Settings({
                   <option key={f} value={f} />
                 ))}
               </datalist>
+              <input
+                value={impAuthor}
+                onChange={(e) => setImpAuthor(e.target.value)}
+                placeholder={t("settings.importAuthor")}
+                className="rounded-lg border border-black/10 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-magma-accent dark:border-white/10"
+              />
               <button
                 onClick={runImport}
                 disabled={impBusy || !impUrl.trim()}
@@ -313,6 +330,7 @@ export default function Settings({
               {impDone && (
                 <p className="text-xs text-green-600 dark:text-green-400">{impDone}</p>
               )}
+              {impWarn && <p className="text-xs text-amber-600 dark:text-amber-400">{impWarn}</p>}
               {impErr && <p className="text-xs text-red-500">{impErr}</p>}
             </div>
           )}

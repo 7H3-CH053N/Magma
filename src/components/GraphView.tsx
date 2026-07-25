@@ -15,8 +15,6 @@ interface Sim {
   degree: number;
   x: number;
   y: number;
-  vx: number;
-  vy: number;
 }
 
 // Read the live theme colors so the graph follows accent/AI customization.
@@ -28,28 +26,36 @@ const ACCENT_FALLBACK = "#e0533d";
 const AI_FALLBACK = "#7c5cff";
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
+/** Ideal link length in world units. The view auto-fits, so only ratios matter. */
+const K = 55;
+/** Node radius in *screen* pixels — constant, so nodes stay visible when zoomed out. */
+const nodeRadius = (degree: number) => 2.5 + Math.min(7, degree * 1.2);
+
 /**
- * The graph — Magma's headline view. A small custom force simulation on a
- * canvas keeps large vaults smooth without pulling in a graph library. Nodes
- * grow with their link degree; AI-authored notes glow violet so you can see
- * what Claude contributed.
+ * The graph — Magma's headline view. A Fruchterman-Reingold force layout on a
+ * canvas: repulsion `k²/d` between every pair, attraction `d²/k` along links,
+ * with a cooling temperature. Because `k` is a fixed ideal distance rather than
+ * a hand-tuned constant, the layout behaves the same for 20 notes and for 2000.
+ *
+ * Nodes, links and labels are drawn in screen space, so zooming out shrinks the
+ * layout but never the dots — a 650-note vault stays readable instead of
+ * collapsing into invisible specks.
  *
  * Interaction is Obsidian-style: scroll to zoom (toward the cursor), drag the
- * empty canvas to pan, drag a node to reposition it. The pan/zoom transform
- * lives in a ref so it survives graph rebuilds.
+ * empty canvas to pan, drag a node to reposition it. Until you touch it, the
+ * view auto-fits so every node is on screen.
  */
 export default function GraphView({ graph, activePath, onSelect }: GraphViewProps) {
   const { t } = useI18n();
   const ACCENT = themeColor("--magma-accent", ACCENT_FALLBACK);
   const AI = themeColor("--magma-ai", AI_FALLBACK);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const nodesRef = useRef<Sim[]>([]);
   const activeRef = useRef(activePath);
   activeRef.current = activePath;
   // Persistent viewport: scale + screen-space pan offset (ox, oy).
   const viewRef = useRef({ scale: 1, ox: 0, oy: 0 });
-  // While false, the view auto-fits to show every node; any pan/zoom/drag
-  // hands control to the user. Reset re-enables it.
+  // While false, the view auto-fits to show every node; any pan/zoom/drag hands
+  // control to the user. "Reset view" gives it back.
   const interactedRef = useRef(false);
 
   useEffect(() => {
@@ -58,10 +64,9 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Seed positions on a circle whose size grows with the vault so hundreds of
-    // notes don't pile up in the centre. The view auto-fits regardless.
+    // Seed on a circle sized to the vault (no RNG, so layouts are reproducible).
     const n = graph.nodes.length;
-    const seed = 30 + 14 * Math.sqrt(n);
+    const seed = K * Math.sqrt(Math.max(1, n)) * 0.5;
     const nodes: Sim[] = graph.nodes.map((node, i) => {
       const a = (i / Math.max(1, n)) * Math.PI * 2;
       return {
@@ -71,171 +76,161 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
         degree: node.degree,
         x: Math.cos(a) * seed,
         y: Math.sin(a) * seed,
-        vx: 0,
-        vy: 0,
       };
     });
-    nodesRef.current = nodes;
-    // A freshly built graph starts in auto-fit mode.
-    interactedRef.current = false;
-    const index = new Map(nodes.map((s) => [s.path, s]));
-    const edges = graph.edges
-      .map((e) => ({ s: index.get(e.source), t: index.get(e.target) }))
-      .filter((e): e is { s: Sim; t: Sim } => !!e.s && !!e.t);
+    interactedRef.current = false; // a fresh graph starts in auto-fit mode
+
+    const indexOf = new Map(nodes.map((s, i) => [s.path, i]));
+    const links: [number, number][] = [];
+    for (const e of graph.edges) {
+      const a = indexOf.get(e.source);
+      const b = indexOf.get(e.target);
+      if (a !== undefined && b !== undefined && a !== b) links.push([a, b]);
+    }
+    // Name the busiest hubs even when zoomed out — they orient the whole map.
+    const hubs = new Set(
+      [...nodes]
+        .sort((a, b) => b.degree - a.degree)
+        .slice(0, 14)
+        .filter((s) => s.degree > 0)
+        .map((s) => s.path)
+    );
 
     let raf = 0;
-    let alpha = 1;
     let needsDraw = true;
-    let dragNode: Sim | null = null;
+    let dragIdx = -1;
+    // Max displacement per step; cools until the layout settles.
+    let temp = K * 2;
+    const disp = new Float64Array(n * 2);
 
     const resize = () => {
       const rect = canvas.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
-      canvas.width = rect.width * dpr;
-      canvas.height = rect.height * dpr;
+      canvas.width = Math.max(1, rect.width * dpr);
+      canvas.height = Math.max(1, rect.height * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       needsDraw = true;
     };
     resize();
     window.addEventListener("resize", resize);
 
-    const radius = (d: number) => 4 + Math.min(10, d * 1.5);
+    const step = () => {
+      disp.fill(0);
+      // Repulsion between every pair: k²/d.
+      for (let i = 0; i < n; i++) {
+        const a = nodes[i];
+        for (let j = i + 1; j < n; j++) {
+          const b = nodes[j];
+          let dx = a.x - b.x;
+          let dy = a.y - b.y;
+          let d2 = dx * dx + dy * dy;
+          if (d2 < 0.01) {
+            // Coincident nodes: nudge them apart deterministically.
+            dx = ((i % 13) + 1) * 0.05;
+            dy = ((j % 7) + 1) * 0.05;
+            d2 = dx * dx + dy * dy;
+          }
+          const d = Math.sqrt(d2);
+          const f = (K * K) / d;
+          const ux = (dx / d) * f;
+          const uy = (dy / d) * f;
+          disp[i * 2] += ux;
+          disp[i * 2 + 1] += uy;
+          disp[j * 2] -= ux;
+          disp[j * 2 + 1] -= uy;
+        }
+      }
+      // Attraction along links: d²/k.
+      for (const [i, j] of links) {
+        const a = nodes[i];
+        const b = nodes[j];
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+        const f = (d * d) / K;
+        const ux = (dx / d) * f;
+        const uy = (dy / d) * f;
+        disp[i * 2] -= ux;
+        disp[i * 2 + 1] -= uy;
+        disp[j * 2] += ux;
+        disp[j * 2 + 1] += uy;
+      }
+      // Apply, capped by the temperature. The dragged node stays under the cursor.
+      let sx = 0;
+      let sy = 0;
+      for (let i = 0; i < n; i++) {
+        if (i !== dragIdx) {
+          const dx = disp[i * 2];
+          const dy = disp[i * 2 + 1];
+          const dl = Math.sqrt(dx * dx + dy * dy) || 1;
+          const m = Math.min(dl, temp);
+          nodes[i].x += (dx / dl) * m;
+          nodes[i].y += (dy / dl) * m;
+        }
+        sx += nodes[i].x;
+        sy += nodes[i].y;
+      }
+      // Re-centre on the centroid so the layout never drifts away.
+      const cx = sx / n;
+      const cy = sy / n;
+      for (let i = 0; i < n; i++) {
+        nodes[i].x -= cx;
+        nodes[i].y -= cy;
+      }
+      temp *= 0.98;
+    };
 
-    // Screen (canvas-local) point -> world coordinates, given the transform.
+    // World -> screen and back, for hit-testing and dragging.
+    const toScreen = (s: Sim, rect: DOMRect) => {
+      const { scale, ox, oy } = viewRef.current;
+      return { x: rect.width / 2 + ox + s.x * scale, y: rect.height / 2 + oy + s.y * scale };
+    };
     const toWorld = (mx: number, my: number, rect: DOMRect) => {
       const { scale, ox, oy } = viewRef.current;
-      const cx = rect.width / 2;
-      const cy = rect.height / 2;
-      return { x: (mx - cx - ox) / scale, y: (my - cy - oy) / scale };
+      return { x: (mx - rect.width / 2 - ox) / scale, y: (my - rect.height / 2 - oy) / scale };
     };
-    const nodeAt = (mx: number, my: number, rect: DOMRect): Sim | null => {
-      const w = toWorld(mx, my, rect);
-      const tol = 6 / viewRef.current.scale;
-      let best: Sim | null = null;
+    const nodeAt = (mx: number, my: number, rect: DOMRect): number => {
+      let best = -1;
       let bestD = Infinity;
-      for (const s of nodes) {
-        const d = Math.hypot(s.x - w.x, s.y - w.y);
-        if (d < radius(s.degree) + tol && d < bestD) {
-          best = s;
+      for (let i = 0; i < n; i++) {
+        const p = toScreen(nodes[i], rect);
+        const d = Math.hypot(p.x - mx, p.y - my);
+        if (d < nodeRadius(nodes[i].degree) + 5 && d < bestD) {
+          best = i;
           bestD = d;
         }
       }
       return best;
     };
 
-    const physics = () => {
-      // Repulsion between every pair (fine for personal-vault sizes).
-      for (let i = 0; i < nodes.length; i++) {
-        for (let j = i + 1; j < nodes.length; j++) {
-          const a = nodes[i];
-          const b = nodes[j];
-          let dx = a.x - b.x;
-          let dy = a.y - b.y;
-          const d2 = dx * dx + dy * dy || 0.01;
-          const f = (2200 * alpha) / d2;
-          const d = Math.sqrt(d2);
-          dx /= d;
-          dy /= d;
-          a.vx += dx * f;
-          a.vy += dy * f;
-          b.vx -= dx * f;
-          b.vy -= dy * f;
-        }
-      }
-      // Springs along edges.
-      for (const { s, t } of edges) {
-        const dx = t.x - s.x;
-        const dy = t.y - s.y;
-        const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
-        const f = (d - 90) * 0.02 * alpha;
-        const ux = (dx / d) * f;
-        const uy = (dy / d) * f;
-        s.vx += ux;
-        s.vy += uy;
-        t.vx -= ux;
-        t.vy -= uy;
-      }
-      // Gentle pull to center + integrate + damping. The dragged node is
-      // pinned to the cursor, so we never integrate it.
-      for (const s of nodes) {
-        if (s === dragNode) {
-          s.vx = 0;
-          s.vy = 0;
-          continue;
-        }
-        s.vx += -s.x * 0.002 * alpha;
-        s.vy += -s.y * 0.002 * alpha;
-        s.vx *= 0.85;
-        s.vy *= 0.85;
-        s.x += s.vx;
-        s.y += s.vy;
-      }
-      alpha *= 0.99;
-    };
-
-    const draw = () => {
-      const rect = canvas.getBoundingClientRect();
-      const { scale, ox, oy } = viewRef.current;
-      const cx = rect.width / 2;
-      const cy = rect.height / 2;
-      ctx.clearRect(0, 0, rect.width, rect.height);
-      ctx.save();
-      ctx.translate(cx + ox, cy + oy);
-      ctx.scale(scale, scale);
-
-      ctx.strokeStyle = "rgba(125,125,125,0.25)";
-      ctx.lineWidth = 1 / scale;
-      for (const { s, t } of edges) {
-        ctx.beginPath();
-        ctx.moveTo(s.x, s.y);
-        ctx.lineTo(t.x, t.y);
-        ctx.stroke();
-      }
-      const showLabels = scale > 0.5;
-      ctx.font = `${11 / scale}px Inter, system-ui, sans-serif`;
-      for (const s of nodes) {
-        const r = radius(s.degree);
-        const isActive = s.path === activeRef.current;
-        ctx.beginPath();
-        ctx.arc(s.x, s.y, isActive ? r + 2 : r, 0, Math.PI * 2);
-        ctx.fillStyle = s.ai ? AI : ACCENT;
-        ctx.globalAlpha = isActive ? 1 : 0.85;
-        ctx.fill();
-        ctx.globalAlpha = 1;
-        if (showLabels && (isActive || s.degree >= 2)) {
-          ctx.fillStyle = "rgba(120,120,120,0.9)";
-          ctx.fillText(s.title, s.x + r + 3 / scale, s.y + 3 / scale);
-        }
-      }
-      ctx.restore();
-    };
-
-    // Fit every node into view (until the user takes control). Cheap enough to
-    // run each frame; only writes the transform when it actually changes.
+    // Fit every node into view (until the user takes control).
     const fitView = () => {
-      if (!nodes.length) return;
+      if (!n) return;
       let minX = Infinity;
       let minY = Infinity;
       let maxX = -Infinity;
       let maxY = -Infinity;
       for (const s of nodes) {
-        const r = radius(s.degree);
-        minX = Math.min(minX, s.x - r);
-        maxX = Math.max(maxX, s.x + r);
-        minY = Math.min(minY, s.y - r);
-        maxY = Math.max(maxY, s.y + r);
+        if (s.x < minX) minX = s.x;
+        if (s.x > maxX) maxX = s.x;
+        if (s.y < minY) minY = s.y;
+        if (s.y > maxY) maxY = s.y;
       }
       const rect = canvas.getBoundingClientRect();
+      // Leave room for the largest node's screen radius plus a margin.
+      const pad = 28;
       const w = maxX - minX || 1;
       const h = maxY - minY || 1;
-      const scale = clamp(Math.min((rect.width * 0.86) / w, (rect.height * 0.86) / h), 0.05, 1.5);
-      const bxc = (minX + maxX) / 2;
-      const byc = (minY + maxY) / 2;
-      const ox = -bxc * scale;
-      const oy = -byc * scale;
+      const scale = clamp(
+        Math.min((rect.width - pad * 2) / w, (rect.height - pad * 2) / h),
+        0.02,
+        2
+      );
       const v = viewRef.current;
+      const ox = -((minX + maxX) / 2) * scale;
+      const oy = -((minY + maxY) / 2) * scale;
       if (
-        Math.abs(v.scale - scale) > 1e-3 ||
+        Math.abs(v.scale - scale) > 1e-4 ||
         Math.abs(v.ox - ox) > 0.5 ||
         Math.abs(v.oy - oy) > 0.5
       ) {
@@ -246,9 +241,55 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
       }
     };
 
+    const draw = () => {
+      const rect = canvas.getBoundingClientRect();
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      // Everything below is screen space: positions are transformed, sizes aren't.
+      const pts = nodes.map((s) => toScreen(s, rect));
+
+      ctx.strokeStyle = "rgba(125,125,125,0.22)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (const [i, j] of links) {
+        ctx.moveTo(pts[i].x, pts[i].y);
+        ctx.lineTo(pts[j].x, pts[j].y);
+      }
+      ctx.stroke();
+
+      const scale = viewRef.current.scale;
+      ctx.font = "11px Inter, system-ui, sans-serif";
+      ctx.textBaseline = "middle";
+      for (let i = 0; i < n; i++) {
+        const s = nodes[i];
+        const p = pts[i];
+        // Skip anything comfortably off-screen (cheap at large vault sizes).
+        if (p.x < -40 || p.y < -40 || p.x > rect.width + 40 || p.y > rect.height + 40) continue;
+        const isActive = s.path === activeRef.current;
+        const r = nodeRadius(s.degree) + (isActive ? 2 : 0);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = s.ai ? AI : ACCENT;
+        ctx.globalAlpha = isActive ? 1 : 0.85;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        if (isActive) {
+          ctx.strokeStyle = s.ai ? AI : ACCENT;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, r + 4, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        // Label the hubs always; everything else once you've zoomed in.
+        if (isActive || hubs.has(s.path) || (scale > 0.45 && s.degree >= 1)) {
+          ctx.fillStyle = "rgba(130,130,130,0.95)";
+          ctx.fillText(s.title, p.x + r + 4, p.y);
+        }
+      }
+    };
+
     const frame = () => {
-      if (alpha > 0.02 || dragNode) {
-        physics();
+      if (temp > 0.3 || dragIdx >= 0) {
+        step();
         needsDraw = true;
       }
       if (!interactedRef.current) fitView();
@@ -268,47 +309,40 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
     let lastX = 0;
     let lastY = 0;
 
-    const localXY = (e: PointerEvent, rect: DOMRect) => ({
-      mx: e.clientX - rect.left,
-      my: e.clientY - rect.top,
-    });
-
     const onPointerDown = (e: PointerEvent) => {
       const rect = canvas.getBoundingClientRect();
-      const { mx, my } = localXY(e, rect);
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
       downX = lastX = mx;
       downY = lastY = my;
       moved = false;
       const hit = nodeAt(mx, my, rect);
-      if (hit) {
-        dragNode = hit;
-        alpha = Math.max(alpha, 0.25); // reheat so neighbors follow
-        canvas.style.cursor = "grabbing";
+      if (hit >= 0) {
+        dragIdx = hit;
+        temp = Math.max(temp, K * 0.25); // reheat so neighbours make room
       } else {
         panning = true;
         interactedRef.current = true; // panning takes over the viewport
-        canvas.style.cursor = "grabbing";
       }
+      canvas.style.cursor = "grabbing";
       canvas.setPointerCapture(e.pointerId);
     };
 
     const onPointerMove = (e: PointerEvent) => {
       const rect = canvas.getBoundingClientRect();
-      const { mx, my } = localXY(e, rect);
-      if (!dragNode && !panning) {
-        // Hover feedback: pointer over a node hints it's grabbable.
-        canvas.style.cursor = nodeAt(mx, my, rect) ? "grab" : "default";
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      if (dragIdx < 0 && !panning) {
+        canvas.style.cursor = nodeAt(mx, my, rect) >= 0 ? "grab" : "default";
         return;
       }
       if (Math.hypot(mx - downX, my - downY) > 3) moved = true;
-      if (dragNode) {
-        if (moved) interactedRef.current = true; // stop refitting mid-drag
+      if (dragIdx >= 0) {
+        if (moved) interactedRef.current = true; // don't refit mid-drag
         const w = toWorld(mx, my, rect);
-        dragNode.x = w.x;
-        dragNode.y = w.y;
-        dragNode.vx = 0;
-        dragNode.vy = 0;
-        alpha = Math.max(alpha, 0.25);
+        nodes[dragIdx].x = w.x;
+        nodes[dragIdx].y = w.y;
+        needsDraw = true;
       } else if (panning) {
         viewRef.current.ox += mx - lastX;
         viewRef.current.oy += my - lastY;
@@ -319,15 +353,15 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
     };
 
     const onPointerUp = (e: PointerEvent) => {
-      // A press without drag is a click → open the note.
-      if (!moved && dragNode) onSelect(dragNode.path);
-      dragNode = null;
+      // A press without a drag is a click → open the note.
+      if (!moved && dragIdx >= 0) onSelect(nodes[dragIdx].path);
+      dragIdx = -1;
       panning = false;
       canvas.style.cursor = "default";
       try {
         canvas.releasePointerCapture(e.pointerId);
       } catch {
-        /* pointer may already be released */
+        /* already released */
       }
     };
 
@@ -337,16 +371,12 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
       const rect = canvas.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
-      const cx = rect.width / 2;
-      const cy = rect.height / 2;
       const view = viewRef.current;
-      // World point under the cursor stays fixed as we zoom.
-      const wx = (mx - cx - view.ox) / view.scale;
-      const wy = (my - cy - view.oy) / view.scale;
-      const factor = Math.exp(-e.deltaY * 0.0015);
-      view.scale = clamp(view.scale * factor, 0.05, 5);
-      view.ox = mx - cx - wx * view.scale;
-      view.oy = my - cy - wy * view.scale;
+      // The world point under the cursor stays put as we zoom.
+      const w = toWorld(mx, my, rect);
+      view.scale = clamp(view.scale * Math.exp(-e.deltaY * 0.0015), 0.02, 8);
+      view.ox = mx - rect.width / 2 - w.x * view.scale;
+      view.oy = my - rect.height / 2 - w.y * view.scale;
       needsDraw = true;
     };
 
@@ -367,11 +397,6 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph]);
 
-  const resetView = () => {
-    // Hand control back to auto-fit so every node snaps into view again.
-    interactedRef.current = false;
-  };
-
   return (
     <div className="relative h-full w-full">
       {graph.nodes.length === 0 && (
@@ -381,7 +406,9 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
       )}
       <canvas ref={canvasRef} className="h-full w-full touch-none" />
       <button
-        onClick={resetView}
+        onClick={() => {
+          interactedRef.current = false; // hand control back to auto-fit
+        }}
         title={t("graph.reset")}
         className="absolute left-4 top-3 rounded-md bg-black/5 px-2.5 py-1 text-xs text-magma-muted transition hover:bg-black/10 dark:bg-white/10 dark:hover:bg-white/20"
       >
