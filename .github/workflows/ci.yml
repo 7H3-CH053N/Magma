@@ -27,7 +27,7 @@ jobs:
       - name: Build frontend
         run: npm run build
       - name: Rust tests (core + MCP + WebDAV)
-        run: cargo test -p magma-core -p magma-mcp -p magma-webdav --locked
+        run: cargo test -p magma-core -p magma-mcp -p magma-webdav -p magma-import --locked
 
   # Full desktop bundle build on the platforms Magma targets. Each OS builds
   # only the installer that doesn't need a flaky network download at bundle time
