@@ -267,12 +267,14 @@ export default function Sidebar({
         </div>
       </div>
 
-      <button
-        onClick={onOpenVault}
-        className="mx-3 mb-2 rounded-lg bg-black/5 px-3 py-1.5 text-left text-sm text-magma-muted transition hover:bg-black/10 dark:bg-white/10 dark:hover:bg-white/20"
-      >
-        {vault ? shortenPath(vault) : t("sidebar.openVault")}
-      </button>
+      {!vault && (
+        <button
+          onClick={onOpenVault}
+          className="mx-3 mb-2 rounded-lg bg-magma-accent px-3 py-1.5 text-sm font-medium text-white transition hover:opacity-90"
+        >
+          {t("sidebar.openVault")}
+        </button>
+      )}
 
       {vault && (
         <div className="relative mx-3 mb-2">
@@ -436,7 +438,3 @@ function buildTree(notes: NoteMeta[], folders: string[]): FolderNode[] {
   return roots;
 }
 
-function shortenPath(p: string): string {
-  const parts = p.split(/[\\/]/);
-  return parts.length <= 2 ? p : "…/" + parts.slice(-2).join("/");
-}

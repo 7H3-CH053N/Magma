@@ -18,7 +18,11 @@ interface SettingsProps {
   notes: NoteMeta[];
   onConnectRemote: (cfg: RemoteConfig) => Promise<void>;
   remoteActive: boolean;
+  /** Pick a vault folder — the only place this lives now. */
+  onOpenVault: () => void;
 }
+
+type Tab = "vault" | "appearance" | "import" | "claude" | "about";
 
 function savedRemote(): { url: string; username: string } {
   try {
@@ -41,7 +45,9 @@ export default function Settings({
   notes,
   onConnectRemote,
   remoteActive,
+  onOpenVault,
 }: SettingsProps) {
+  const [tab, setTab] = useState<Tab>("vault");
   const { t, lang, setLang } = useI18n();
   const { theme, setTheme, reset } = useTheme();
   const initial = savedRemote();
@@ -146,20 +152,45 @@ export default function Settings({
   return (
     <div className="fixed inset-0 z-40 grid place-items-center bg-black/40 p-4" onClick={onClose}>
       <div
-        className="max-h-[90vh] w-full max-w-md overflow-auto rounded-2xl bg-magma-bg p-6 shadow-xl dark:bg-[#201c19]"
+        className="flex h-[min(90vh,44rem)] w-full max-w-3xl overflow-hidden rounded-2xl bg-magma-bg shadow-xl dark:bg-[#201c19]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-5 flex items-center justify-between">
-          <h2 className="text-base font-semibold">{t("settings.title")}</h2>
+        {/* Navigation: settings grouped by what you came here to do. */}
+        <nav className="flex w-52 shrink-0 flex-col gap-0.5 border-r border-black/5 bg-black/[0.02] p-3 dark:border-white/5 dark:bg-white/[0.03]">
+          <p className="px-2 pb-2 pt-1 text-sm font-semibold">{t("settings.title")}</p>
+          {(
+            [
+              ["vault", t("settings.tabVault")],
+              ["appearance", t("settings.tabAppearance")],
+              ["import", t("settings.tabImport")],
+              ["claude", t("settings.tabClaude")],
+              ["about", t("settings.tabAbout")],
+            ] as [Tab, string][]
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              onClick={() => setTab(id)}
+              className={`rounded-lg px-2.5 py-1.5 text-left text-sm transition ${
+                tab === id
+                  ? "bg-magma-accent/12 text-magma-accent"
+                  : "text-magma-muted hover:bg-black/5 dark:hover:bg-white/5"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
+
+        <div className="relative flex-1 overflow-auto p-6">
           <button
             onClick={onClose}
-            className="grid h-7 w-7 place-items-center rounded-md text-magma-muted hover:bg-black/10 dark:hover:bg-white/10"
+            className="absolute right-4 top-4 grid h-7 w-7 place-items-center rounded-md text-magma-muted hover:bg-black/10 dark:hover:bg-white/10"
             aria-label={t("settings.close")}
           >
             ✕
           </button>
-        </div>
 
+        {tab === "appearance" && (<>
         {/* Appearance */}
         <section className="mb-5">
           <div className="mb-2 flex items-center justify-between">
@@ -261,6 +292,26 @@ export default function Settings({
           </div>
         </section>
 
+        </>)}
+
+        {tab === "vault" && (<>
+        {/* Where the notes live */}
+        <section className="mb-5">
+          <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-magma-muted">
+            {t("settings.vaultTitle")}
+          </label>
+          <p className="mb-2 text-xs text-magma-muted">{t("settings.vaultBody")}</p>
+          <div className="mb-2 truncate rounded-lg bg-black/5 px-3 py-2 font-mono text-xs dark:bg-white/10">
+            {vault ?? t("settings.vaultNone")}
+          </div>
+          <button
+            onClick={onOpenVault}
+            className="rounded-lg bg-magma-accent px-3 py-1.5 text-sm font-medium text-white transition hover:opacity-90"
+          >
+            {vault ? t("settings.vaultChange") : t("settings.vaultChoose")}
+          </button>
+        </section>
+
         {/* Remote (WebDAV) vault */}
         <section className="mb-5">
           <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-magma-muted">
@@ -305,7 +356,10 @@ export default function Settings({
           </div>
         </section>
 
-        {/* Import WordPress */}
+        </>)}
+
+        {tab === "import" && (
+        /* Import WordPress */
         <section className="mb-5">
           <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-magma-muted">
             {t("settings.importTitle")}
@@ -370,7 +424,10 @@ export default function Settings({
           )}
         </section>
 
-        {/* Connect to Claude */}
+        )}
+
+        {tab === "claude" && (
+        /* Connect to Claude */
         <section className="mb-5">
           <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-magma-muted">
             {t("settings.connectTitle")}
@@ -413,7 +470,10 @@ export default function Settings({
           )}
         </section>
 
-        {/* About */}
+        )}
+
+        {tab === "about" && (
+        /* About */
         <section className="flex flex-col items-center gap-2 rounded-xl bg-black/[0.03] p-6 text-center dark:bg-white/[0.04]">
           <FlameIcon size={56} />
           <div className="text-lg font-semibold tracking-tight">Magma</div>
@@ -436,6 +496,8 @@ export default function Settings({
             <div className="mt-1 opacity-80">{t("settings.license")}</div>
           </div>
         </section>
+        )}
+        </div>
       </div>
     </div>
   );

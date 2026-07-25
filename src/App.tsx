@@ -429,6 +429,7 @@ export default function App() {
           notes={notes}
           onConnectRemote={connectRemote}
           remoteActive={!!remote}
+          onOpenVault={openVault}
         />
       )}
       <Sidebar
