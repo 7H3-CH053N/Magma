@@ -75,6 +75,13 @@ fn create_folder(vault: String, name: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn delete_folder(vault: String, folder: String) -> Result<(), String> {
+    let root = PathBuf::from(vault);
+    vault::safe_join(&root, &folder).ok_or_else(|| "invalid path".to_string())?;
+    vault::delete_folder(&root, &folder).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn list_folders(vault: String) -> Result<Vec<String>, String> {
     vault::list_folders(&PathBuf::from(vault)).map_err(|e| e.to_string())
 }
@@ -312,6 +319,7 @@ pub fn run() {
             delete_note,
             move_note,
             create_folder,
+            delete_folder,
             list_folders,
             import_wordpress,
             save_asset,

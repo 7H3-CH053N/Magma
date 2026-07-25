@@ -15,6 +15,7 @@ pub use links::{
     backlinks, build_graph, extract_links, search, Graph, GraphEdge, GraphNode, SearchHit,
 };
 pub use vault::{
-    create_folder, create_note, create_note_in, delete_note, list_folders, list_notes, move_note,
-    read_note, rename_note, safe_join, save_asset, slugify, write_note, Note, NoteMeta,
+    create_folder, create_note, create_note_in, delete_folder, delete_note, list_folders,
+    list_notes, move_note, read_note, rename_note, safe_join, save_asset, slugify, write_note,
+    Note, NoteMeta,
 };

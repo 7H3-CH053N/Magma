@@ -67,6 +67,11 @@ export async function createFolder(vault: string, name: string): Promise<string>
   return invoke<string>("create_folder", { vault, name });
 }
 
+/** Delete a folder and every note inside it (recursive). */
+export async function deleteFolder(vault: string, folder: string): Promise<void> {
+  return invoke("delete_folder", { vault, folder });
+}
+
 export async function listFolders(vault: string): Promise<string[]> {
   if (!hasTauri) return [];
   return invoke<string[]>("list_folders", { vault });

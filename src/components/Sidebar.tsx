@@ -16,6 +16,7 @@ interface SidebarProps {
   onDelete: (path: string, title: string) => void;
   onMove: (path: string) => void;
   onMoveTo: (path: string, folder: string) => void;
+  onDeleteFolder: (folder: string) => void;
   query: string;
   onQuery: (q: string) => void;
   searchHits: SearchHit[];
@@ -35,6 +36,7 @@ export default function Sidebar({
   onDelete,
   onMove,
   onMoveTo,
+  onDeleteFolder,
   query,
   onQuery,
   searchHits,
@@ -227,24 +229,35 @@ export default function Sidebar({
             const isOpen = !collapsed.has(folder);
             return (
               <div key={folder} className="mt-2">
-                <button
-                  onClick={() => toggleFolder(folder)}
+                <div
                   onDragOver={(e) => {
                     e.preventDefault();
                     setDropTarget(folder);
                   }}
                   onDragLeave={() => setDropTarget((d) => (d === folder ? null : d))}
                   onDrop={onDropInto(folder)}
-                  className={`flex w-full items-center gap-1 rounded-md px-2 py-1 text-left text-xs font-medium uppercase tracking-wide text-magma-muted transition ${
+                  className={`group flex w-full items-center rounded-md pr-1 transition ${
                     dropTarget === folder
                       ? "bg-magma-accent/15"
                       : "hover:bg-black/5 dark:hover:bg-white/10"
                   }`}
                 >
-                  <span className="w-3">{isOpen ? "▾" : "▸"}</span>
-                  <span className="truncate">{folder}</span>
-                  <span className="ml-auto opacity-60">{items.length || ""}</span>
-                </button>
+                  <button
+                    onClick={() => toggleFolder(folder)}
+                    className="flex min-w-0 flex-1 items-center gap-1 px-2 py-1 text-left text-xs font-medium uppercase tracking-wide text-magma-muted"
+                  >
+                    <span className="w-3">{isOpen ? "▾" : "▸"}</span>
+                    <span className="truncate">{folder}</span>
+                    <span className="ml-auto pl-1 opacity-60">{items.length || ""}</span>
+                  </button>
+                  <button
+                    onClick={() => onDeleteFolder(folder)}
+                    title={t("sidebar.deleteFolder")}
+                    className="grid h-6 w-6 shrink-0 place-items-center rounded text-magma-muted opacity-0 transition hover:bg-black/10 group-hover:opacity-100 dark:hover:bg-white/20"
+                  >
+                    🗑
+                  </button>
+                </div>
                 {isOpen && (
                   <div className="pl-2">
                     {items.length === 0 ? (

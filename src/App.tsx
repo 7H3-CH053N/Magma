@@ -14,6 +14,7 @@ import {
   buildGraph,
   createFolder,
   createNote,
+  deleteFolder,
   deleteNote,
   hasTauri,
   listFolders,
@@ -206,6 +207,29 @@ export default function App() {
     [vault, activePath, flushSave, refreshNotes, deleteRemote, t]
   );
 
+  const handleDeleteFolder = useCallback(
+    async (folder: string) => {
+      if (!vault || !folder) return;
+      const inFolder = notes.filter((n) => n.path.startsWith(`${folder}/`));
+      if (
+        !window.confirm(
+          t("confirm.deleteFolder", { folder, count: String(inFolder.length) })
+        )
+      )
+        return;
+      flushSave();
+      await deleteFolder(vault, folder);
+      for (const n of inFolder) deleteRemote(n.path);
+      await refreshNotes(vault);
+      if (activePath && activePath.startsWith(`${folder}/`)) {
+        setActivePath(null);
+        setContent("");
+        setLinks([]);
+      }
+    },
+    [vault, notes, activePath, flushSave, refreshNotes, deleteRemote, t]
+  );
+
   const handleCreateFolder = useCallback(() => {
     if (!vault) return;
     setDialog({
@@ -358,6 +382,7 @@ export default function App() {
         onDelete={handleDelete}
         onMove={handleMove}
         onMoveTo={moveTo}
+        onDeleteFolder={handleDeleteFolder}
         query={query}
         onQuery={setQuery}
         searchHits={hits}

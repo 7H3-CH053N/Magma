@@ -241,6 +241,33 @@ pub fn delete_note(vault: &Path, rel: &str) -> std::io::Result<()> {
     fs::remove_file(vault.join(rel))
 }
 
+/// Delete a folder and everything inside it (recursive). `folder` is a
+/// vault-relative path; the vault root ("") and any `..` traversal are refused.
+/// Segment names are preserved as-is (not re-slugified) so folders created by
+/// the importer, whose names keep the user's original casing, match on disk.
+pub fn delete_folder(vault: &Path, folder: &str) -> std::io::Result<()> {
+    let cleaned = folder
+        .split(['/', '\\'])
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty() && *s != "..")
+        .collect::<Vec<_>>()
+        .join("/");
+    if cleaned.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "refusing to delete the vault root",
+        ));
+    }
+    let target = vault.join(&cleaned);
+    if !target.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "folder not found",
+        ));
+    }
+    fs::remove_dir_all(target)
+}
+
 /// Move a note into `folder` (vault-relative; "" means the root), keeping its
 /// filename. Wikilinks still resolve afterwards because they match on the
 /// filename, not the folder. Returns the new vault-relative path.
@@ -453,6 +480,21 @@ mod tests {
         assert!(folders.contains(&"Ideas".to_string()));
         assert!(folders.contains(&"Work".to_string()));
         assert!(folders.contains(&"Work/Clients".to_string()));
+        fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn delete_folder_removes_recursively_and_guards_root() {
+        let v = tmp_vault();
+        write_note(&v, "Blog/post.md", "# Post").unwrap();
+        write_note(&v, "Blog/nested/deep.md", "# Deep").unwrap();
+        assert!(v.join("Blog").is_dir());
+        delete_folder(&v, "Blog").unwrap();
+        assert!(!v.join("Blog").exists());
+        // The vault root and traversal are refused.
+        assert!(delete_folder(&v, "").is_err());
+        assert!(delete_folder(&v, "  /  ").is_err());
+        assert!(delete_folder(&v, "..").is_err());
         fs::remove_dir_all(&v).ok();
     }
 
