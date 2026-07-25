@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Installer builds are opt-in: run them from the Actions tab when you want a
+  # .dmg/.msi to install.
+  workflow_dispatch:
 
 # Cancel superseded runs on the same ref so pushes don't pile up duplicate runs.
 concurrency:
@@ -33,7 +36,12 @@ jobs:
   # only the installer that doesn't need a flaky network download at bundle time
   # (macOS: .dmg, Windows: .msi — Windows NSIS is skipped because it fetches a
   # helper DLL from GitHub releases, which intermittently 504s).
+  # macOS minutes bill at 10x and Windows at 2x, so building installers on every
+  # push burns the monthly allowance fast. They only run on demand
+  # (Actions tab -> Run workflow) or on a version tag — the Linux `checks` job
+  # above still guards every push and PR.
   bundle:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     strategy:
       fail-fast: false
       matrix:
