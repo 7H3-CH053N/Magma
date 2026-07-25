@@ -82,14 +82,23 @@ pub fn import_wordpress(
     // already belongs to one of them is skipped so the posts' [[Name]] links
     // resolve to the real note. The latter are ours, so a duplicate an earlier
     // import created can be cleaned up instead of lingering forever.
-    let mut protected: HashSet<String> = HashSet::new();
+    // A note is matched by its filename *and* by its title — the sidebar and
+    // graph show titles, so "Alex Januschewsky" on screen may well be stored as
+    // "Profil Alex Januschewsky.md". Matching only filenames is what let the
+    // duplicate through. The value is always the filename stem, since that is
+    // what a [[wikilink]] must name to reach the note.
+    let mut protected: HashMap<String, String> = HashMap::new();
     let mut generated: Vec<(String, String)> = Vec::new(); // (name, path)
     for n in magma_core::list_notes(vault).unwrap_or_default() {
-        let name = magma_core::note_name(&n.path).to_lowercase();
+        let stem = magma_core::note_name(&n.path).to_string();
         if is_import_generated(vault, &n.path) {
-            generated.push((name, n.path));
+            generated.push((stem.to_lowercase(), n.path));
         } else {
-            protected.insert(name);
+            protected.insert(stem.to_lowercase(), stem.clone());
+            let title = n.title.trim().to_lowercase();
+            if !title.is_empty() {
+                protected.entry(title).or_insert(stem);
+            }
         }
     }
 
@@ -98,7 +107,7 @@ pub fn import_wordpress(
     // Drop import-made notes that duplicate one of the protected names. Done
     // before writing, so nothing from this run is removed.
     for (name, path) in &generated {
-        if protected.contains(name) {
+        if protected.contains_key(name) {
             let _ = magma_core::delete_note(vault, path);
         }
     }
@@ -391,15 +400,42 @@ fn rendered(item: &Value, key: &str) -> String {
 /// Build all notes for the posts: one per post plus a hub note per category and
 /// tag. Filenames use the title/term (so `[[Title]]` and `[[Category]]` links
 /// resolve), de-duplicated so nothing is overwritten.
-pub fn build_notes(posts: &[Post], folder: &str, existing: &HashSet<String>) -> Vec<Note> {
+/// `existing` maps a lookup key — an existing note's filename stem *and* its
+/// title, both lowercased — to that note's filename stem, which is what a
+/// `[[wikilink]]` has to name in order to resolve to it.
+pub fn build_notes(posts: &[Post], folder: &str, existing: &HashMap<String, String>) -> Vec<Note> {
     let dir = folder.trim().trim_matches('/');
     let prefix = if dir.is_empty() {
         String::new()
     } else {
         format!("{dir}/")
     };
-    let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Stems are kept unique across the whole import regardless of subfolder:
+    // wikilinks resolve on the filename, so two notes sharing a stem would make
+    // every link to either of them ambiguous.
+    let mut used: HashSet<String> = HashSet::new();
     let mut notes = Vec::new();
+
+    // Where a [[link]] to each category/tag/author should point: at the note the
+    // vault already has, if there is one, otherwise at the hub we create below.
+    let mut target: BTreeMap<String, String> = BTreeMap::new();
+    for post in posts {
+        let names = post
+            .categories
+            .iter()
+            .chain(post.tags.iter())
+            .chain(std::iter::once(&post.author));
+        for name in names {
+            if name.is_empty() || target.contains_key(name) {
+                continue;
+            }
+            let stem = existing
+                .get(&name.to_lowercase())
+                .cloned()
+                .unwrap_or_else(|| slugify(name));
+            target.insert(name.clone(), stem);
+        }
+    }
 
     // category/tag/author -> post titles (for hub notes)
     let mut cat_posts: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -407,8 +443,8 @@ pub fn build_notes(posts: &[Post], folder: &str, existing: &HashSet<String>) -> 
     let mut author_posts: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
     for post in posts {
-        let stem = unique_stem(&slugify(&post.title), &prefix, &used);
-        used.insert(format!("{prefix}{stem}"));
+        let stem = unique_stem(&slugify(&post.title), &used);
+        used.insert(stem.to_lowercase());
         for c in &post.categories {
             cat_posts.entry(c.clone()).or_default().push(post.title.clone());
         }
@@ -421,21 +457,27 @@ pub fn build_notes(posts: &[Post], folder: &str, existing: &HashSet<String>) -> 
                 .or_default()
                 .push(post.title.clone());
         }
+        // Posts are filed under their first category, so a big blog arrives as
+        // browsable folders rather than one flat heap.
+        let sub = match post.categories.first() {
+            Some(c) if !c.is_empty() => format!("{}/", slugify(c)),
+            _ => String::new(),
+        };
         notes.push(Note {
-            rel: format!("{prefix}{stem}.md"),
-            markdown: render_post(post),
+            rel: format!("{prefix}{sub}{stem}.md"),
+            markdown: render_post(post, &target),
         });
     }
 
-    // Hub notes are only created when the vault doesn't already have a note by
-    // that name somewhere else. Otherwise the `[[Name]]` links in the posts
-    // resolve to the note that's already there — creating a second one would
-    // both duplicate it and make the wikilink ambiguous, since links resolve on
-    // the filename.
+    // A hub is only created when the vault doesn't already have that note.
+    // Otherwise the posts' links point at the existing note instead, so nothing
+    // is duplicated and no wikilink becomes ambiguous.
     let hub = |name: &str, kind: &str, titles: &[String], notes: &mut Vec<Note>| {
-        if !existing.contains(&slugify(name).to_lowercase()) {
-            notes.push(hub_note(&prefix, name, kind, titles));
+        if existing.contains_key(&name.to_lowercase()) {
+            return;
         }
+        let stem = target.get(name).cloned().unwrap_or_else(|| slugify(name));
+        notes.push(hub_note(&prefix, &stem, name, kind, titles));
     };
     for (cat, titles) in &cat_posts {
         hub(cat, "Kategorie", titles, &mut notes);
@@ -449,17 +491,25 @@ pub fn build_notes(posts: &[Post], folder: &str, existing: &HashSet<String>) -> 
     notes
 }
 
-fn unique_stem(base: &str, prefix: &str, used: &std::collections::HashSet<String>) -> String {
+fn unique_stem(base: &str, used: &HashSet<String>) -> String {
     let mut stem = base.to_string();
     let mut n = 2;
-    while used.contains(&format!("{prefix}{stem}")) {
+    while used.contains(&stem.to_lowercase()) {
         stem = format!("{base} {n}");
         n += 1;
     }
     stem
 }
 
-fn render_post(post: &Post) -> String {
+fn render_post(post: &Post, target: &BTreeMap<String, String>) -> String {
+    // A [[link]] names a *filename*, so route every term through the resolved
+    // target — that is what points at an existing note instead of a duplicate.
+    let link = |name: &str| -> String {
+        target
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| slugify(name))
+    };
     let mut fm = String::from("---\nsource: import\n");
     if !post.link.is_empty() {
         fm.push_str(&format!("url: {}\n", post.link));
@@ -472,7 +522,7 @@ fn render_post(post: &Post) -> String {
     let mut body = format!("# {}\n", post.title);
     if !post.author.is_empty() {
         // A visible, clickable byline (also builds an author hub in the graph).
-        body.push_str(&format!("\n*von [[{}]]*\n", post.author));
+        body.push_str(&format!("\n*von [[{}]]*\n", link(&post.author)));
     }
     body.push_str(&format!("\n{}", html_to_markdown(&post.content_html)));
 
@@ -482,7 +532,7 @@ fn render_post(post: &Post) -> String {
         }
         let joined = items
             .iter()
-            .map(|i| format!("[[{i}]]"))
+            .map(|i| format!("[[{}]]", link(i)))
             .collect::<Vec<_>>()
             .join(" ");
         format!("\n\n**{label}:** {joined}")
@@ -493,10 +543,10 @@ fn render_post(post: &Post) -> String {
     format!("{fm}{body}")
 }
 
-fn hub_note(prefix: &str, name: &str, kind: &str, post_titles: &[String]) -> Note {
+fn hub_note(prefix: &str, stem: &str, name: &str, kind: &str, post_titles: &[String]) -> Note {
     let list = post_titles
         .iter()
-        .map(|t| format!("- [[{t}]]"))
+        .map(|t| format!("- [[{}]]", slugify(t)))
         .collect::<Vec<_>>()
         .join("\n");
     let markdown = format!(
@@ -504,7 +554,7 @@ fn hub_note(prefix: &str, name: &str, kind: &str, post_titles: &[String]) -> Not
         post_titles.len()
     );
     Note {
-        rel: format!("{prefix}{}.md", slugify(name)),
+        rel: format!("{prefix}{stem}.md"),
         markdown,
     }
 }
@@ -751,10 +801,11 @@ mod tests {
             categories: vec!["Baking".into()],
             tags: vec!["yeast".into()],
         }];
-        let notes = build_notes(&posts, "Blog", &HashSet::new());
+        let notes = build_notes(&posts, "Blog", &HashMap::new());
         // post + 1 category hub + 1 tag hub + 1 author hub
         assert_eq!(notes.len(), 4);
-        let post = notes.iter().find(|n| n.rel == "Blog/Sourdough Guide.md").unwrap();
+        // Posts are filed under their first category.
+        let post = notes.iter().find(|n| n.rel == "Blog/Baking/Sourdough Guide.md").unwrap();
         assert!(post.markdown.contains("# Sourdough Guide"));
         assert!(post.markdown.contains("*von [[Jane Baker]]*"));
         assert!(post.markdown.contains("[[Baking]]"));
@@ -798,14 +849,48 @@ mod tests {
             tags: vec!["yeast".into()],
             ..Default::default()
         }];
-        // The vault already has a note about the author (matched case-insensitively).
-        let existing: HashSet<String> = ["jane baker".to_string()].into_iter().collect();
+        // The vault already has the author's note, but stored under a DIFFERENT
+        // filename than its title — exactly the case that produced a duplicate:
+        // the sidebar shows "Jane Baker", the file is "Profil Jane Baker.md".
+        let existing: HashMap<String, String> = [
+            ("jane baker".to_string(), "Profil Jane Baker".to_string()),
+            ("profil jane baker".to_string(), "Profil Jane Baker".to_string()),
+        ]
+        .into_iter()
+        .collect();
         let notes = build_notes(&posts, "Blog", &existing);
-        // post + category hub + tag hub — no second "Jane Baker" note.
+        // post + category hub + tag hub — no second author note of either name.
         assert_eq!(notes.len(), 3);
-        assert!(!notes.iter().any(|n| n.rel == "Blog/Jane Baker.md"));
-        // The post still links to the author, so it resolves to the existing note.
-        let post = notes.iter().find(|n| n.rel == "Blog/Sourdough Guide.md").unwrap();
-        assert!(post.markdown.contains("*von [[Jane Baker]]*"));
+        assert!(!notes.iter().any(|n| n.rel.contains("Jane Baker.md")));
+        // The byline must name the existing note's FILENAME, or the wikilink
+        // would not reach it.
+        let post = notes.iter().find(|n| n.rel == "Blog/Baking/Sourdough Guide.md").unwrap();
+        assert!(
+            post.markdown.contains("*von [[Profil Jane Baker]]*"),
+            "byline must link the existing file, got: {}",
+            post.markdown
+        );
+    }
+
+    #[test]
+    fn post_stems_stay_unique_across_category_folders() {
+        let mk = |title: &str, cat: &str| Post {
+            title: title.into(),
+            categories: vec![cat.into()],
+            content_html: "<p>x</p>".into(),
+            ..Default::default()
+        };
+        // Same title, different categories → different folders, but the stems
+        // must still differ or [[Doppelt]] would be ambiguous.
+        let posts = vec![mk("Doppelt", "Eins"), mk("Doppelt", "Zwei")];
+        let notes = build_notes(&posts, "Blog", &HashMap::new());
+        let post_paths: Vec<_> = notes
+            .iter()
+            .map(|n| n.rel.as_str())
+            .filter(|r| r.contains("/Eins/") || r.contains("/Zwei/"))
+            .collect();
+        assert_eq!(post_paths.len(), 2);
+        assert!(post_paths.contains(&"Blog/Eins/Doppelt.md"));
+        assert!(post_paths.contains(&"Blog/Zwei/Doppelt 2.md"));
     }
 }

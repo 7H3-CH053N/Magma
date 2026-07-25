@@ -33,12 +33,12 @@ const K = 55;
  * share no links (an imported blog and your own notes, say) only ever repel
  * each other and drift apart until they sit in opposite corners.
  */
-const GRAVITY = 0.9;
+const GRAVITY = 0.22;
 /**
  * Repulsion is ignored beyond this distance. Far-apart clusters stop shoving
  * one another, and skipping distant pairs keeps big vaults fast.
  */
-const REPULSION_CUTOFF = K * 10;
+const REPULSION_CUTOFF = K * 25;
 /** Node radius in *screen* pixels — constant, so nodes stay visible when zoomed out. */
 const nodeRadius = (degree: number) => 2.5 + Math.min(7, degree * 1.2);
 
@@ -98,13 +98,17 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
       const b = indexOf.get(e.target);
       if (a !== undefined && b !== undefined && a !== b) links.push([a, b]);
     }
-    // Name the busiest hubs even when zoomed out — they orient the whole map.
+    // Node indices, most-connected first: labels are placed in this order so the
+    // hubs that orient the map win the space.
+    const labelOrder = nodes
+      .map((_, i) => i)
+      .sort((a, b) => nodes[b].degree - nodes[a].degree);
+    // Name the busiest hubs even when zoomed out.
     const hubs = new Set(
-      [...nodes]
-        .sort((a, b) => b.degree - a.degree)
+      labelOrder
         .slice(0, 14)
-        .filter((s) => s.degree > 0)
-        .map((s) => s.path)
+        .filter((i) => nodes[i].degree > 0)
+        .map((i) => nodes[i].path)
     );
 
     let raf = 0;
@@ -264,7 +268,7 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
       // Everything below is screen space: positions are transformed, sizes aren't.
       const pts = nodes.map((s) => toScreen(s, rect));
 
-      ctx.strokeStyle = "rgba(125,125,125,0.22)";
+      ctx.strokeStyle = "rgba(125,125,125,0.16)";
       ctx.lineWidth = 1;
       ctx.beginPath();
       for (const [i, j] of links) {
@@ -273,20 +277,19 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
       }
       ctx.stroke();
 
-      const scale = viewRef.current.scale;
-      ctx.font = "11px Inter, system-ui, sans-serif";
-      ctx.textBaseline = "middle";
+      const onScreen = (p: { x: number; y: number }) =>
+        p.x > -40 && p.y > -40 && p.x < rect.width + 40 && p.y < rect.height + 40;
+
       for (let i = 0; i < n; i++) {
         const s = nodes[i];
         const p = pts[i];
-        // Skip anything comfortably off-screen (cheap at large vault sizes).
-        if (p.x < -40 || p.y < -40 || p.x > rect.width + 40 || p.y > rect.height + 40) continue;
+        if (!onScreen(p)) continue; // cheap win on large vaults
         const isActive = s.path === activeRef.current;
         const r = nodeRadius(s.degree) + (isActive ? 2 : 0);
         ctx.beginPath();
         ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
         ctx.fillStyle = s.ai ? AI : ACCENT;
-        ctx.globalAlpha = isActive ? 1 : 0.85;
+        ctx.globalAlpha = isActive ? 1 : 0.82;
         ctx.fill();
         ctx.globalAlpha = 1;
         if (isActive) {
@@ -296,11 +299,38 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
           ctx.arc(p.x, p.y, r + 4, 0, Math.PI * 2);
           ctx.stroke();
         }
-        // Label the hubs always; everything else once you've zoomed in.
-        if (isActive || hubs.has(s.path) || (scale > 0.45 && s.degree >= 1)) {
-          ctx.fillStyle = "rgba(130,130,130,0.95)";
-          ctx.fillText(s.title, p.x + r + 4, p.y);
+      }
+
+      // Labels last, most-connected first, and never on top of each other.
+      // Without this a 600-note vault draws 600 overlapping titles — a grey
+      // smear that hides the graph completely.
+      const scale = viewRef.current.scale;
+      const budget = scale > 0.6 ? 70 : 22;
+      const boxes: { x1: number; y1: number; x2: number; y2: number }[] = [];
+      ctx.font = "11px Inter, system-ui, sans-serif";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "rgba(140,140,140,0.95)";
+      let drawn = 0;
+      for (const i of labelOrder) {
+        if (drawn >= budget) break;
+        const s = nodes[i];
+        const p = pts[i];
+        if (!onScreen(p)) continue;
+        const isActive = s.path === activeRef.current;
+        if (!isActive && !hubs.has(s.path) && s.degree < 1) continue;
+        const x = p.x + nodeRadius(s.degree) + 4;
+        const w = ctx.measureText(s.title).width;
+        const box = { x1: x - 2, y1: p.y - 8, x2: x + w + 2, y2: p.y + 8 };
+        if (
+          boxes.some(
+            (b) => !(box.x2 < b.x1 || box.x1 > b.x2 || box.y2 < b.y1 || box.y1 > b.y2)
+          )
+        ) {
+          continue; // would overlap a label already drawn
         }
+        boxes.push(box);
+        ctx.fillText(s.title, x, p.y);
+        drawn++;
       }
     };
 
