@@ -368,6 +368,12 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
     };
 
     // Fit every node into view (until the user takes control).
+    //
+    // This used to snap the viewport straight onto the computed box every
+    // frame. While the layout is still moving, that re-scales the whole picture
+    // sixty times a second — which is what read as the graph shaking. Now it
+    // eases toward the target, so the fit follows the layout instead of
+    // chasing it.
     const fitView = () => {
       if (!n) return;
       let minX = Infinity;
@@ -381,28 +387,32 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
         if (s.y > maxY) maxY = s.y;
       }
       const rect = canvas.getBoundingClientRect();
-      // Leave room for the largest node's screen radius plus a margin.
       const pad = 28;
       const w = maxX - minX || 1;
       const h = maxY - minY || 1;
-      const scale = clamp(
-        Math.min((rect.width - pad * 2) / w, (rect.height - pad * 2) / h),
-        0.02,
-        2
-      );
+      const target = {
+        scale: clamp(
+          Math.min((rect.width - pad * 2) / w, (rect.height - pad * 2) / h),
+          0.02,
+          2
+        ),
+        ox: 0,
+        oy: 0,
+      };
+      target.ox = -((minX + maxX) / 2) * target.scale;
+      target.oy = -((minY + maxY) / 2) * target.scale;
+
       const v = viewRef.current;
-      const ox = -((minX + maxX) / 2) * scale;
-      const oy = -((minY + maxY) / 2) * scale;
-      if (
-        Math.abs(v.scale - scale) > 1e-4 ||
-        Math.abs(v.ox - ox) > 0.5 ||
-        Math.abs(v.oy - oy) > 0.5
-      ) {
-        v.scale = scale;
-        v.ox = ox;
-        v.oy = oy;
-        needsDraw = true;
-      }
+      const near =
+        Math.abs(v.scale - target.scale) < target.scale * 0.002 &&
+        Math.abs(v.ox - target.ox) < 0.4 &&
+        Math.abs(v.oy - target.oy) < 0.4;
+      if (near) return; // already there — leave it perfectly still
+      const k = 0.12; // easing factor: smooth, not sluggish
+      v.scale += (target.scale - v.scale) * k;
+      v.ox += (target.ox - v.ox) * k;
+      v.oy += (target.oy - v.oy) * k;
+      needsDraw = true;
     };
 
     const draw = () => {
@@ -517,12 +527,12 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
     // a still graph looks dead. The residual temperature is small enough that
     // nodes only drift within their cluster, and stepping every other frame
     // halves the cost of doing so forever.
-    const IDLE_TEMP = 0.4;
+    const IDLE_TEMP = 0.18;
     let frameNo = 0;
     const frame = () => {
       frameNo++;
       const settling = temp > IDLE_TEMP;
-      if (settling || dragIdx >= 0 || frameNo % 2 === 0) {
+      if (settling || dragIdx >= 0 || frameNo % 3 === 0) {
         if (!settling && dragIdx < 0) temp = IDLE_TEMP; // keep it just alive
         step();
         needsDraw = true;
@@ -554,6 +564,7 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
       const hit = nodeAt(mx, my, rect);
       if (hit >= 0) {
         dragIdx = hit;
+        interactedRef.current = true; // stop refitting while you hold a node
         temp = Math.max(temp, K * 0.25); // reheat so neighbours make room
       } else {
         panning = true;
@@ -573,7 +584,6 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
       }
       if (Math.hypot(mx - downX, my - downY) > 3) moved = true;
       if (dragIdx >= 0) {
-        if (moved) interactedRef.current = true; // don't refit mid-drag
         const w = toWorld(mx, my, rect);
         nodes[dragIdx].x = w.x;
         nodes[dragIdx].y = w.y;
