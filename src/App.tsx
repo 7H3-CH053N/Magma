@@ -359,16 +359,13 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [createNewNote]);
 
-  // Suppress the webview's own context menu (Look Up / Translate / Inspect
-  // Element — the system's, in the system's language). Text you can actually
-  // edit keeps its menu, so copy and paste still work where they matter.
+  // Suppress the webview's own context menu everywhere — "Look Up", "Translate",
+  // "Inspect Element", "Take Photo", in the system's language. It belongs to
+  // Safari, not to Magma. Exempting the editor (so paste kept its menu) was the
+  // wrong trade: that is exactly where you meet it most. Cut/copy/paste stay
+  // available on Cmd/Ctrl+X/C/V.
   useEffect(() => {
-    const onContextMenu = (e: MouseEvent) => {
-      const el = e.target as HTMLElement | null;
-      const editable =
-        el?.closest("input, textarea, [contenteditable='true'], .magma-prose") !== null;
-      if (!editable) e.preventDefault();
-    };
+    const onContextMenu = (e: MouseEvent) => e.preventDefault();
     window.addEventListener("contextmenu", onContextMenu);
     return () => window.removeEventListener("contextmenu", onContextMenu);
   }, []);
