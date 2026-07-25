@@ -130,9 +130,15 @@ fn backlinks(vault: String, path: String) -> Result<Vec<vault::NoteMeta>, String
     vault::backlinks(&PathBuf::from(vault), &path).map_err(|e| e.to_string())
 }
 
+/// Search, isolated from the rest of the app. A panic in here (a bad slice, a
+/// pathological note) must surface as an error message, never take the window
+/// down — losing the whole app because a search hiccuped is not acceptable.
 #[tauri::command]
 fn search(vault: String, query: String) -> Result<Vec<vault::SearchHit>, String> {
-    vault::search(&PathBuf::from(vault), &query).map_err(|e| e.to_string())
+    let root = PathBuf::from(vault);
+    std::panic::catch_unwind(|| vault::search(&root, &query))
+        .map_err(|_| "search failed on this vault — please report the query".to_string())?
+        .map_err(|e| e.to_string())
 }
 
 // --- Optional remote (WebDAV) vault ---------------------------------------

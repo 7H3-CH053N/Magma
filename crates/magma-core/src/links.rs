@@ -268,17 +268,23 @@ pub fn search(vault: &Path, query: &str) -> std::io::Result<Vec<SearchHit>> {
 }
 
 fn snippet_around(content: &str, body_lower: &str, q: &str) -> String {
+    // Everything here is char-based on purpose. The old version sliced by byte
+    // offsets taken from the *lowercased* copy, and `to_lowercase` can change a
+    // string's byte length (\u{130} becomes two chars, \u{1E9E} shrinks), so those
+    // offsets could land inside a multi-byte character — and slicing a char in
+    // half panics, which takes the whole app down mid-search.
+    const BEFORE: usize = 30;
+    const AFTER: usize = 40;
     match body_lower.find(q) {
         Some(idx) => {
-            let start = content[..idx].char_indices().rev().nth(30).map(|(i, _)| i).unwrap_or(0);
-            let end = (idx + q.len() + 40).min(content.len());
-            let end = content[..end]
-                .char_indices()
-                .last()
-                .map(|(i, c)| i + c.len_utf8())
-                .unwrap_or(content.len());
-            let raw = content[start..end].replace('\n', " ");
-            format!("…{}…", raw.trim())
+            let hit_char = body_lower[..idx].chars().count();
+            let from = hit_char.saturating_sub(BEFORE);
+            let raw: String = content
+                .chars()
+                .skip(from)
+                .take(BEFORE + q.chars().count() + AFTER)
+                .collect();
+            format!("\u{2026}{}\u{2026}", raw.replace('\n', " ").trim())
         }
         None => content.lines().next().unwrap_or("").to_string(),
     }
@@ -409,6 +415,25 @@ mod tests {
         assert!(body.contains("[[Michael Klotz GmbH#Termine]]"), "anchor kept: {body}");
         assert!(body.contains("[[Andere]]"), "unrelated links untouched");
         fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn snippets_never_split_a_character() {
+        // Text whose lowercase differs in byte length from the original, so
+        // byte offsets taken from it do not line up with the source.
+        let samples = [
+            "İstanbul: Größe und Qualität für Bäcker, süße Öfen überall",
+            "STRAẞE und Qualität — Maße, Öfen, Bäcker",
+            "Ää Öö Üü ß İ Qualität ẞ Maße Größe",
+        ];
+        for content in samples {
+            let lower = content.to_lowercase();
+            for q in ["qualität", "größe", "maße", "öfen"] {
+                // Must not panic, whatever the offsets do.
+                let s = snippet_around(content, &lower, q);
+                assert!(s.is_char_boundary(0));
+            }
+        }
     }
 
     #[test]
