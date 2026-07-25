@@ -10,7 +10,7 @@
 use magma_core::slugify;
 use regex::Regex;
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 #[derive(Debug, Clone, Default)]
@@ -77,7 +77,20 @@ pub fn import_wordpress(
     authors.sort();
     authors.dedup();
 
-    let notes = build_notes(&posts, folder);
+    // Note names already present *outside* the import folder. Hub notes reuse
+    // those rather than adding a duplicate; inside the folder we still
+    // overwrite, so re-importing a blog refreshes it.
+    let dir = folder.trim().trim_matches('/');
+    let existing: HashSet<String> = magma_core::list_notes(vault)
+        .unwrap_or_default()
+        .iter()
+        .filter(|n| {
+            dir.is_empty() || !n.path.to_lowercase().starts_with(&format!("{}/", dir.to_lowercase()))
+        })
+        .map(|n| magma_core::note_name(&n.path).to_lowercase())
+        .collect();
+
+    let notes = build_notes(&posts, folder, &existing);
     let summary = ImportSummary {
         notes: notes.len(),
         posts: posts.len(),
@@ -346,7 +359,7 @@ fn rendered(item: &Value, key: &str) -> String {
 /// Build all notes for the posts: one per post plus a hub note per category and
 /// tag. Filenames use the title/term (so `[[Title]]` and `[[Category]]` links
 /// resolve), de-duplicated so nothing is overwritten.
-pub fn build_notes(posts: &[Post], folder: &str) -> Vec<Note> {
+pub fn build_notes(posts: &[Post], folder: &str, existing: &HashSet<String>) -> Vec<Note> {
     let dir = folder.trim().trim_matches('/');
     let prefix = if dir.is_empty() {
         String::new()
@@ -382,14 +395,24 @@ pub fn build_notes(posts: &[Post], folder: &str) -> Vec<Note> {
         });
     }
 
+    // Hub notes are only created when the vault doesn't already have a note by
+    // that name somewhere else. Otherwise the `[[Name]]` links in the posts
+    // resolve to the note that's already there — creating a second one would
+    // both duplicate it and make the wikilink ambiguous, since links resolve on
+    // the filename.
+    let hub = |name: &str, kind: &str, titles: &[String], notes: &mut Vec<Note>| {
+        if !existing.contains(&slugify(name).to_lowercase()) {
+            notes.push(hub_note(&prefix, name, kind, titles));
+        }
+    };
     for (cat, titles) in &cat_posts {
-        notes.push(hub_note(&prefix, cat, "Kategorie", titles));
+        hub(cat, "Kategorie", titles, &mut notes);
     }
     for (tag, titles) in &tag_posts {
-        notes.push(hub_note(&prefix, tag, "Tag", titles));
+        hub(tag, "Tag", titles, &mut notes);
     }
     for (author, titles) in &author_posts {
-        notes.push(hub_note(&prefix, author, "Autor", titles));
+        hub(author, "Autor", titles, &mut notes);
     }
     notes
 }
@@ -696,7 +719,7 @@ mod tests {
             categories: vec!["Baking".into()],
             tags: vec!["yeast".into()],
         }];
-        let notes = build_notes(&posts, "Blog");
+        let notes = build_notes(&posts, "Blog", &HashSet::new());
         // post + 1 category hub + 1 tag hub + 1 author hub
         assert_eq!(notes.len(), 4);
         let post = notes.iter().find(|n| n.rel == "Blog/Sourdough Guide.md").unwrap();
@@ -709,5 +732,27 @@ mod tests {
         let author_hub = notes.iter().find(|n| n.rel == "Blog/Jane Baker.md").unwrap();
         assert!(author_hub.markdown.contains("[[Sourdough Guide]]"));
         assert!(author_hub.markdown.contains("Autor"));
+    }
+
+    #[test]
+    fn hubs_reuse_a_note_that_already_exists_elsewhere() {
+        let posts = vec![Post {
+            title: "Sourdough Guide".into(),
+            author: "Jane Baker".into(),
+            author_id: 1,
+            content_html: "<p>bread</p>".into(),
+            categories: vec!["Baking".into()],
+            tags: vec!["yeast".into()],
+            ..Default::default()
+        }];
+        // The vault already has a note about the author (matched case-insensitively).
+        let existing: HashSet<String> = ["jane baker".to_string()].into_iter().collect();
+        let notes = build_notes(&posts, "Blog", &existing);
+        // post + category hub + tag hub — no second "Jane Baker" note.
+        assert_eq!(notes.len(), 3);
+        assert!(!notes.iter().any(|n| n.rel == "Blog/Jane Baker.md"));
+        // The post still links to the author, so it resolves to the existing note.
+        let post = notes.iter().find(|n| n.rel == "Blog/Sourdough Guide.md").unwrap();
+        assert!(post.markdown.contains("*von [[Jane Baker]]*"));
     }
 }
