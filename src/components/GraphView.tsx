@@ -266,6 +266,11 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
     };
     resize();
     window.addEventListener("resize", resize);
+    // The window doesn't change size when the preview panel opens, but the
+    // canvas does — without this the drawing stays at the old width and looks
+    // squashed. Observe the element itself.
+    const ro = new ResizeObserver(() => resize());
+    ro.observe(canvas);
 
     const step = () => {
       disp.fill(0);
@@ -617,6 +622,7 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
 
     return () => {
       cancelAnimationFrame(raf);
+      ro.disconnect();
       window.removeEventListener("resize", resize);
       canvas.removeEventListener("pointerdown", onPointerDown);
       canvas.removeEventListener("pointermove", onPointerMove);

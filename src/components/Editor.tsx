@@ -24,6 +24,19 @@ interface EditorProps {
   notes?: { path: string; title: string }[];
 }
 
+/**
+ * Markdown for the file. The serializer escapes `[` and `]`, which turns every
+ * `[[Note]]` into `\[\[Note\]\]` — the string `[[` then no longer exists, so
+ * link parsing finds nothing and editing a note silently breaks all its links.
+ * Undo that escaping for wikilinks only.
+ */
+function toMarkdown(editor: TiptapEditor): string {
+  return editor.storage.markdown
+    .getMarkdown()
+    .replace(/\\\[\\\[/g, "[[")
+    .replace(/\\\]\\\]/g, "]]");
+}
+
 /** The `[[name]]` a wikilink must use to reach a note: its filename stem. */
 function stemOf(path: string): string {
   const file = path.split("/").pop() ?? path;
@@ -95,7 +108,7 @@ export default function Editor({
       },
     },
     onUpdate: ({ editor }) => {
-      onChange(editor.storage.markdown.getMarkdown());
+      onChange(toMarkdown(editor));
     },
   });
 

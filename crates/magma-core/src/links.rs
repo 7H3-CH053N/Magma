@@ -12,6 +12,10 @@ use std::path::Path;
 /// `[[Target|alias]]` both yield `Target` (trimmed). A `#heading` or `^block`
 /// suffix is stripped so the link resolves to the note.
 pub fn extract_links(content: &str) -> Vec<String> {
+    // Markdown serializers escape brackets, turning `[[Note]]` into
+    // `\[\[Note\]\]` — which contains no `[[` at all. Notes already saved that
+    // way must keep working, so unescape before scanning.
+    let content = &unescape_brackets(content);
     let bytes = content.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;
@@ -37,6 +41,14 @@ pub fn extract_links(content: &str) -> Vec<String> {
         i += 1;
     }
     out
+}
+
+/// Turn `\[` / `\]` back into `[` / `]`.
+pub fn unescape_brackets(s: &str) -> String {
+    if !s.contains("\\[") && !s.contains("\\]") {
+        return s.to_string();
+    }
+    s.replace("\\[", "[").replace("\\]", "]")
 }
 
 #[derive(Serialize)]
@@ -330,6 +342,16 @@ mod tests {
         assert_eq!(g.edges[0].source, "Alpha.md");
         assert_eq!(g.edges[0].target, "Beta.md");
         fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn extracts_links_even_when_the_brackets_were_escaped() {
+        // Exactly what the editor used to save, which made links vanish.
+        let md = r"Sohn von \[\[Profil Alex Januschewsky|Alex\]\] und \[\[Birgit Januschewsky\]\].";
+        assert_eq!(
+            extract_links(md),
+            vec!["Profil Alex Januschewsky", "Birgit Januschewsky"]
+        );
     }
 
     #[test]
