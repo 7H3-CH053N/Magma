@@ -52,7 +52,10 @@ fn create_note(vault: String, title: String) -> Result<String, String> {
 fn rename_note(vault: String, path: String, new_title: String) -> Result<String, String> {
     let root = PathBuf::from(vault);
     vault::safe_join(&root, &path).ok_or_else(|| "invalid path".to_string())?;
-    vault::rename_note(&root, &path, &new_title).map_err(|e| e.to_string())
+    // Link-safe: repoint every [[wikilink]] that named the old filename.
+    vault::rename_note_updating_links(&root, &path, &new_title)
+        .map(|(new_path, _updated)| new_path)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

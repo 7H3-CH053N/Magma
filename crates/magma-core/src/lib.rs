@@ -12,8 +12,8 @@ pub use ai::{
     AiWriteResult, BrokenLink, LinkCandidate, LinkCheck,
 };
 pub use links::{
-    backlinks, build_graph, extract_links, note_name, search, Graph, GraphEdge, GraphNode,
-    SearchHit,
+    backlinks, build_graph, extract_links, note_name, rename_note_updating_links,
+    replace_link_target, search, Graph, GraphEdge, GraphNode, SearchHit,
 };
 pub use vault::{
     create_folder, create_note, create_note_in, delete_folder, delete_note, list_folders,

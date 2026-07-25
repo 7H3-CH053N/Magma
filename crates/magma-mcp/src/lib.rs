@@ -174,6 +174,41 @@ impl Server {
                 let moved = core::move_note(v, &path, folder).map_err(io)?;
                 Ok(json!({ "path": moved }))
             }
+            "rename_note" => {
+                self.ensure_write()?;
+                let path = str_arg(args, "path")?;
+                core::safe_join(v, &path).ok_or("invalid path")?;
+                let title = str_arg(args, "new_title")?;
+                let (new_path, updated) =
+                    core::rename_note_updating_links(v, &path, &title).map_err(io)?;
+                Ok(json!({ "path": new_path, "linksUpdated": updated }))
+            }
+            "delete_note" => {
+                self.ensure_write()?;
+                let path = str_arg(args, "path")?;
+                core::safe_join(v, &path).ok_or("invalid path")?;
+                // Report what will break, so the agent can repair or reconsider.
+                let orphaned: Vec<String> = core::backlinks(v, &path)
+                    .map_err(io)?
+                    .into_iter()
+                    .map(|n| n.path)
+                    .collect();
+                core::delete_note(v, &path).map_err(io)?;
+                Ok(json!({ "deleted": path, "nowBrokenLinksIn": orphaned }))
+            }
+            "delete_folder" => {
+                self.ensure_write()?;
+                let folder = str_arg(args, "folder")?;
+                core::safe_join(v, &folder).ok_or("invalid path")?;
+                let prefix = format!("{}/", folder.trim().trim_matches('/').to_lowercase());
+                let count = core::list_notes(v)
+                    .map_err(io)?
+                    .iter()
+                    .filter(|n| n.path.to_lowercase().starts_with(&prefix))
+                    .count();
+                core::delete_folder(v, &folder).map_err(io)?;
+                Ok(json!({ "deleted": folder, "notesDeleted": count }))
+            }
             "list_backlinks" => {
                 let path = str_arg(args, "path")?;
                 let back = core::backlinks(v, &path).map_err(io)?;
@@ -271,6 +306,36 @@ fn tools_spec() -> Value {
                     "folder": { "type": "string" }
                 },
                 "required": ["path"]
+            }
+        },
+        {
+            "name": "rename_note",
+            "description": "Rename a note. Every [[wikilink]] pointing at it is repointed automatically (aliases and #anchors kept), so nothing breaks. Returns the new path and how many notes were updated.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" },
+                    "new_title": { "type": "string" }
+                },
+                "required": ["path", "new_title"]
+            }
+        },
+        {
+            "name": "delete_note",
+            "description": "Delete a note permanently. Irreversible — confirm with the user first. The response lists the notes whose links now point nowhere, so you can fix them.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "path": { "type": "string" } },
+                "required": ["path"]
+            }
+        },
+        {
+            "name": "delete_folder",
+            "description": "Delete a folder and every note inside it, subfolders included. Irreversible and usually large — confirm with the user first, and prefer delete_note when only some notes should go.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "folder": { "type": "string" } },
+                "required": ["folder"]
             }
         },
         {
@@ -411,6 +476,52 @@ mod tests {
     }
 
     #[test]
+    fn rename_keeps_links_alive_and_delete_reports_breakage() {
+        let v = vault();
+        let s = srv(v.clone());
+        core::write_note(&v, "Verweis.md", "siehe [[Post A]]").unwrap();
+
+        let r = s
+            .call_tool(
+                "rename_note",
+                &json!({ "path": "Blog/KI-Wissen/Post A.md", "new_title": "Post A neu" }),
+            )
+            .unwrap();
+        assert_eq!(r["path"], "Blog/KI-Wissen/Post A neu.md");
+        assert_eq!(r["linksUpdated"], 1);
+        assert!(std::fs::read_to_string(v.join("Verweis.md"))
+            .unwrap()
+            .contains("[[Post A neu]]"));
+
+        // Deleting it reports which note is left pointing nowhere.
+        let d = s
+            .call_tool("delete_note", &json!({ "path": "Blog/KI-Wissen/Post A neu.md" }))
+            .unwrap();
+        assert_eq!(d["nowBrokenLinksIn"][0], "Verweis.md");
+        assert!(!v.join("Blog/KI-Wissen/Post A neu.md").exists());
+
+        let f = s.call_tool("delete_folder", &json!({ "folder": "Blog" })).unwrap();
+        assert!(!v.join("Blog").exists());
+        assert_eq!(f["notesDeleted"], 2);
+        std::fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn read_only_refuses_destructive_tools() {
+        let v = vault();
+        let s = Server { vault: v.clone(), allow_write: false };
+        for tool in ["delete_note", "delete_folder", "rename_note"] {
+            assert!(
+                s.call_tool(tool, &json!({ "path": "Root.md", "folder": "Blog", "new_title": "X" }))
+                    .is_err(),
+                "{tool} must be refused when read-only"
+            );
+        }
+        assert!(v.join("Root.md").exists());
+        std::fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
     fn structure_tools_are_advertised() {
         let names: Vec<String> = tools_spec()
             .as_array()
@@ -418,7 +529,10 @@ mod tests {
             .iter()
             .map(|t| t["name"].as_str().unwrap().to_string())
             .collect();
-        for expected in ["list_folders", "list_notes", "create_folder", "move_note"] {
+        for expected in [
+            "list_folders", "list_notes", "create_folder", "move_note",
+            "rename_note", "delete_note", "delete_folder",
+        ] {
             assert!(names.contains(&expected.to_string()), "missing tool: {expected}");
         }
     }

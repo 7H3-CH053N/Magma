@@ -102,6 +102,74 @@ pub fn build_graph(vault: &Path) -> std::io::Result<Graph> {
     Ok(Graph { nodes, edges })
 }
 
+/// Rename a note and repoint every `[[wikilink]]` that named it.
+///
+/// A plain rename changes the filename, and links resolve on the filename — so
+/// without this, renaming silently breaks every reference to the note. Returns
+/// the new path and how many notes were rewritten.
+pub fn rename_note_updating_links(
+    vault: &Path,
+    rel: &str,
+    new_title: &str,
+) -> std::io::Result<(String, usize)> {
+    let old_name = note_name(rel).to_string();
+    let new_rel = vault::rename_note(vault, rel, new_title)?;
+    let new_name = note_name(&new_rel).to_string();
+    if old_name.eq_ignore_ascii_case(&new_name) {
+        return Ok((new_rel, 0));
+    }
+
+    let mut updated = 0;
+    for note in vault::list_notes(vault)? {
+        let path = vault.join(&note.path);
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let rewritten = replace_link_target(&content, &old_name, &new_name);
+        if rewritten != content {
+            std::fs::write(&path, rewritten)?;
+            updated += 1;
+        }
+    }
+    Ok((new_rel, updated))
+}
+
+/// Rewrite `[[old]]`, `[[old|alias]]` and `[[old#heading]]` to point at `new`,
+/// leaving the alias and any anchor untouched. Matching is case-insensitive,
+/// the same way link resolution is.
+pub fn replace_link_target(content: &str, old: &str, new: &str) -> String {
+    let mut out = String::with_capacity(content.len());
+    let mut rest = content;
+    while let Some(start) = rest.find("[[") {
+        let (before, tail) = rest.split_at(start);
+        out.push_str(before);
+        let inner_start = &tail[2..];
+        let close = match inner_start.find("]]") {
+            Some(i) => i,
+            None => {
+                out.push_str(tail);
+                return out;
+            }
+        };
+        let inner = &inner_start[..close];
+        // Split off the alias and any #heading/^block suffix; only the target
+        // part is compared and replaced.
+        let (target, suffix) = match inner.find(['|', '#', '^']) {
+            Some(i) => inner.split_at(i),
+            None => (inner, ""),
+        };
+        if target.trim().eq_ignore_ascii_case(old) {
+            out.push_str(&format!("[[{new}{suffix}]]"));
+        } else {
+            out.push_str(&format!("[[{inner}]]"));
+        }
+        rest = &inner_start[close + 2..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Notes that link *to* the given note (by its path).
 pub fn backlinks(vault: &Path, target_path: &str) -> std::io::Result<Vec<NoteMeta>> {
     let notes = vault::list_notes(vault)?;
@@ -247,6 +315,30 @@ mod tests {
         assert_eq!(back.len(), 2);
         assert!(titles.contains(&"A".to_string()));
         assert!(titles.contains(&"B".to_string()));
+        fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn rename_repoints_links_and_keeps_aliases() {
+        let v = tmp_vault();
+        vault::write_note(&v, "Michael Klotz.md", "# Michael Klotz").unwrap();
+        vault::write_note(
+            &v,
+            "Notiz.md",
+            "Siehe [[Michael Klotz]], [[michael klotz|den Kunden]] und [[Michael Klotz#Termine]].\nAber [[Andere]] bleibt.",
+        )
+        .unwrap();
+
+        let (new_rel, updated) =
+            rename_note_updating_links(&v, "Michael Klotz.md", "Michael Klotz GmbH").unwrap();
+        assert_eq!(new_rel, "Michael Klotz GmbH.md");
+        assert_eq!(updated, 1);
+
+        let body = std::fs::read_to_string(v.join("Notiz.md")).unwrap();
+        assert!(body.contains("[[Michael Klotz GmbH]]"));
+        assert!(body.contains("[[Michael Klotz GmbH|den Kunden]]"), "alias kept: {body}");
+        assert!(body.contains("[[Michael Klotz GmbH#Termine]]"), "anchor kept: {body}");
+        assert!(body.contains("[[Andere]]"), "unrelated links untouched");
         fs::remove_dir_all(&v).ok();
     }
 
