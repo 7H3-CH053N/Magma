@@ -50,19 +50,64 @@ function dirOf(path: string): string {
   return i === -1 ? "" : path.slice(0, i);
 }
 
+/** Hue of a #rrggbb colour, so a picked colour still drives the subfolder shades. */
+function hueFromHex(hex: string): number {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return 205;
+  const v = parseInt(m[1], 16);
+  const r = ((v >> 16) & 255) / 255;
+  const g = ((v >> 8) & 255) / 255;
+  const b = (v & 255) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const d = max - min;
+  if (d === 0) return 0;
+  let h: number;
+  if (max === r) h = ((g - b) / d) % 6;
+  else if (max === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  h *= 60;
+  return h < 0 ? h + 360 : h;
+}
+
+const COLOR_KEY = "magma.folderColors";
+
+/** `hsl(h s% l%)` -> `#rrggbb`, so the colour input can show the current value. */
+function hslToHex(hsl: string): string {
+  const m = /hsl\(\s*([\d.]+)\s+([\d.]+)%\s+([\d.]+)%/.exec(hsl);
+  if (!m) return "#4aa8ff";
+  const h = Number(m[1]) / 360;
+  const s = Number(m[2]) / 100;
+  const l = Number(m[3]) / 100;
+  const f = (n: number) => {
+    const k = (n + h * 12) % 12;
+    const a = s * Math.min(l, 1 - l);
+    const v = l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+    return Math.round(v * 255)
+      .toString(16)
+      .padStart(2, "0");
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
 /**
  * Colour every note by the folder it lives in. Notes sharing a top-level folder
  * share a hue, and each subfolder shifts the lightness — so an imported blog
  * reads as one family of colours whose categories are still told apart, rather
  * than a flat wall of one colour.
  */
-function folderColors(paths: string[]): {
+function folderColors(
+  paths: string[],
+  custom: Record<string, string> = {}
+): {
   colorOf: Map<string, string>;
   legend: { name: string; color: string }[];
 } {
   const dirs = Array.from(new Set(paths.map(dirOf))).sort();
   const tops = Array.from(new Set(dirs.map((d) => d.split("/")[0]))).sort();
-  const hueOf = new Map(tops.map((t, i) => [t, HUES[i % HUES.length]]));
+  const hueOf = new Map(
+    tops.map((t, i) => [t, custom[t] !== undefined ? hueFromHex(custom[t]) : HUES[i % HUES.length]])
+  );
   const seenPerTop = new Map<string, number>();
   const colorOf = new Map<string, string>();
   for (const dir of dirs) {
@@ -109,6 +154,24 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
   // control to the user. "Reset view" gives it back.
   const interactedRef = useRef(false);
   const [legend, setLegend] = useState<{ name: string; color: string }[]>([]);
+  const [picker, setPicker] = useState(false);
+  // Per-top-level-folder colour overrides, remembered across restarts.
+  const [custom, setCustom] = useState<Record<string, string>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(COLOR_KEY) ?? "{}");
+    } catch {
+      return {};
+    }
+  });
+  // The render loop reads colours through a ref, so changing one repaints
+  // without rebuilding (and re-laying-out) the whole simulation.
+  const customRef = useRef(custom);
+  const colorVersion = useRef(0);
+  useEffect(() => {
+    customRef.current = custom;
+    colorVersion.current++;
+    localStorage.setItem(COLOR_KEY, JSON.stringify(custom));
+  }, [custom]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -132,9 +195,26 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
     });
     interactedRef.current = false; // a fresh graph starts in auto-fit mode
 
-    const { colorOf, legend: folderLegend } = folderColors(graph.nodes.map((n) => n.path));
-    setLegend(folderLegend);
-    const nodeColor = graph.nodes.map((n) => colorOf.get(dirOf(n.path)) ?? ACCENT);
+    // Colours are recomputed only when an override changes, not every frame.
+    let nodeColor: string[] = [];
+    let colorsBuiltAt = -1;
+    const ensureColors = () => {
+      if (colorsBuiltAt === colorVersion.current) return;
+      colorsBuiltAt = colorVersion.current;
+      const { colorOf, legend: folderLegend } = folderColors(
+        graph.nodes.map((n) => n.path),
+        customRef.current
+      );
+      setLegend(folderLegend);
+      nodeColor = graph.nodes.map((n) => colorOf.get(dirOf(n.path)) ?? ACCENT);
+      linksByColor.clear();
+      for (const [a, b] of links) {
+        const key = nodeColor[nodes[a].degree >= nodes[b].degree ? a : b];
+        const group = linksByColor.get(key);
+        if (group) group.push([a, b]);
+        else linksByColor.set(key, [[a, b]]);
+      }
+    };
 
     const indexOf = new Map(nodes.map((s, i) => [s.path, i]));
     const links: [number, number][] = [];
@@ -143,14 +223,9 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
       const b = indexOf.get(e.target);
       if (a !== undefined && b !== undefined && a !== b) links.push([a, b]);
     }
+    // Links are grouped by colour (of their busier end) so a big vault still
+    // draws in a handful of paths. Rebuilt whenever a colour changes.
     const linksByColor = new Map<string, [number, number][]>();
-    for (const [a, b] of links) {
-      // Colour by the busier end — links then read as belonging to their hub.
-      const key = nodeColor[nodes[a].degree >= nodes[b].degree ? a : b];
-      const group = linksByColor.get(key);
-      if (group) group.push([a, b]);
-      else linksByColor.set(key, [[a, b]]);
-    }
 
     // Node indices, most-connected first: labels are placed in this order so the
     // hubs that orient the map win the space.
@@ -317,6 +392,7 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
     };
 
     const draw = () => {
+      ensureColors();
       const rect = canvas.getBoundingClientRect();
       ctx.clearRect(0, 0, rect.width, rect.height);
       // Everything below is screen space: positions are transformed, sizes aren't.
@@ -409,8 +485,17 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
       }
     };
 
+    // Once settled the layout keeps breathing very gently rather than freezing —
+    // a still graph looks dead. The residual temperature is small enough that
+    // nodes only drift within their cluster, and stepping every other frame
+    // halves the cost of doing so forever.
+    const IDLE_TEMP = 0.4;
+    let frameNo = 0;
     const frame = () => {
-      if (temp > 0.3 || dragIdx >= 0) {
+      frameNo++;
+      const settling = temp > IDLE_TEMP;
+      if (settling || dragIdx >= 0 || frameNo % 2 === 0) {
+        if (!settling && dragIdx < 0) temp = IDLE_TEMP; // keep it just alive
         step();
         needsDraw = true;
       }
@@ -527,15 +612,50 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
         </div>
       )}
       <canvas ref={canvasRef} className="h-full w-full touch-none" />
-      <button
-        onClick={() => {
-          interactedRef.current = false; // hand control back to auto-fit
-        }}
-        title={t("graph.reset")}
-        className="absolute left-4 top-3 rounded-md bg-black/5 px-2.5 py-1 text-xs text-magma-muted transition hover:bg-black/10 dark:bg-white/10 dark:hover:bg-white/20"
-      >
-        {t("graph.reset")}
-      </button>
+      <div className="absolute left-4 top-3 flex items-center gap-2">
+        <button
+          onClick={() => {
+            interactedRef.current = false; // hand control back to auto-fit
+          }}
+          title={t("graph.reset")}
+          className="rounded-md bg-black/5 px-2.5 py-1 text-xs text-magma-muted transition hover:bg-black/10 dark:bg-white/10 dark:hover:bg-white/20"
+        >
+          {t("graph.reset")}
+        </button>
+        <button
+          onClick={() => setPicker((p) => !p)}
+          className="rounded-md bg-black/5 px-2.5 py-1 text-xs text-magma-muted transition hover:bg-black/10 dark:bg-white/10 dark:hover:bg-white/20"
+        >
+          {t("graph.colors")}
+        </button>
+      </div>
+
+      {picker && (
+        <div className="absolute left-4 top-12 z-10 w-60 rounded-xl bg-magma-bg/95 p-3 shadow-xl backdrop-blur dark:bg-[#201c19]/95">
+          <p className="mb-2 text-xs text-magma-muted">{t("graph.colorsHint")}</p>
+          <div className="flex max-h-64 flex-col gap-1.5 overflow-auto">
+            {legend.map((l) => (
+              <label key={l.name} className="flex items-center gap-2 text-sm">
+                <input
+                  type="color"
+                  value={custom[l.name] ?? hslToHex(l.color)}
+                  onChange={(e) =>
+                    setCustom((c) => ({ ...c, [l.name]: e.target.value }))
+                  }
+                  className="h-6 w-8 cursor-pointer rounded border-0 bg-transparent p-0"
+                />
+                <span className="truncate">{l.name}</span>
+              </label>
+            ))}
+          </div>
+          <button
+            onClick={() => setCustom({})}
+            className="mt-2 w-full rounded-md bg-black/5 px-2 py-1 text-xs text-magma-muted transition hover:bg-black/10 dark:bg-white/10 dark:hover:bg-white/20"
+          >
+            {t("graph.colorsReset")}
+          </button>
+        </div>
+      )}
       {/* One entry per top-level folder, plus the AI ring. */}
       <div className="pointer-events-none absolute bottom-3 right-4 flex max-w-[70%] flex-wrap justify-end gap-x-4 gap-y-1 text-xs text-magma-muted">
         {legend.slice(0, 8).map((l) => (

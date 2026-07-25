@@ -83,6 +83,10 @@ export interface ImportSummary {
   posts: number;
   /** Author names found (empty when the site's REST API hides them). */
   authors: string[];
+  /** Authors linked into a note you already had, as "Name → path". */
+  merged: string[];
+  /** Author notes the import created itself, as "Name → path". */
+  created: string[];
 }
 
 export async function importWordpress(

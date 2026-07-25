@@ -66,6 +66,7 @@ export default function Settings({
   const [impBusy, setImpBusy] = useState(false);
   const [impDone, setImpDone] = useState<string | null>(null);
   const [impWarn, setImpWarn] = useState<string | null>(null);
+  const [impInfo, setImpInfo] = useState<string | null>(null);
   const [impErr, setImpErr] = useState<string | null>(null);
 
   const runImport = async () => {
@@ -73,6 +74,7 @@ export default function Settings({
     setImpErr(null);
     setImpDone(null);
     setImpWarn(null);
+    setImpInfo(null);
     setImpBusy(true);
     try {
       const res = await importWordpress(
@@ -89,7 +91,16 @@ export default function Settings({
       );
       // Say so when the site gave us no author, rather than silently omitting it.
       if (res.authors.length === 0) setImpWarn(t("settings.importNoAuthor"));
-      else setImpDone((d) => `${d} · ${t("settings.importAuthors", { authors: res.authors.join(", ") })}`);
+      else {
+        setImpDone((d) => `${d} · ${t("settings.importAuthors", { authors: res.authors.join(", ") })}`);
+        // Spell out where the author ended up — merged into your own note, or
+        // in a note the import had to create because no name matched.
+        const lines = [
+          ...res.merged.map((m) => `↳ ${t("settings.importMerged", { info: m })}`),
+          ...res.created.map((c) => `↳ ${t("settings.importCreated", { info: c })}`),
+        ];
+        if (lines.length) setImpInfo(lines.join("\n"));
+      }
     } catch (e) {
       setImpErr(String(e));
     } finally {
@@ -329,6 +340,9 @@ export default function Settings({
               </button>
               {impDone && (
                 <p className="text-xs text-green-600 dark:text-green-400">{impDone}</p>
+              )}
+              {impInfo && (
+                <p className="whitespace-pre-line text-xs text-magma-muted">{impInfo}</p>
               )}
               {impWarn && <p className="text-xs text-amber-600 dark:text-amber-400">{impWarn}</p>}
               {impErr && <p className="text-xs text-red-500">{impErr}</p>}

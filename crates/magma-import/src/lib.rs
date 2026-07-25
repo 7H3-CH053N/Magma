@@ -89,6 +89,12 @@ pub struct ImportSummary {
     pub posts: usize,
     /// Distinct author names found (empty when the site hides them).
     pub authors: Vec<String>,
+    /// Hubs that were linked into a note the vault already had, as
+    /// "Name → path". Shown so it is never a guess whether the import merged
+    /// with your own note or created its own.
+    pub merged: Vec<String>,
+    /// Hub notes the import created itself, as "Name → path".
+    pub created: Vec<String>,
 }
 
 /// Import a WordPress blog into `folder` inside the vault.
@@ -159,10 +165,47 @@ pub fn import_wordpress(
         }
     }
 
+    // Report author linkage explicitly: which existing note each author was
+    // merged into, or which note the import had to create because nothing in
+    // the vault carried that name or title.
+    let author_names: HashSet<String> = posts
+        .iter()
+        .filter(|p| !p.author.is_empty())
+        .map(|p| p.author.clone())
+        .collect();
+    let merged: Vec<String> = built
+        .existing_hubs
+        .iter()
+        .filter(|h| author_names.contains(&h.name))
+        .map(|h| {
+            let path = path_of_stem
+                .get(&h.stem.to_lowercase())
+                .cloned()
+                .unwrap_or_else(|| format!("{}.md", h.stem));
+            format!("{} → {}", h.name, path)
+        })
+        .collect();
+    let merged_names: HashSet<&String> = built.existing_hubs.iter().map(|h| &h.name).collect();
+    let created: Vec<String> = author_names
+        .iter()
+        .filter(|a| !merged_names.contains(a))
+        .map(|a| {
+            let dir = folder.trim().trim_matches('/');
+            let prefix = if dir.is_empty() {
+                String::new()
+            } else {
+                format!("{dir}/")
+            };
+            format!("{} → {}{}.md", a, prefix, slugify(a))
+        })
+        .collect();
+
     let summary = ImportSummary {
         notes: built.notes.len(),
         posts: posts.len(),
         authors,
+        merged,
+        created,
     };
     for note in built.notes {
         magma_core::write_note(vault, &note.rel, &note.markdown).map_err(|e| e.to_string())?;
