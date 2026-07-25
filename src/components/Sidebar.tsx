@@ -114,19 +114,60 @@ export default function Sidebar({
     onDragStart: (e: DragEvent) => e.dataTransfer.setData("text/plain", n.path),
   });
 
-  // Group notes: root-level ones, then a section per folder — including empty
-  // folders you created, so you can move notes into them.
+  // Real hierarchy: "Blog/KI-Wissen" becomes KI-Wissen *inside* Blog, not a
+  // top-level row labelled with its whole path. Empty folders you created are
+  // included so you can drop notes into them.
   const rootNotes = notes.filter((n) => folderOf(n.path) === "");
-  const notesByFolder = notes.reduce((map, n) => {
-    const f = folderOf(n.path);
-    if (f) map.set(f, [...(map.get(f) ?? []), n]);
-    return map;
-  }, new Map<string, NoteMeta[]>());
-  const folderSections = Array.from(
-    new Set([...notesByFolder.keys(), ...folders])
-  )
-    .sort((a, b) => a.localeCompare(b))
-    .map((f) => [f, notesByFolder.get(f) ?? []] as const);
+  const tree = buildTree(notes, folders);
+
+  // One folder and everything beneath it. Depth drives the indent, so nesting
+  // is visible instead of being spelled out as "Blog/KI-Wissen".
+  const renderFolder = (node: FolderNode, depth: number) => {
+    const isOpen = !collapsed.has(node.path);
+    const isDrop = dropTarget === node.path;
+    return (
+      <div key={node.path}>
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDropTarget(node.path);
+          }}
+          onDragLeave={() => setDropTarget((d) => (d === node.path ? null : d))}
+          onDrop={onDropInto(node.path)}
+          style={{ paddingLeft: depth * 12 }}
+          className={`group flex w-full select-none items-center rounded-md pr-1 transition ${
+            isDrop ? "bg-magma-accent/15" : "hover:bg-black/5 dark:hover:bg-white/10"
+          }`}
+        >
+          <button
+            onClick={() => toggleFolder(node.path)}
+            className="flex min-w-0 flex-1 items-center gap-1 px-1.5 py-1 text-left text-[13px] text-magma-muted"
+          >
+            <ChevronIcon size={12} open={isOpen} className="shrink-0 opacity-70" />
+            <span className="truncate">{node.name}</span>
+            <span className="ml-auto pl-1 text-xs tabular-nums opacity-50">
+              {node.total || ""}
+            </span>
+          </button>
+          <button
+            onClick={() => onDeleteFolder(node.path)}
+            title={t("sidebar.deleteFolder")}
+            className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-magma-muted opacity-0 transition hover:bg-red-500/15 hover:text-red-500 group-hover:opacity-100 dark:hover:bg-red-500/20"
+          >
+            <TrashIcon size={14} />
+          </button>
+        </div>
+        {isOpen && (
+          <div>
+            {node.children.map((c) => renderFolder(c, depth + 1))}
+            <div style={{ paddingLeft: (depth + 1) * 12 }}>
+              {node.notes.map(renderNote)}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const renderNote = (n: NoteMeta) => (
     <div
@@ -287,54 +328,8 @@ export default function Sidebar({
             {rootNotes.map(renderNote)}
           </div>
 
-          {/* One collapsible section per folder; headers are drop targets. */}
-          {folderSections.map(([folder, items]) => {
-            const isOpen = !collapsed.has(folder);
-            return (
-              <div key={folder} className="mt-2">
-                <div
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    setDropTarget(folder);
-                  }}
-                  onDragLeave={() => setDropTarget((d) => (d === folder ? null : d))}
-                  onDrop={onDropInto(folder)}
-                  className={`group flex w-full items-center rounded-md pr-1 transition ${
-                    dropTarget === folder
-                      ? "bg-magma-accent/15"
-                      : "hover:bg-black/5 dark:hover:bg-white/10"
-                  }`}
-                >
-                  <button
-                    onClick={() => toggleFolder(folder)}
-                    className="flex min-w-0 flex-1 items-center gap-1 px-2 py-1 text-left text-xs font-medium uppercase tracking-wide text-magma-muted"
-                  >
-                    <ChevronIcon size={12} open={isOpen} className="shrink-0" />
-                    <span className="truncate">{folder}</span>
-                    <span className="ml-auto pl-1 tabular-nums opacity-60">
-                      {items.length || ""}
-                    </span>
-                  </button>
-                  <button
-                    onClick={() => onDeleteFolder(folder)}
-                    title={t("sidebar.deleteFolder")}
-                    className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-magma-muted opacity-0 transition hover:bg-red-500/15 hover:text-red-500 group-hover:opacity-100 dark:hover:bg-red-500/20"
-                  >
-                    <TrashIcon size={14} />
-                  </button>
-                </div>
-                {isOpen && (
-                  <div className="pl-2">
-                    {items.length === 0 ? (
-                      <p className="px-2 py-1 text-xs text-magma-muted/70">—</p>
-                    ) : (
-                      items.map(renderNote)
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {/* Nested folders; every header is a drop target. */}
+          {tree.map((node) => renderFolder(node, 0))}
         </nav>
       )}
     </aside>
@@ -344,6 +339,57 @@ export default function Sidebar({
 function folderOf(path: string): string {
   const i = path.lastIndexOf("/");
   return i === -1 ? "" : path.slice(0, i);
+}
+
+interface FolderNode {
+  /** Last path segment — what's shown. */
+  name: string;
+  /** Full vault-relative path — used for collapse state and drops. */
+  path: string;
+  notes: NoteMeta[];
+  children: FolderNode[];
+  /** Notes in this folder and everything under it. */
+  total: number;
+}
+
+/** Turn flat "a/b/c" paths into a nested tree, sorted folders-then-notes. */
+function buildTree(notes: NoteMeta[], folders: string[]): FolderNode[] {
+  const roots: FolderNode[] = [];
+  const byPath = new Map<string, FolderNode>();
+
+  const ensure = (dir: string): FolderNode => {
+    const found = byPath.get(dir);
+    if (found) return found;
+    const cut = dir.lastIndexOf("/");
+    const node: FolderNode = {
+      name: dir.slice(cut + 1),
+      path: dir,
+      notes: [],
+      children: [],
+      total: 0,
+    };
+    byPath.set(dir, node);
+    if (cut === -1) roots.push(node);
+    else ensure(dir.slice(0, cut)).children.push(node);
+    return node;
+  };
+
+  // Folders with no notes yet still need a row, so they can be dropped into.
+  for (const f of folders) if (f) ensure(f);
+  for (const n of notes) {
+    const dir = folderOf(n.path);
+    if (dir) ensure(dir).notes.push(n);
+  }
+
+  const finish = (node: FolderNode): number => {
+    node.children.sort((a, b) => a.name.localeCompare(b.name));
+    node.notes.sort((a, b) => a.title.localeCompare(b.title));
+    node.total = node.notes.length + node.children.reduce((s, c) => s + finish(c), 0);
+    return node.total;
+  };
+  roots.forEach(finish);
+  roots.sort((a, b) => a.name.localeCompare(b.name));
+  return roots;
 }
 
 function shortenPath(p: string): string {

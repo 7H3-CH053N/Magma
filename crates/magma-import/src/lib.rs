@@ -33,6 +33,51 @@ pub struct Note {
     pub markdown: String,
 }
 
+/// A hub that resolved to a note the vault already had. No new note is created,
+/// but that note still needs to list the posts — otherwise the connection is
+/// only visible from the posts' side.
+pub struct ExistingHub {
+    /// Filename stem of the note that already exists.
+    pub stem: String,
+    pub name: String,
+    pub kind: String,
+    pub titles: Vec<String>,
+}
+
+pub struct BuildResult {
+    pub notes: Vec<Note>,
+    pub existing_hubs: Vec<ExistingHub>,
+}
+
+/// Markers around the block this importer maintains inside a note it does not
+/// own. Everything outside them is the author's and is never touched.
+const SECTION_START: &str = "<!-- magma:imported-start -->";
+const SECTION_END: &str = "<!-- magma:imported-end -->";
+
+/// Replace the managed block in `content`, or append one if there is none.
+pub fn upsert_managed_section(content: &str, block: &str) -> String {
+    if let (Some(s), Some(e)) = (content.find(SECTION_START), content.find(SECTION_END)) {
+        if e > s {
+            return format!("{}{}{}", &content[..s], block, &content[e + SECTION_END.len()..]);
+        }
+    }
+    format!("{}\n\n{}\n", content.trim_end(), block)
+}
+
+fn managed_block(hub: &ExistingHub) -> String {
+    let list = hub
+        .titles
+        .iter()
+        .map(|t| format!("- [[{}]]", slugify(t)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "{SECTION_START}\n\n## {} · {} Beiträge\n\n{list}\n\n{SECTION_END}",
+        hub.name,
+        hub.titles.len()
+    )
+}
+
 /// What an import actually produced, so the UI can report it honestly instead
 /// of silently succeeding with missing data.
 #[derive(serde::Serialize)]
@@ -89,11 +134,13 @@ pub fn import_wordpress(
     // what a [[wikilink]] must name to reach the note.
     let mut protected: HashMap<String, String> = HashMap::new();
     let mut generated: Vec<(String, String)> = Vec::new(); // (name, path)
+    let mut path_of_stem: HashMap<String, String> = HashMap::new();
     for n in magma_core::list_notes(vault).unwrap_or_default() {
         let stem = magma_core::note_name(&n.path).to_string();
         if is_import_generated(vault, &n.path) {
             generated.push((stem.to_lowercase(), n.path));
         } else {
+            path_of_stem.insert(stem.to_lowercase(), n.path.clone());
             protected.insert(stem.to_lowercase(), stem.clone());
             let title = n.title.trim().to_lowercase();
             if !title.is_empty() {
@@ -102,7 +149,7 @@ pub fn import_wordpress(
         }
     }
 
-    let notes = build_notes(&posts, folder, &protected);
+    let built = build_notes(&posts, folder, &protected);
 
     // Drop import-made notes that duplicate one of the protected names. Done
     // before writing, so nothing from this run is removed.
@@ -113,12 +160,29 @@ pub fn import_wordpress(
     }
 
     let summary = ImportSummary {
-        notes: notes.len(),
+        notes: built.notes.len(),
         posts: posts.len(),
         authors,
     };
-    for note in notes {
+    for note in built.notes {
         magma_core::write_note(vault, &note.rel, &note.markdown).map_err(|e| e.to_string())?;
+    }
+
+    // Notes the vault already had (your author profile, a category you'd written
+    // about) get the post list written into a managed block. Without this the
+    // link is one-way: the posts point at the note, but the note shows nothing.
+    for hub in &built.existing_hubs {
+        let path = match path_of_stem.get(&hub.stem.to_lowercase()) {
+            Some(p) => p.clone(),
+            None => continue,
+        };
+        let current = magma_core::read_note(vault, &path)
+            .map(|n| n.content)
+            .unwrap_or_default();
+        let updated = upsert_managed_section(&current, &managed_block(hub));
+        if updated != current {
+            magma_core::write_note(vault, &path, &updated).map_err(|e| e.to_string())?;
+        }
     }
     Ok(summary)
 }
@@ -403,7 +467,11 @@ fn rendered(item: &Value, key: &str) -> String {
 /// `existing` maps a lookup key — an existing note's filename stem *and* its
 /// title, both lowercased — to that note's filename stem, which is what a
 /// `[[wikilink]]` has to name in order to resolve to it.
-pub fn build_notes(posts: &[Post], folder: &str, existing: &HashMap<String, String>) -> Vec<Note> {
+pub fn build_notes(
+    posts: &[Post],
+    folder: &str,
+    existing: &HashMap<String, String>,
+) -> BuildResult {
     let dir = folder.trim().trim_matches('/');
     let prefix = if dir.is_empty() {
         String::new()
@@ -470,13 +538,20 @@ pub fn build_notes(posts: &[Post], folder: &str, existing: &HashMap<String, Stri
     }
 
     // A hub is only created when the vault doesn't already have that note.
-    // Otherwise the posts' links point at the existing note instead, so nothing
-    // is duplicated and no wikilink becomes ambiguous.
-    let hub = |name: &str, kind: &str, titles: &[String], notes: &mut Vec<Note>| {
+    // Otherwise the posts' links point at the existing note, and that note is
+    // reported back so the caller can list the posts inside it.
+    let mut existing_hubs = Vec::new();
+    let mut hub = |name: &str, kind: &str, titles: &[String], notes: &mut Vec<Note>| {
+        let stem = target.get(name).cloned().unwrap_or_else(|| slugify(name));
         if existing.contains_key(&name.to_lowercase()) {
+            existing_hubs.push(ExistingHub {
+                stem,
+                name: name.to_string(),
+                kind: kind.to_string(),
+                titles: titles.to_vec(),
+            });
             return;
         }
-        let stem = target.get(name).cloned().unwrap_or_else(|| slugify(name));
         notes.push(hub_note(&prefix, &stem, name, kind, titles));
     };
     for (cat, titles) in &cat_posts {
@@ -488,7 +563,10 @@ pub fn build_notes(posts: &[Post], folder: &str, existing: &HashMap<String, Stri
     for (author, titles) in &author_posts {
         hub(author, "Autor", titles, &mut notes);
     }
-    notes
+    BuildResult {
+        notes,
+        existing_hubs,
+    }
 }
 
 fn unique_stem(base: &str, used: &HashSet<String>) -> String {
@@ -801,7 +879,7 @@ mod tests {
             categories: vec!["Baking".into()],
             tags: vec!["yeast".into()],
         }];
-        let notes = build_notes(&posts, "Blog", &HashMap::new());
+        let notes = build_notes(&posts, "Blog", &HashMap::new()).notes;
         // post + 1 category hub + 1 tag hub + 1 author hub
         assert_eq!(notes.len(), 4);
         // Posts are filed under their first category.
@@ -858,7 +936,8 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        let notes = build_notes(&posts, "Blog", &existing);
+        let built = build_notes(&posts, "Blog", &existing);
+        let notes = built.notes;
         // post + category hub + tag hub — no second author note of either name.
         assert_eq!(notes.len(), 3);
         assert!(!notes.iter().any(|n| n.rel.contains("Jane Baker.md")));
@@ -873,6 +952,46 @@ mod tests {
     }
 
     #[test]
+    fn managed_section_is_added_once_and_then_replaced() {
+        let own = "---\nauthor: ai\n---\n\n# Alex Januschewsky\n\nMein Profil.";
+        let first = upsert_managed_section(own, "<!-- magma:imported-start -->\nA\n<!-- magma:imported-end -->");
+        assert!(first.contains("Mein Profil."), "the author's own text survives");
+        assert!(first.contains("\nA\n"));
+
+        let second = upsert_managed_section(
+            &first,
+            "<!-- magma:imported-start -->\nB\n<!-- magma:imported-end -->",
+        );
+        assert!(second.contains("Mein Profil."));
+        assert!(second.contains("\nB\n"));
+        assert!(!second.contains("\nA\n"), "the old block is replaced, not stacked");
+        assert_eq!(second.matches(SECTION_START).count(), 1);
+    }
+
+    #[test]
+    fn existing_hub_reports_its_posts_for_the_note_that_already_exists() {
+        let posts = vec![Post {
+            title: "Sourdough Guide".into(),
+            author: "Jane Baker".into(),
+            content_html: "<p>x</p>".into(),
+            categories: vec!["Baking".into()],
+            ..Default::default()
+        }];
+        let existing: HashMap<String, String> =
+            [("jane baker".to_string(), "Profil Jane Baker".to_string())]
+                .into_iter()
+                .collect();
+        let built = build_notes(&posts, "Blog", &existing);
+        let hub = built
+            .existing_hubs
+            .iter()
+            .find(|h| h.name == "Jane Baker")
+            .expect("the skipped hub must be reported so the note can list its posts");
+        assert_eq!(hub.stem, "Profil Jane Baker");
+        assert_eq!(hub.titles, vec!["Sourdough Guide"]);
+    }
+
+    #[test]
     fn post_stems_stay_unique_across_category_folders() {
         let mk = |title: &str, cat: &str| Post {
             title: title.into(),
@@ -883,7 +1002,7 @@ mod tests {
         // Same title, different categories → different folders, but the stems
         // must still differ or [[Doppelt]] would be ambiguous.
         let posts = vec![mk("Doppelt", "Eins"), mk("Doppelt", "Zwei")];
-        let notes = build_notes(&posts, "Blog", &HashMap::new());
+        let notes = build_notes(&posts, "Blog", &HashMap::new()).notes;
         let post_paths: Vec<_> = notes
             .iter()
             .map(|n| n.rel.as_str())

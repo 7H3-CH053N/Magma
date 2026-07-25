@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Graph } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 
@@ -42,6 +42,46 @@ const REPULSION_CUTOFF = K * 25;
 /** Node radius in *screen* pixels — constant, so nodes stay visible when zoomed out. */
 const nodeRadius = (degree: number) => 2.5 + Math.min(7, degree * 1.2);
 
+/** Distinct hues, one per top-level folder. */
+const HUES = [205, 145, 332, 40, 265, 190, 355, 95, 22, 240, 170, 300];
+
+function dirOf(path: string): string {
+  const i = path.lastIndexOf("/");
+  return i === -1 ? "" : path.slice(0, i);
+}
+
+/**
+ * Colour every note by the folder it lives in. Notes sharing a top-level folder
+ * share a hue, and each subfolder shifts the lightness — so an imported blog
+ * reads as one family of colours whose categories are still told apart, rather
+ * than a flat wall of one colour.
+ */
+function folderColors(paths: string[]): {
+  colorOf: Map<string, string>;
+  legend: { name: string; color: string }[];
+} {
+  const dirs = Array.from(new Set(paths.map(dirOf))).sort();
+  const tops = Array.from(new Set(dirs.map((d) => d.split("/")[0]))).sort();
+  const hueOf = new Map(tops.map((t, i) => [t, HUES[i % HUES.length]]));
+  const seenPerTop = new Map<string, number>();
+  const colorOf = new Map<string, string>();
+  for (const dir of dirs) {
+    const top = dir.split("/")[0];
+    const hue = hueOf.get(top) ?? 205;
+    const n = seenPerTop.get(top) ?? 0;
+    seenPerTop.set(top, n + 1);
+    // Root notes stay neutral; subfolders fan out in lightness.
+    const light = dir === "" ? 62 : 46 + ((n * 9) % 30);
+    const sat = dir === "" ? 8 : 66;
+    colorOf.set(dir, `hsl(${hue} ${sat}% ${light}%)`);
+  }
+  const legend = tops.map((t) => ({
+    name: t === "" ? "—" : t,
+    color: `hsl(${hueOf.get(t) ?? 205} ${t === "" ? 8 : 66}% 56%)`,
+  }));
+  return { colorOf, legend };
+}
+
 /**
  * The graph — Magma's headline view. A Fruchterman-Reingold force layout on a
  * canvas: repulsion `k²/d` between every pair, attraction `d²/k` along links,
@@ -68,6 +108,7 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
   // While false, the view auto-fits to show every node; any pan/zoom/drag hands
   // control to the user. "Reset view" gives it back.
   const interactedRef = useRef(false);
+  const [legend, setLegend] = useState<{ name: string; color: string }[]>([]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -91,6 +132,10 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
     });
     interactedRef.current = false; // a fresh graph starts in auto-fit mode
 
+    const { colorOf, legend: folderLegend } = folderColors(graph.nodes.map((n) => n.path));
+    setLegend(folderLegend);
+    const nodeColor = graph.nodes.map((n) => colorOf.get(dirOf(n.path)) ?? ACCENT);
+
     const indexOf = new Map(nodes.map((s, i) => [s.path, i]));
     const links: [number, number][] = [];
     for (const e of graph.edges) {
@@ -98,6 +143,15 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
       const b = indexOf.get(e.target);
       if (a !== undefined && b !== undefined && a !== b) links.push([a, b]);
     }
+    const linksByColor = new Map<string, [number, number][]>();
+    for (const [a, b] of links) {
+      // Colour by the busier end — links then read as belonging to their hub.
+      const key = nodeColor[nodes[a].degree >= nodes[b].degree ? a : b];
+      const group = linksByColor.get(key);
+      if (group) group.push([a, b]);
+      else linksByColor.set(key, [[a, b]]);
+    }
+
     // Node indices, most-connected first: labels are placed in this order so the
     // hubs that orient the map win the space.
     const labelOrder = nodes
@@ -268,14 +322,20 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
       // Everything below is screen space: positions are transformed, sizes aren't.
       const pts = nodes.map((s) => toScreen(s, rect));
 
-      ctx.strokeStyle = "rgba(125,125,125,0.16)";
+      // Links carry their target's colour, batched per colour so a big vault
+      // still draws in a handful of paths.
       ctx.lineWidth = 1;
-      ctx.beginPath();
-      for (const [i, j] of links) {
-        ctx.moveTo(pts[i].x, pts[i].y);
-        ctx.lineTo(pts[j].x, pts[j].y);
+      ctx.globalAlpha = 0.22;
+      for (const [color, group] of linksByColor) {
+        ctx.strokeStyle = color;
+        ctx.beginPath();
+        for (const [i, j] of group) {
+          ctx.moveTo(pts[i].x, pts[i].y);
+          ctx.lineTo(pts[j].x, pts[j].y);
+        }
+        ctx.stroke();
       }
-      ctx.stroke();
+      ctx.globalAlpha = 1;
 
       const onScreen = (p: { x: number; y: number }) =>
         p.x > -40 && p.y > -40 && p.x < rect.width + 40 && p.y < rect.height + 40;
@@ -286,17 +346,32 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
         if (!onScreen(p)) continue; // cheap win on large vaults
         const isActive = s.path === activeRef.current;
         const r = nodeRadius(s.degree) + (isActive ? 2 : 0);
+        const color = nodeColor[i];
+        // Soft halo first, solid dot on top: gives the map some depth instead
+        // of reading as flat stickers.
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r * 2.1, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.globalAlpha = 0.13;
+        ctx.fill();
         ctx.beginPath();
         ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-        ctx.fillStyle = s.ai ? AI : ACCENT;
-        ctx.globalAlpha = isActive ? 1 : 0.82;
+        ctx.globalAlpha = isActive ? 1 : 0.92;
         ctx.fill();
         ctx.globalAlpha = 1;
+        // AI-written notes keep their own signal as a ring around the dot.
+        if (s.ai) {
+          ctx.strokeStyle = AI;
+          ctx.lineWidth = 1.75;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, r + 2, 0, Math.PI * 2);
+          ctx.stroke();
+        }
         if (isActive) {
-          ctx.strokeStyle = s.ai ? AI : ACCENT;
+          ctx.strokeStyle = color;
           ctx.lineWidth = 2;
           ctx.beginPath();
-          ctx.arc(p.x, p.y, r + 4, 0, Math.PI * 2);
+          ctx.arc(p.x, p.y, r + 5, 0, Math.PI * 2);
           ctx.stroke();
         }
       }
@@ -461,13 +536,19 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
       >
         {t("graph.reset")}
       </button>
-      <div className="pointer-events-none absolute bottom-3 right-4 flex gap-4 text-xs text-magma-muted">
-        <span className="flex items-center gap-1">
-          <span className="h-2 w-2 rounded-full" style={{ background: ACCENT }} />{" "}
-          {t("graph.legendNote")}
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="h-2 w-2 rounded-full" style={{ background: AI }} />{" "}
+      {/* One entry per top-level folder, plus the AI ring. */}
+      <div className="pointer-events-none absolute bottom-3 right-4 flex max-w-[70%] flex-wrap justify-end gap-x-4 gap-y-1 text-xs text-magma-muted">
+        {legend.slice(0, 8).map((l) => (
+          <span key={l.name} className="flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full" style={{ background: l.color }} />
+            <span className="max-w-[10rem] truncate">{l.name}</span>
+          </span>
+        ))}
+        <span className="flex items-center gap-1.5">
+          <span
+            className="h-2.5 w-2.5 rounded-full border-2"
+            style={{ borderColor: AI }}
+          />
           {t("graph.legendAi")}
         </span>
       </div>

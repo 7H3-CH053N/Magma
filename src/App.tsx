@@ -336,6 +336,20 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [createNewNote]);
 
+  // Suppress the webview's own context menu (Look Up / Translate / Inspect
+  // Element — the system's, in the system's language). Text you can actually
+  // edit keeps its menu, so copy and paste still work where they matter.
+  useEffect(() => {
+    const onContextMenu = (e: MouseEvent) => {
+      const el = e.target as HTMLElement | null;
+      const editable =
+        el?.closest("input, textarea, [contenteditable='true'], .magma-prose") !== null;
+      if (!editable) e.preventDefault();
+    };
+    window.addEventListener("contextmenu", onContextMenu);
+    return () => window.removeEventListener("contextmenu", onContextMenu);
+  }, []);
+
   // Keep the sidebar in sync with the files on disk — notes created by Claude
   // (via MCP) or edited elsewhere appear without restarting. Refresh when the
   // window regains focus and on a gentle interval while a vault is open.
