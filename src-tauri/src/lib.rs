@@ -252,7 +252,7 @@ fn mcp_config(vault: String) -> String {
 /// One-click install: merge the Magma server into Claude Desktop's config,
 /// backing up any existing file. Returns the config path that was written.
 #[tauri::command]
-fn install_mcp(vault: String) -> Result<String, String> {
+fn install_mcp(vault: String) -> Result<McpInstall, String> {
     let path =
         claude_desktop_config_path().ok_or("could not locate the Claude Desktop config folder")?;
     if let Some(parent) = path.parent() {
@@ -298,7 +298,32 @@ fn install_mcp(vault: String) -> Result<String, String> {
     servers.insert("magma".to_string(), mcp_server_entry(&vault));
     let pretty = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
     std::fs::write(&path, pretty).map_err(|e| e.to_string())?;
-    Ok(path.to_string_lossy().to_string())
+
+    // A binary inside cargo's target/ directory is rebuilt (and briefly absent)
+    // on every `npm run tauri dev`, which is exactly what makes Claude Desktop
+    // report "Server disconnected". Say so instead of leaving it a mystery.
+    let exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let dev_build = exe.contains("/target/debug/")
+        || exe.contains("/target/release/")
+        || exe.contains("\\target\\debug\\")
+        || exe.contains("\\target\\release\\");
+    Ok(McpInstall {
+        config_path: path.to_string_lossy().to_string(),
+        executable: exe,
+        dev_build,
+    })
+}
+
+/// What the one-click setup wrote, so the UI can be specific about it.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpInstall {
+    config_path: String,
+    executable: String,
+    /// True when the registered binary lives in a cargo build directory.
+    dev_build: bool,
 }
 
 /// Open an http(s) URL in the user's default browser. Used for real links in

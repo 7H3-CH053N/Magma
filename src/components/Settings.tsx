@@ -54,6 +54,7 @@ export default function Settings({
   // MCP setup state.
   const [mcpBusy, setMcpBusy] = useState(false);
   const [mcpDone, setMcpDone] = useState<string | null>(null);
+  const [mcpWarn, setMcpWarn] = useState<string | null>(null);
   const [mcpErr, setMcpErr] = useState<string | null>(null);
   const [showManual, setShowManual] = useState(false);
   const [configText, setConfigText] = useState("");
@@ -116,10 +117,12 @@ export default function Settings({
   const install = async () => {
     if (!vault) return;
     setMcpErr(null);
+    setMcpWarn(null);
     setMcpBusy(true);
     try {
-      const path = await installMcp(vault);
-      setMcpDone(path);
+      const res = await installMcp(vault);
+      setMcpDone(res.configPath);
+      setMcpWarn(res.devBuild ? t("settings.mcpDevBuild", { exe: res.executable }) : null);
     } catch (e) {
       setMcpErr(String(e));
     } finally {
@@ -385,6 +388,9 @@ export default function Settings({
               >
                 {mcpBusy ? t("settings.mcpInstalling") : t("settings.mcpInstall")}
               </button>
+              {mcpWarn && (
+                <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">{mcpWarn}</p>
+              )}
               {mcpDone && (
                 <p className="mt-2 text-xs text-green-600 dark:text-green-400">
                   {t("settings.mcpInstalled", { path: mcpDone })}

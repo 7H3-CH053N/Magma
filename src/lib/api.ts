@@ -187,9 +187,16 @@ export async function mcpConfig(vault: string): Promise<string> {
   return invoke<string>("mcp_config", { vault });
 }
 
+export interface McpInstall {
+  configPath: string;
+  executable: string;
+  /** True when the registered binary sits in a cargo build directory. */
+  devBuild: boolean;
+}
+
 /** One-click: write the Magma server into Claude Desktop's config. */
-export async function installMcp(vault: string): Promise<string> {
-  return invoke<string>("install_mcp", { vault });
+export async function installMcp(vault: string): Promise<McpInstall> {
+  return invoke<McpInstall>("install_mcp", { vault });
 }
 
 /** Open an http(s) link in the system browser (never inside the app WebView). */

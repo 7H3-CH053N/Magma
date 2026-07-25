@@ -85,6 +85,8 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "settings.mcpInstall": "Set up Claude Desktop",
     "settings.mcpInstalling": "Setting up…",
     "settings.mcpInstalled": "Done — restart Claude Desktop. Written to {path}",
+    "settings.mcpDevBuild":
+      "Registered a development build ({exe}). That file is rebuilt on every `npm run tauri dev`, which makes Claude Desktop report \"Server disconnected\". For everyday use, install Magma and run this setup from the installed app.",
     "settings.mcpManual": "Manual setup (other MCP clients)",
     "settings.mcpNoVault": "Open a vault first to connect Claude.",
     "settings.close": "Close",
@@ -180,6 +182,8 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "settings.mcpInstall": "Claude Desktop einrichten",
     "settings.mcpInstalling": "Richte ein…",
     "settings.mcpInstalled": "Fertig – starte Claude Desktop neu. Geschrieben nach {path}",
+    "settings.mcpDevBuild":
+      "Es wurde ein Entwicklungs-Build eingetragen ({exe}). Diese Datei wird bei jedem `npm run tauri dev` neu gebaut – genau deshalb meldet Claude Desktop „Server disconnected“. Für den Alltag Magma installieren und die Einrichtung aus der installierten App starten.",
     "settings.mcpManual": "Manuelle Einrichtung (andere MCP-Clients)",
     "settings.mcpNoVault": "Öffne zuerst einen Vault, um Claude zu verbinden.",
     "settings.close": "Schließen",
