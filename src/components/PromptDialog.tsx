@@ -4,6 +4,8 @@ interface PromptDialogProps {
   title: string;
   initial?: string;
   placeholder?: string;
+  /** Optional folder suggestions shown as a dropdown (datalist) on the input. */
+  suggestions?: string[];
   confirmLabel: string;
   cancelLabel: string;
   onSubmit: (value: string) => void;
@@ -18,6 +20,7 @@ export default function PromptDialog({
   title,
   initial = "",
   placeholder,
+  suggestions,
   confirmLabel,
   cancelLabel,
   onSubmit,
@@ -25,6 +28,7 @@ export default function PromptDialog({
 }: PromptDialogProps) {
   const [value, setValue] = useState(initial);
   const inputRef = useRef<HTMLInputElement>(null);
+  const listId = "magma-folder-suggestions";
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -45,6 +49,7 @@ export default function PromptDialog({
           ref={inputRef}
           value={value}
           placeholder={placeholder}
+          list={suggestions && suggestions.length ? listId : undefined}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") onSubmit(value);
@@ -52,6 +57,13 @@ export default function PromptDialog({
           }}
           className="w-full rounded-lg border border-black/10 bg-transparent px-3 py-2 text-sm outline-none focus:border-magma-accent dark:border-white/10"
         />
+        {suggestions && suggestions.length > 0 && (
+          <datalist id={listId}>
+            {suggestions.map((s) => (
+              <option key={s} value={s} />
+            ))}
+          </datalist>
+        )}
         <div className="mt-4 flex justify-end gap-2">
           <button
             onClick={onCancel}

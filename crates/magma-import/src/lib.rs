@@ -78,8 +78,12 @@ fn fetch_posts(site_url: &str) -> Result<Vec<Post>, String> {
 
 fn normalize_base(site_url: &str) -> String {
     let s = site_url.trim().trim_end_matches('/');
-    if s.starts_with("http://") || s.starts_with("https://") {
-        s.to_string()
+    // Scheme detection is case-insensitive; normalize the scheme to lowercase
+    // so e.g. "Https://site" doesn't get a second scheme prepended.
+    if s.len() >= 8 && s[..8].eq_ignore_ascii_case("https://") {
+        format!("https://{}", &s[8..])
+    } else if s.len() >= 7 && s[..7].eq_ignore_ascii_case("http://") {
+        format!("http://{}", &s[7..])
     } else {
         format!("https://{s}")
     }
@@ -366,6 +370,13 @@ mod tests {
         assert!(md.contains("[Link](https://x.at)"));
         assert!(md.contains("- eins"));
         assert!(md.contains("- zwei"));
+    }
+
+    #[test]
+    fn normalizes_scheme_case_insensitively() {
+        assert_eq!(normalize_base("Https://digitalhandwerk.rocks"), "https://digitalhandwerk.rocks");
+        assert_eq!(normalize_base("digitalhandwerk.rocks"), "https://digitalhandwerk.rocks");
+        assert_eq!(normalize_base("HTTP://x.at/"), "http://x.at");
     }
 
     #[test]

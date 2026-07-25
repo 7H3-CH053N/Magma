@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type DragEvent } from "react";
 import type { NoteMeta, SearchHit } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import FlameIcon from "./FlameIcon";
@@ -15,6 +15,7 @@ interface SidebarProps {
   onRename: (path: string, currentTitle: string) => void;
   onDelete: (path: string, title: string) => void;
   onMove: (path: string) => void;
+  onMoveTo: (path: string, folder: string) => void;
   query: string;
   onQuery: (q: string) => void;
   searchHits: SearchHit[];
@@ -33,6 +34,7 @@ export default function Sidebar({
   onRename,
   onDelete,
   onMove,
+  onMoveTo,
   query,
   onQuery,
   searchHits,
@@ -40,7 +42,28 @@ export default function Sidebar({
 }: SidebarProps) {
   const { t } = useI18n();
   const [hovered, setHovered] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
   const searching = query.trim().length > 0;
+
+  const toggleFolder = (f: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      next.has(f) ? next.delete(f) : next.add(f);
+      return next;
+    });
+
+  // Drag-and-drop: a note carries its path; folder headers and the root are drops.
+  const onDropInto = (folder: string) => (e: DragEvent) => {
+    e.preventDefault();
+    setDropTarget(null);
+    const path = e.dataTransfer.getData("text/plain");
+    if (path) onMoveTo(path, folder);
+  };
+  const dragProps = (n: NoteMeta) => ({
+    draggable: true,
+    onDragStart: (e: DragEvent) => e.dataTransfer.setData("text/plain", n.path),
+  });
 
   // Group notes: root-level ones, then a section per folder — including empty
   // folders you created, so you can move notes into them.
@@ -59,6 +82,7 @@ export default function Sidebar({
   const renderNote = (n: NoteMeta) => (
     <div
       key={n.path}
+      {...dragProps(n)}
       onMouseEnter={() => setHovered(n.path)}
       onMouseLeave={() => setHovered((h) => (h === n.path ? null : h))}
       className={`group flex items-center gap-1 rounded-md pr-1 transition ${
@@ -186,23 +210,53 @@ export default function Sidebar({
               {vault ? t("sidebar.noNotes") : t("sidebar.openToBegin")}
             </p>
           )}
-          {/* Root-level notes first, then one section per folder. */}
-          {rootNotes.map(renderNote)}
-          {folderSections.map(([folder, items]) => (
-            <div key={folder} className="mt-2">
-              <div className="flex items-center gap-1 px-2 py-1 text-xs font-medium uppercase tracking-wide text-magma-muted">
-                <span>🗀</span>
-                <span className="truncate">{folder}</span>
-              </div>
-              <div className="pl-2">
-                {items.length === 0 ? (
-                  <p className="px-2 py-1 text-xs text-magma-muted/70">—</p>
-                ) : (
-                  items.map(renderNote)
+          {/* Root notes (also the drop target for moving a note back to root). */}
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDropTarget("");
+            }}
+            onDrop={onDropInto("")}
+            className={`rounded-md ${dropTarget === "" ? "bg-magma-accent/10" : ""}`}
+          >
+            {rootNotes.map(renderNote)}
+          </div>
+
+          {/* One collapsible section per folder; headers are drop targets. */}
+          {folderSections.map(([folder, items]) => {
+            const isOpen = !collapsed.has(folder);
+            return (
+              <div key={folder} className="mt-2">
+                <button
+                  onClick={() => toggleFolder(folder)}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setDropTarget(folder);
+                  }}
+                  onDragLeave={() => setDropTarget((d) => (d === folder ? null : d))}
+                  onDrop={onDropInto(folder)}
+                  className={`flex w-full items-center gap-1 rounded-md px-2 py-1 text-left text-xs font-medium uppercase tracking-wide text-magma-muted transition ${
+                    dropTarget === folder
+                      ? "bg-magma-accent/15"
+                      : "hover:bg-black/5 dark:hover:bg-white/10"
+                  }`}
+                >
+                  <span className="w-3">{isOpen ? "▾" : "▸"}</span>
+                  <span className="truncate">{folder}</span>
+                  <span className="ml-auto opacity-60">{items.length || ""}</span>
+                </button>
+                {isOpen && (
+                  <div className="pl-2">
+                    {items.length === 0 ? (
+                      <p className="px-2 py-1 text-xs text-magma-muted/70">—</p>
+                    ) : (
+                      items.map(renderNote)
+                    )}
+                  </div>
                 )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </nav>
       )}
     </aside>

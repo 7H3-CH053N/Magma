@@ -54,6 +54,7 @@ export default function App() {
   const [dialog, setDialog] = useState<{
     title: string;
     initial: string;
+    suggestions?: string[];
     onSubmit: (value: string) => void;
   } | null>(null);
   // The active note's frontmatter, kept out of the editor and re-attached on save.
@@ -217,26 +218,34 @@ export default function App() {
     });
   }, [vault, refreshNotes, t]);
 
+  // Move a note into a folder ("" = root). Used by both the dialog and drag-drop.
+  const moveTo = useCallback(
+    async (path: string, folder: string) => {
+      if (!vault) return;
+      flushSave();
+      const newPath = await moveNote(vault, path, folder.trim());
+      await refreshNotes(vault);
+      if (remote) {
+        const note = await readNote(vault, newPath);
+        pushRemote(newPath, note.content);
+        deleteRemote(path);
+      }
+      if (activePath === path) setActivePath(newPath);
+    },
+    [vault, activePath, flushSave, refreshNotes, remote, pushRemote, deleteRemote]
+  );
+
   const handleMove = useCallback(
     (path: string) => {
       if (!vault) return;
       setDialog({
         title: t("sidebar.movePrompt"),
         initial: "",
-        onSubmit: async (folder) => {
-          flushSave();
-          const newPath = await moveNote(vault, path, folder.trim());
-          await refreshNotes(vault);
-          if (remote) {
-            const note = await readNote(vault, newPath);
-            pushRemote(newPath, note.content);
-            deleteRemote(path);
-          }
-          if (activePath === path) setActivePath(newPath);
-        },
+        suggestions: folders,
+        onSubmit: (folder) => void moveTo(path, folder),
       });
     },
-    [vault, activePath, flushSave, refreshNotes, remote, pushRemote, deleteRemote, t]
+    [vault, folders, moveTo, t]
   );
 
   const showGraph = useCallback(async () => {
@@ -316,6 +325,7 @@ export default function App() {
         <PromptDialog
           title={dialog.title}
           initial={dialog.initial}
+          suggestions={dialog.suggestions}
           confirmLabel={t("dialog.ok")}
           cancelLabel={t("dialog.cancel")}
           onSubmit={(v) => {
@@ -329,6 +339,7 @@ export default function App() {
         <Settings
           onClose={() => setShowSettings(false)}
           vault={vault}
+          folders={folders}
           onConnectRemote={connectRemote}
           remoteActive={!!remote}
         />
@@ -345,6 +356,7 @@ export default function App() {
         onRename={handleRename}
         onDelete={handleDelete}
         onMove={handleMove}
+        onMoveTo={moveTo}
         query={query}
         onQuery={setQuery}
         searchHits={hits}

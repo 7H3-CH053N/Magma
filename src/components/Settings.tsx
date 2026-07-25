@@ -13,6 +13,7 @@ import {
 interface SettingsProps {
   onClose: () => void;
   vault: string | null;
+  folders: string[];
   onConnectRemote: (cfg: RemoteConfig) => Promise<void>;
   remoteActive: boolean;
 }
@@ -34,6 +35,7 @@ function savedRemote(): { url: string; username: string } {
 export default function Settings({
   onClose,
   vault,
+  folders,
   onConnectRemote,
   remoteActive,
 }: SettingsProps) {
@@ -293,8 +295,14 @@ export default function Settings({
                 value={impFolder}
                 onChange={(e) => setImpFolder(e.target.value)}
                 placeholder={t("settings.importFolder")}
+                list="magma-import-folders"
                 className="rounded-lg border border-black/10 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-magma-accent dark:border-white/10"
               />
+              <datalist id="magma-import-folders">
+                {folders.map((f) => (
+                  <option key={f} value={f} />
+                ))}
+              </datalist>
               <button
                 onClick={runImport}
                 disabled={impBusy || !impUrl.trim()}
