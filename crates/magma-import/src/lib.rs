@@ -18,6 +18,7 @@ pub struct Post {
     pub title: String,
     pub link: String,
     pub date: String,
+    pub author: String,
     pub content_html: String,
     pub categories: Vec<String>,
     pub tags: Vec<String>,
@@ -50,7 +51,9 @@ fn fetch_posts(site_url: &str) -> Result<Vec<Post>, String> {
     let mut posts = Vec::new();
     let mut page = 1;
     loop {
-        let url = format!("{base}/wp-json/wp/v2/posts?per_page=100&page={page}&_embed=wp:term");
+        // `_embed` (all relations) pulls in both the author and the terms
+        // (categories/tags) so we can link them without extra requests.
+        let url = format!("{base}/wp-json/wp/v2/posts?per_page=100&page={page}&_embed=1");
         let body = match ureq::get(&url).call() {
             Ok(resp) => resp.into_string().map_err(|e| e.to_string())?,
             // WP returns 400 once the page number exceeds the total pages.
@@ -96,6 +99,17 @@ pub fn extract_post(item: &Value) -> Post {
     let date = item.get("date").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let content_html = rendered(item, "content");
 
+    // The embedded author is under _embedded.author[0].name.
+    let author = item
+        .get("_embedded")
+        .and_then(|e| e.get("author"))
+        .and_then(|a| a.as_array())
+        .and_then(|a| a.first())
+        .and_then(|a| a.get("name"))
+        .and_then(|n| n.as_str())
+        .map(|s| decode_entities(s.to_string()))
+        .unwrap_or_default();
+
     let mut categories = Vec::new();
     let mut tags = Vec::new();
     if let Some(groups) = item
@@ -125,6 +139,7 @@ pub fn extract_post(item: &Value) -> Post {
         title,
         link,
         date,
+        author,
         content_html,
         categories,
         tags,
@@ -152,9 +167,10 @@ pub fn build_notes(posts: &[Post], folder: &str) -> Vec<Note> {
     let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut notes = Vec::new();
 
-    // category/tag -> post titles (for hub notes)
+    // category/tag/author -> post titles (for hub notes)
     let mut cat_posts: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut tag_posts: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut author_posts: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
     for post in posts {
         let stem = unique_stem(&slugify(&post.title), &prefix, &used);
@@ -164,6 +180,12 @@ pub fn build_notes(posts: &[Post], folder: &str) -> Vec<Note> {
         }
         for t in &post.tags {
             tag_posts.entry(t.clone()).or_default().push(post.title.clone());
+        }
+        if !post.author.is_empty() {
+            author_posts
+                .entry(post.author.clone())
+                .or_default()
+                .push(post.title.clone());
         }
         notes.push(Note {
             rel: format!("{prefix}{stem}.md"),
@@ -176,6 +198,9 @@ pub fn build_notes(posts: &[Post], folder: &str) -> Vec<Note> {
     }
     for (tag, titles) in &tag_posts {
         notes.push(hub_note(&prefix, tag, "Tag", titles));
+    }
+    for (author, titles) in &author_posts {
+        notes.push(hub_note(&prefix, author, "Autor", titles));
     }
     notes
 }
@@ -200,7 +225,12 @@ fn render_post(post: &Post) -> String {
     }
     fm.push_str("---\n\n");
 
-    let mut body = format!("# {}\n\n{}", post.title, html_to_markdown(&post.content_html));
+    let mut body = format!("# {}\n", post.title);
+    if !post.author.is_empty() {
+        // A visible, clickable byline (also builds an author hub in the graph).
+        body.push_str(&format!("\n*von [[{}]]*\n", post.author));
+    }
+    body.push_str(&format!("\n{}", html_to_markdown(&post.content_html)));
 
     let links = |label: &str, items: &[String]| -> String {
         if items.is_empty() {
@@ -393,15 +423,19 @@ mod tests {
               "link": "https://blog.test/mein-beitrag",
               "date": "2026-01-02T10:00:00",
               "content": {"rendered": "<p>Hallo</p>"},
-              "_embedded": {"wp:term": [
-                [{"taxonomy":"category","name":"KI"}],
-                [{"taxonomy":"post_tag","name":"n8n"},{"taxonomy":"post_tag","name":"RAG"}]
-              ]}
+              "_embedded": {
+                "author": [{"name": "Alex J."}],
+                "wp:term": [
+                  [{"taxonomy":"category","name":"KI"}],
+                  [{"taxonomy":"post_tag","name":"n8n"},{"taxonomy":"post_tag","name":"RAG"}]
+                ]
+              }
             }"#,
         )
         .unwrap();
         let p = extract_post(&item);
         assert_eq!(p.title, "Mein & Beitrag");
+        assert_eq!(p.author, "Alex J.");
         assert_eq!(p.categories, vec!["KI"]);
         assert_eq!(p.tags, vec!["n8n", "RAG"]);
     }
@@ -412,18 +446,23 @@ mod tests {
             title: "Sourdough Guide".into(),
             link: "https://b/t".into(),
             date: "2026-01-01".into(),
+            author: "Jane Baker".into(),
             content_html: "<p>bread</p>".into(),
             categories: vec!["Baking".into()],
             tags: vec!["yeast".into()],
         }];
         let notes = build_notes(&posts, "Blog");
-        // post + 1 category hub + 1 tag hub
-        assert_eq!(notes.len(), 3);
+        // post + 1 category hub + 1 tag hub + 1 author hub
+        assert_eq!(notes.len(), 4);
         let post = notes.iter().find(|n| n.rel == "Blog/Sourdough Guide.md").unwrap();
         assert!(post.markdown.contains("# Sourdough Guide"));
+        assert!(post.markdown.contains("*von [[Jane Baker]]*"));
         assert!(post.markdown.contains("[[Baking]]"));
         assert!(post.markdown.contains("[[yeast]]"));
         let hub = notes.iter().find(|n| n.rel == "Blog/Baking.md").unwrap();
         assert!(hub.markdown.contains("[[Sourdough Guide]]"));
+        let author_hub = notes.iter().find(|n| n.rel == "Blog/Jane Baker.md").unwrap();
+        assert!(author_hub.markdown.contains("[[Sourdough Guide]]"));
+        assert!(author_hub.markdown.contains("Autor"));
     }
 }

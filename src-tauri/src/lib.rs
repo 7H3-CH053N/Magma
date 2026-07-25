@@ -265,6 +265,25 @@ fn install_mcp(vault: String) -> Result<String, String> {
     Ok(path.to_string_lossy().to_string())
 }
 
+/// Open an http(s) URL in the user's default browser. Used for real links in
+/// notes (the WebView must not navigate away from the app itself).
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    let lower = url.to_ascii_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+        return Err("only http(s) links can be opened".into());
+    }
+    #[cfg(target_os = "macos")]
+    let spawned = std::process::Command::new("open").arg(&url).spawn();
+    #[cfg(target_os = "windows")]
+    let spawned = std::process::Command::new("cmd")
+        .args(["/C", "start", "", &url])
+        .spawn();
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let spawned = std::process::Command::new("xdg-open").arg(&url).spawn();
+    spawned.map(|_| ()).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Serve MCP from this same executable when invoked as `magma --mcp <vault>`
@@ -303,7 +322,8 @@ pub fn run() {
             remote_put,
             remote_delete,
             mcp_config,
-            install_mcp
+            install_mcp,
+            open_external
         ])
         .run(tauri::generate_context!())
         .expect("error while running Magma");

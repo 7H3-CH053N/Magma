@@ -18,6 +18,8 @@ interface EditorProps {
   placeholder?: string;
   /** Open a note by its `[[wikilink]]` name (filename stem). */
   onOpenLink?: (name: string) => void;
+  /** Open an http(s) link in the system browser. */
+  onOpenExternal?: (url: string) => void;
 }
 
 /**
@@ -27,7 +29,7 @@ interface EditorProps {
  * toolbar or `Cmd/Ctrl+B` etc. Content is stored as plain markdown so the vault
  * stays portable.
  */
-export default function Editor({ value, onChange, placeholder, onOpenLink }: EditorProps) {
+export default function Editor({ value, onChange, placeholder, onOpenLink, onOpenExternal }: EditorProps) {
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
@@ -54,6 +56,19 @@ export default function Editor({ value, onChange, placeholder, onOpenLink }: Edi
     content: value,
     editorProps: {
       attributes: { class: "magma-prose" },
+      // A click on a real link opens it in the system browser instead of
+      // navigating the WebView (or just placing the caret). Wikilinks are
+      // handled by their own extension.
+      handleClick(_view, _pos, event) {
+        const el = (event.target as HTMLElement | null)?.closest("a");
+        const href = el?.getAttribute("href");
+        if (href && /^https?:\/\//i.test(href)) {
+          event.preventDefault();
+          onOpenExternal?.(href);
+          return true;
+        }
+        return false;
+      },
     },
     onUpdate: ({ editor }) => {
       onChange(editor.storage.markdown.getMarkdown());

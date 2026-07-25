@@ -19,6 +19,7 @@ import {
   listFolders,
   listNotes,
   moveNote,
+  openExternal,
   pickVault,
   readNote,
   remoteConnect,
@@ -382,6 +383,9 @@ export default function App() {
                   value={content}
                   onChange={handleChange}
                   onOpenLink={openByName}
+                  onOpenExternal={(url) => {
+                    void openExternal(url);
+                  }}
                 />
               </div>
               <BacklinksPanel backlinks={links} onSelect={selectNote} />

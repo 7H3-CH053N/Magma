@@ -167,4 +167,13 @@ export async function installMcp(vault: string): Promise<string> {
   return invoke<string>("install_mcp", { vault });
 }
 
+/** Open an http(s) link in the system browser (never inside the app WebView). */
+export async function openExternal(url: string): Promise<void> {
+  if (!hasTauri) {
+    window.open(url, "_blank", "noopener");
+    return;
+  }
+  return invoke("open_external", { url });
+}
+
 export { hasTauri };
