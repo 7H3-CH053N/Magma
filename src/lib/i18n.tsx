@@ -64,10 +64,10 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "settings.importBody":
       "Pull every post into a folder as linked notes — grouped by category and tag, then searchable and available to Claude.",
     "settings.importFolder": "Target folder",
-    "settings.importAuthor": "Author (optional — only if the site hides it)",
+    "settings.importAuthor": "Author (optional — normally detected automatically)",
     "settings.importAuthors": "author: {authors}",
     "settings.importNoAuthor":
-      "The site's REST API returned no author (the users endpoint is usually blocked by a security plugin). Enter the author above and import again to get bylines and an author note.",
+      "Neither the REST API nor the RSS feed named an author for these posts. Enter one above to add bylines and an author note.",
     "settings.importUrl": "Blog URL (e.g. https://myblog.com)",
     "settings.importRun": "Import",
     "settings.importing": "Importing… this can take a minute",
@@ -152,10 +152,10 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "settings.importBody":
       "Hol alle Beiträge als verlinkte Notizen in einen Ordner — gruppiert nach Kategorie und Tag, dann durchsuchbar und für Claude verfügbar.",
     "settings.importFolder": "Zielordner",
-    "settings.importAuthor": "Autor (optional — nur falls die Seite ihn nicht ausgibt)",
+    "settings.importAuthor": "Autor (optional — wird normalerweise automatisch erkannt)",
     "settings.importAuthors": "Autor: {authors}",
     "settings.importNoAuthor":
-      "Die REST-API der Seite hat keinen Autor geliefert (der users-Endpunkt ist meist von einem Security-Plugin gesperrt). Trag den Autor oben ein und importiere erneut — dann gibt es Autorenzeilen und eine Autor-Notiz.",
+      "Weder die REST-API noch der RSS-Feed haben einen Autor genannt. Du kannst oben einen eintragen, dann gibt es Autorenzeilen und eine Autor-Notiz.",
     "settings.importUrl": "Blog-URL (z. B. https://meinblog.at)",
     "settings.importRun": "Importieren",
     "settings.importing": "Importiere… das kann eine Minute dauern",

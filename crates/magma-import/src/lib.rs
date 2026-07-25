@@ -13,12 +13,15 @@ use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Post {
     pub title: String,
     pub link: String,
     pub date: String,
     pub author: String,
+    /// WordPress user id, kept so the author name can be resolved later even
+    /// when the REST API refuses to hand out the name itself.
+    pub author_id: u64,
     pub content_html: String,
     pub categories: Vec<String>,
     pub tags: Vec<String>,
@@ -122,7 +125,97 @@ fn fetch_posts(site_url: &str) -> Result<Vec<Post>, String> {
             break; // safety cap: 5000 posts
         }
     }
+    // Last resort for the author name: the public RSS feed. Runs only for posts
+    // the REST API left without one.
+    let by_feed = resolve_authors_via_feed(&base, &posts);
+    if !by_feed.is_empty() {
+        for p in &mut posts {
+            if p.author.is_empty() {
+                if let Some(name) = by_feed.get(&p.author_id) {
+                    p.author = name.clone();
+                }
+            }
+        }
+    }
     Ok(posts)
+}
+
+/// Normalize a post URL so REST links and RSS links compare equal.
+fn normalize_link(link: &str) -> String {
+    link.trim().trim_end_matches('/').to_lowercase()
+}
+
+/// Pull the text of the first `<tag>` in an XML fragment, unwrapping CDATA.
+fn tag_text(xml: &str, tag: &str) -> String {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = match xml.find(&open) {
+        Some(i) => i + open.len(),
+        None => return String::new(),
+    };
+    let end = match xml[start..].find(&close) {
+        Some(i) => start + i,
+        None => return String::new(),
+    };
+    let raw = xml[start..end].trim();
+    let raw = raw
+        .strip_prefix("<![CDATA[")
+        .and_then(|r| r.strip_suffix("]]>"))
+        .unwrap_or(raw);
+    decode_entities(raw.trim().to_string())
+}
+
+/// Map author id -> display name using the site's RSS feed.
+///
+/// This is the fallback that actually works on hardened sites: security plugins
+/// (Wordfence and friends) routinely return 401 for `/wp/v2/users` *and* for the
+/// embedded author, but the RSS feed is public by design and carries a
+/// `<dc:creator>` per item. We match feed items to posts by URL to recover the
+/// id -> name mapping, and stop as soon as every author is resolved — a
+/// single-author blog costs exactly one request.
+fn resolve_authors_via_feed(base: &str, posts: &[Post]) -> HashMap<u64, String> {
+    let mut link_to_id: HashMap<String, u64> = HashMap::new();
+    let mut needed: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    for p in posts {
+        if p.author.is_empty() && p.author_id != 0 && !p.link.is_empty() {
+            link_to_id.insert(normalize_link(&p.link), p.author_id);
+            needed.insert(p.author_id);
+        }
+    }
+    let mut out: HashMap<u64, String> = HashMap::new();
+    if needed.is_empty() {
+        return out;
+    }
+    for page in 1..=30 {
+        let url = if page == 1 {
+            format!("{base}/feed/")
+        } else {
+            format!("{base}/feed/?paged={page}")
+        };
+        let body = match ureq::get(&url).call() {
+            Ok(resp) => match resp.into_string() {
+                Ok(b) => b,
+                Err(_) => break,
+            },
+            Err(_) => break,
+        };
+        let mut items = 0;
+        for item in body.split("<item>").skip(1) {
+            items += 1;
+            let link = tag_text(item, "link");
+            let creator = tag_text(item, "dc:creator");
+            if link.is_empty() || creator.is_empty() {
+                continue;
+            }
+            if let Some(id) = link_to_id.get(&normalize_link(&link)) {
+                out.insert(*id, creator);
+            }
+        }
+        if items == 0 || needed.iter().all(|id| out.contains_key(id)) {
+            break;
+        }
+    }
+    out
 }
 
 /// Fetch the site's authors as an id -> display-name map. Best-effort: if the
@@ -203,6 +296,7 @@ pub fn extract_post(item: &Value, authors: &HashMap<u64, String>) -> Post {
                 .and_then(|id| authors.get(&id).cloned())
         })
         .unwrap_or_default();
+    let author_id = item.get("author").and_then(|v| v.as_u64()).unwrap_or(0);
 
     let mut categories = Vec::new();
     let mut tags = Vec::new();
@@ -234,6 +328,7 @@ pub fn extract_post(item: &Value, authors: &HashMap<u64, String>) -> Post {
         link,
         date,
         author,
+        author_id,
         content_html,
         categories,
         tags,
@@ -535,6 +630,44 @@ mod tests {
     }
 
     #[test]
+    fn parses_dc_creator_and_link_from_a_feed_item() {
+        // Verbatim shape of a WordPress RSS item (as served by digitalhandwerk.rocks).
+        let feed = r#"<channel><link>https://site.test</link>
+        <item>
+        <title>Out of Blog</title>
+        <link>https://site.test/persoenliches/out-of-blog/</link>
+        <comments>https://site.test/persoenliches/out-of-blog/#respond</comments>
+        <dc:creator><![CDATA[Alex Januschewsky]]></dc:creator>
+        <pubDate>Fri, 17 Jul 2026 05:14:45 +0000</pubDate>
+        </item></channel>"#;
+        let item = feed.split("<item>").nth(1).unwrap();
+        assert_eq!(tag_text(item, "link"), "https://site.test/persoenliches/out-of-blog/");
+        assert_eq!(tag_text(item, "dc:creator"), "Alex Januschewsky");
+        // Trailing-slash and case differences must not break the match.
+        assert_eq!(
+            normalize_link("https://site.test/Persoenliches/Out-Of-Blog"),
+            normalize_link("https://site.test/persoenliches/out-of-blog/")
+        );
+    }
+
+    #[test]
+    fn extract_post_keeps_author_id_when_name_is_blocked() {
+        // Wordfence returns an error object instead of the embedded author.
+        let item: Value = serde_json::from_str(
+            r#"{
+              "title": {"rendered": "Gesperrt"},
+              "content": {"rendered": "<p>x</p>"},
+              "author": 1,
+              "_embedded": {"author": [{"code": "rest_user_cannot_view", "data": {"status": 401}}]}
+            }"#,
+        )
+        .unwrap();
+        let p = extract_post(&item, &HashMap::new());
+        assert_eq!(p.author, "", "no name is available");
+        assert_eq!(p.author_id, 1, "but the id survives for the feed lookup");
+    }
+
+    #[test]
     fn extract_post_falls_back_to_author_id_map() {
         // No embedded author (the /users endpoint was blocked), only the id.
         let item: Value = serde_json::from_str(
@@ -558,6 +691,7 @@ mod tests {
             link: "https://b/t".into(),
             date: "2026-01-01".into(),
             author: "Jane Baker".into(),
+            author_id: 1,
             content_html: "<p>bread</p>".into(),
             categories: vec!["Baking".into()],
             tags: vec!["yeast".into()],
