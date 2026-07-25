@@ -47,6 +47,11 @@ pub struct GraphNode {
     pub ai_authored: bool,
     /// Number of links touching this note (in + out) — drives node size.
     pub degree: usize,
+    /// True for a link target that has no note yet. Shown as a ghost node so an
+    /// isolated note reveals *why* it is isolated, instead of the link being
+    /// dropped and the note looking unconnected for no visible reason.
+    #[serde(default)]
+    pub missing: bool,
 }
 
 #[derive(Serialize)]
@@ -63,8 +68,10 @@ pub struct Graph {
     pub edges: Vec<GraphEdge>,
 }
 
-/// Build the whole-vault link graph. Edges use note paths as ids; unresolved
-/// links (to notes that don't exist yet) are dropped from the graph.
+/// Build the whole-vault link graph. Edges use note paths as ids. A link whose
+/// target has no note yet becomes a `missing:` ghost node rather than being
+/// dropped — otherwise a note whose links all point nowhere looks unconnected
+/// with nothing to explain why.
 pub fn build_graph(vault: &Path) -> std::io::Result<Graph> {
     let notes = vault::list_notes(vault)?;
     let by_name = name_index(&notes);
@@ -72,32 +79,53 @@ pub fn build_graph(vault: &Path) -> std::io::Result<Graph> {
     let mut degree: HashMap<String, usize> = HashMap::new();
     let mut edges = Vec::new();
 
+    // Link targets with no note behind them, keyed by a synthetic id.
+    let mut ghosts: HashMap<String, String> = HashMap::new();
     for note in &notes {
         let content = std::fs::read_to_string(vault.join(&note.path)).unwrap_or_default();
         for target in extract_links(&content) {
-            if let Some(dest) = by_name.get(&target.to_lowercase()) {
-                if *dest == note.path {
-                    continue; // ignore self-links
+            let dest = match by_name.get(&target.to_lowercase()) {
+                Some(d) => {
+                    if *d == note.path {
+                        continue; // ignore self-links
+                    }
+                    d.clone()
                 }
-                edges.push(GraphEdge {
-                    source: note.path.clone(),
-                    target: dest.clone(),
-                });
-                *degree.entry(note.path.clone()).or_default() += 1;
-                *degree.entry(dest.clone()).or_default() += 1;
-            }
+                None => {
+                    // Unresolved: keep it, as a ghost the UI can show.
+                    let id = format!("missing:{}", target.to_lowercase());
+                    ghosts.entry(id.clone()).or_insert_with(|| target.clone());
+                    id
+                }
+            };
+            edges.push(GraphEdge {
+                source: note.path.clone(),
+                target: dest.clone(),
+            });
+            *degree.entry(note.path.clone()).or_default() += 1;
+            *degree.entry(dest).or_default() += 1;
         }
     }
 
-    let nodes = notes
+    let mut nodes: Vec<GraphNode> = notes
         .into_iter()
         .map(|n| GraphNode {
             degree: degree.get(&n.path).copied().unwrap_or(0),
             path: n.path,
             title: n.title,
             ai_authored: n.ai_authored,
+            missing: false,
         })
         .collect();
+    for (id, name) in ghosts {
+        nodes.push(GraphNode {
+            degree: degree.get(&id).copied().unwrap_or(0),
+            path: id,
+            title: name,
+            ai_authored: false,
+            missing: true,
+        });
+    }
 
     Ok(Graph { nodes, edges })
 }
@@ -301,6 +329,25 @@ mod tests {
         assert_eq!(g.edges.len(), 1);
         assert_eq!(g.edges[0].source, "Alpha.md");
         assert_eq!(g.edges[0].target, "Beta.md");
+        fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn unresolved_links_appear_as_ghost_nodes() {
+        let v = tmp_vault();
+        // Mirrors a family note whose links name notes that don't exist.
+        vault::write_note(&v, "Familie/Oma.md", "# Oma\n\n[[Opa]] und [[Mama]]").unwrap();
+        let g = build_graph(&v).unwrap();
+
+        let oma = g.nodes.iter().find(|n| n.path == "Familie/Oma.md").unwrap();
+        assert_eq!(oma.degree, 2, "the note is no longer isolated");
+
+        let ghosts: Vec<_> = g.nodes.iter().filter(|n| n.missing).collect();
+        assert_eq!(ghosts.len(), 2);
+        let titles: Vec<_> = ghosts.iter().map(|n| n.title.as_str()).collect();
+        assert!(titles.contains(&"Opa"));
+        assert!(titles.contains(&"Mama"));
+        assert_eq!(g.edges.len(), 2);
         fs::remove_dir_all(&v).ok();
     }
 

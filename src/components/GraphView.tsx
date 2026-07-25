@@ -5,6 +5,7 @@ import { useI18n } from "../lib/i18n";
 interface GraphViewProps {
   graph: Graph;
   activePath: string | null;
+  /** Clicking a node previews it; the panel's button opens it in the editor. */
   onSelect: (path: string) => void;
 }
 
@@ -12,6 +13,7 @@ interface Sim {
   path: string;
   title: string;
   ai: boolean;
+  missing: boolean;
   degree: number;
   x: number;
   y: number;
@@ -165,6 +167,12 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
   });
   // The render loop reads colours through a ref, so changing one repaints
   // without rebuilding (and re-laying-out) the whole simulation.
+  const [showAiRing, setShowAiRing] = useState(() => localStorage.getItem("magma.aiRing") !== "0");
+  const showAiRingRef = useRef(showAiRing);
+  useEffect(() => {
+    showAiRingRef.current = showAiRing;
+    localStorage.setItem("magma.aiRing", showAiRing ? "1" : "0");
+  }, [showAiRing]);
   const customRef = useRef(custom);
   const colorVersion = useRef(0);
   useEffect(() => {
@@ -188,6 +196,7 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
         path: node.path,
         title: node.title,
         ai: node.aiAuthored,
+        missing: !!node.missing,
         degree: node.degree,
         x: Math.cos(a) * seed,
         y: Math.sin(a) * seed,
@@ -423,25 +432,39 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
         const isActive = s.path === activeRef.current;
         const r = nodeRadius(s.degree) + (isActive ? 2 : 0);
         const color = nodeColor[i];
-        // Soft halo first, solid dot on top: gives the map some depth instead
-        // of reading as flat stickers.
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, r * 2.1, 0, Math.PI * 2);
-        ctx.fillStyle = color;
-        ctx.globalAlpha = 0.13;
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-        ctx.globalAlpha = isActive ? 1 : 0.92;
-        ctx.fill();
-        ctx.globalAlpha = 1;
-        // AI-written notes keep their own signal as a ring around the dot.
-        if (s.ai) {
-          ctx.strokeStyle = AI;
-          ctx.lineWidth = 1.75;
+        if (s.missing) {
+          // A link target with no note: hollow, so it reads as "not there yet".
           ctx.beginPath();
-          ctx.arc(p.x, p.y, r + 2, 0, Math.PI * 2);
+          ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+          ctx.strokeStyle = "rgba(150,145,138,0.85)";
+          ctx.lineWidth = 1.25;
+          ctx.setLineDash([2, 2]);
           ctx.stroke();
+          ctx.setLineDash([]);
+        } else {
+          // Soft halo first, solid dot on top: gives the map some depth instead
+          // of reading as flat stickers.
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, r * 2.1, 0, Math.PI * 2);
+          ctx.fillStyle = color;
+          ctx.globalAlpha = 0.13;
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+          ctx.globalAlpha = isActive ? 1 : 0.92;
+          ctx.fill();
+          ctx.globalAlpha = 1;
+          // AI-written notes keep a signal, but a quiet one — the folder colour
+          // is the primary reading, the ring must not shout over it.
+          if (s.ai && showAiRingRef.current) {
+            ctx.strokeStyle = AI;
+            ctx.globalAlpha = 0.5;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, r + 2.5, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+          }
         }
         if (isActive) {
           ctx.strokeStyle = color;
@@ -648,6 +671,14 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
               </label>
             ))}
           </div>
+          <label className="mt-2 flex items-center gap-2 border-t border-black/5 pt-2 text-sm dark:border-white/10">
+            <input
+              type="checkbox"
+              checked={showAiRing}
+              onChange={(e) => setShowAiRing(e.target.checked)}
+            />
+            <span>{t("graph.aiRing")}</span>
+          </label>
           <button
             onClick={() => setCustom({})}
             className="mt-2 w-full rounded-md bg-black/5 px-2 py-1 text-xs text-magma-muted transition hover:bg-black/10 dark:bg-white/10 dark:hover:bg-white/20"
@@ -664,12 +695,18 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
             <span className="max-w-[10rem] truncate">{l.name}</span>
           </span>
         ))}
+        {showAiRing && (
+          <span className="flex items-center gap-1.5">
+            <span
+              className="h-2.5 w-2.5 rounded-full border-2"
+              style={{ borderColor: AI }}
+            />
+            {t("graph.legendAi")}
+          </span>
+        )}
         <span className="flex items-center gap-1.5">
-          <span
-            className="h-2.5 w-2.5 rounded-full border-2"
-            style={{ borderColor: AI }}
-          />
-          {t("graph.legendAi")}
+          <span className="h-2.5 w-2.5 rounded-full border border-dashed border-magma-muted" />
+          {t("graph.legendMissing")}
         </span>
       </div>
     </div>

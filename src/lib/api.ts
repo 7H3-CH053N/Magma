@@ -124,6 +124,8 @@ export interface GraphNode {
   title: string;
   aiAuthored: boolean;
   degree: number;
+  /** A link target with no note behind it yet (shown as a ghost node). */
+  missing?: boolean;
 }
 
 export interface GraphEdge {

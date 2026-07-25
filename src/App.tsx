@@ -8,6 +8,7 @@ import Settings from "./components/Settings";
 import FlameIcon from "./components/FlameIcon";
 import PromptDialog from "./components/PromptDialog";
 import ConfirmDialog from "./components/ConfirmDialog";
+import NodePreview from "./components/NodePreview";
 import { useI18n } from "./lib/i18n";
 import { splitFrontmatter, joinFrontmatter } from "./lib/markdown";
 import {
@@ -52,6 +53,8 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [showSettings, setShowSettings] = useState(false);
+  // Graph node being previewed (path + title); null closes the panel.
+  const [preview, setPreview] = useState<{ path: string; title: string } | null>(null);
   const [remote, setRemote] = useState<RemoteConfig | null>(null);
   // In-app text prompt (window.prompt doesn't work in the Tauri webview).
   const [dialog, setDialog] = useState<{
@@ -295,6 +298,14 @@ export default function App() {
     [vault, folders, moveTo, t]
   );
 
+  // Keep the graph current while it is on screen: moving a note changes its
+  // path, and the node's colour comes from its folder — so a move has to be
+  // reflected immediately, not only after leaving and re-entering the view.
+  useEffect(() => {
+    if (view !== "graph" || !vault) return;
+    void buildGraph(vault).then(setGraph);
+  }, [notes, view, vault]);
+
   const showGraph = useCallback(async () => {
     if (!vault) return;
     setGraph(await buildGraph(vault));
@@ -450,7 +461,14 @@ export default function App() {
 
         <div className="flex flex-1 flex-col overflow-hidden">
           {view === "graph" ? (
-            <GraphView graph={graph} activePath={activePath} onSelect={selectNote} />
+            <GraphView
+              graph={graph}
+              activePath={activePath}
+              onSelect={(path) => {
+                const node = graph.nodes.find((n) => n.path === path);
+                setPreview({ path, title: node?.title ?? path });
+              }}
+            />
           ) : activePath ? (
             <>
               <div className="flex-1 overflow-hidden">
@@ -477,6 +495,23 @@ export default function App() {
           )}
         </div>
       </main>
+
+      {view === "graph" && preview && vault && (
+        <NodePreview
+          vault={vault}
+          nodePath={preview.path}
+          title={preview.title}
+          onOpenEditor={(p) => {
+            setPreview(null);
+            void selectNote(p);
+          }}
+          onCreate={(name) => {
+            setPreview(null);
+            void openByName(name);
+          }}
+          onClose={() => setPreview(null)}
+        />
+      )}
     </div>
   );
 }
