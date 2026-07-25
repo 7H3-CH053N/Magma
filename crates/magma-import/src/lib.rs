@@ -10,7 +10,7 @@
 use magma_core::slugify;
 use regex::Regex;
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 #[derive(Debug, Clone)]
@@ -48,11 +48,16 @@ pub fn import_wordpress(vault: &Path, folder: &str, site_url: &str) -> Result<us
 /// Fetch all posts from `<site>/wp-json/wp/v2/posts`, following pagination.
 fn fetch_posts(site_url: &str) -> Result<Vec<Post>, String> {
     let base = normalize_base(site_url);
+    // Resolve author id -> name up front. Embedding the author per-post relies
+    // on the /users endpoint, which many security plugins block; a single list
+    // call is more robust and lets us map each post's `author` id to a name.
+    let authors = fetch_authors(&base);
     let mut posts = Vec::new();
     let mut page = 1;
     loop {
-        // `_embed` (all relations) pulls in both the author and the terms
-        // (categories/tags) so we can link them without extra requests.
+        // `_embed=1` (all relations) pulls in both the author and the terms
+        // (categories/tags); the `authors` map is the fallback when the author
+        // relation isn't embeddable.
         let url = format!("{base}/wp-json/wp/v2/posts?per_page=100&page={page}&_embed=1");
         let body = match ureq::get(&url).call() {
             Ok(resp) => resp.into_string().map_err(|e| e.to_string())?,
@@ -66,7 +71,7 @@ fn fetch_posts(site_url: &str) -> Result<Vec<Post>, String> {
             _ => break,
         };
         for item in &arr {
-            posts.push(extract_post(item));
+            posts.push(extract_post(item, &authors));
         }
         if arr.len() < 100 {
             break;
@@ -77,6 +82,46 @@ fn fetch_posts(site_url: &str) -> Result<Vec<Post>, String> {
         }
     }
     Ok(posts)
+}
+
+/// Fetch the site's authors as an id -> display-name map. Best-effort: if the
+/// `/users` endpoint is unavailable (blocked, empty), returns an empty map and
+/// the import proceeds without author links rather than failing.
+fn fetch_authors(base: &str) -> HashMap<u64, String> {
+    let mut map = HashMap::new();
+    let mut page = 1;
+    loop {
+        let url = format!("{base}/wp-json/wp/v2/users?per_page=100&page={page}");
+        let body = match ureq::get(&url).call() {
+            Ok(resp) => match resp.into_string() {
+                Ok(b) => b,
+                Err(_) => break,
+            },
+            Err(_) => break,
+        };
+        let arr = match serde_json::from_str::<Value>(&body) {
+            Ok(Value::Array(a)) if !a.is_empty() => a,
+            _ => break,
+        };
+        for u in &arr {
+            if let (Some(id), Some(name)) = (
+                u.get("id").and_then(|v| v.as_u64()),
+                u.get("name").and_then(|v| v.as_str()),
+            ) {
+                if !name.is_empty() {
+                    map.insert(id, decode_entities(name.to_string()));
+                }
+            }
+        }
+        if arr.len() < 100 {
+            break;
+        }
+        page += 1;
+        if page > 20 {
+            break;
+        }
+    }
+    map
 }
 
 fn normalize_base(site_url: &str) -> String {
@@ -92,14 +137,16 @@ fn normalize_base(site_url: &str) -> String {
     }
 }
 
-/// Parse one WP REST post object into a `Post`.
-pub fn extract_post(item: &Value) -> Post {
+/// Parse one WP REST post object into a `Post`. `authors` maps user id -> name
+/// as a fallback when the author isn't embedded in the post.
+pub fn extract_post(item: &Value, authors: &HashMap<u64, String>) -> Post {
     let title = decode_entities(rendered(item, "title"));
     let link = item.get("link").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let date = item.get("date").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let content_html = rendered(item, "content");
 
-    // The embedded author is under _embedded.author[0].name.
+    // Prefer the embedded author (_embedded.author[0].name); fall back to
+    // mapping the post's top-level `author` id through the authors list.
     let author = item
         .get("_embedded")
         .and_then(|e| e.get("author"))
@@ -108,6 +155,12 @@ pub fn extract_post(item: &Value) -> Post {
         .and_then(|a| a.get("name"))
         .and_then(|n| n.as_str())
         .map(|s| decode_entities(s.to_string()))
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            item.get("author")
+                .and_then(|v| v.as_u64())
+                .and_then(|id| authors.get(&id).cloned())
+        })
         .unwrap_or_default();
 
     let mut categories = Vec::new();
@@ -433,11 +486,28 @@ mod tests {
             }"#,
         )
         .unwrap();
-        let p = extract_post(&item);
+        let p = extract_post(&item, &HashMap::new());
         assert_eq!(p.title, "Mein & Beitrag");
         assert_eq!(p.author, "Alex J.");
         assert_eq!(p.categories, vec!["KI"]);
         assert_eq!(p.tags, vec!["n8n", "RAG"]);
+    }
+
+    #[test]
+    fn extract_post_falls_back_to_author_id_map() {
+        // No embedded author (the /users endpoint was blocked), only the id.
+        let item: Value = serde_json::from_str(
+            r#"{
+              "title": {"rendered": "Ohne Embed"},
+              "content": {"rendered": "<p>x</p>"},
+              "author": 1
+            }"#,
+        )
+        .unwrap();
+        let mut authors = HashMap::new();
+        authors.insert(1u64, "Alex Januschewsky".to_string());
+        let p = extract_post(&item, &authors);
+        assert_eq!(p.author, "Alex Januschewsky");
     }
 
     #[test]

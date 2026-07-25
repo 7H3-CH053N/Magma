@@ -48,6 +48,9 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
   activeRef.current = activePath;
   // Persistent viewport: scale + screen-space pan offset (ox, oy).
   const viewRef = useRef({ scale: 1, ox: 0, oy: 0 });
+  // While false, the view auto-fits to show every node; any pan/zoom/drag
+  // hands control to the user. Reset re-enables it.
+  const interactedRef = useRef(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -55,8 +58,10 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Seed positions on a circle so the layout unfolds predictably (no RNG).
+    // Seed positions on a circle whose size grows with the vault so hundreds of
+    // notes don't pile up in the centre. The view auto-fits regardless.
     const n = graph.nodes.length;
+    const seed = 30 + 14 * Math.sqrt(n);
     const nodes: Sim[] = graph.nodes.map((node, i) => {
       const a = (i / Math.max(1, n)) * Math.PI * 2;
       return {
@@ -64,13 +69,15 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
         title: node.title,
         ai: node.aiAuthored,
         degree: node.degree,
-        x: Math.cos(a) * 180,
-        y: Math.sin(a) * 180,
+        x: Math.cos(a) * seed,
+        y: Math.sin(a) * seed,
         vx: 0,
         vy: 0,
       };
     });
     nodesRef.current = nodes;
+    // A freshly built graph starts in auto-fit mode.
+    interactedRef.current = false;
     const index = new Map(nodes.map((s) => [s.path, s]));
     const edges = graph.edges
       .map((e) => ({ s: index.get(e.source), t: index.get(e.target) }))
@@ -203,11 +210,48 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
       ctx.restore();
     };
 
+    // Fit every node into view (until the user takes control). Cheap enough to
+    // run each frame; only writes the transform when it actually changes.
+    const fitView = () => {
+      if (!nodes.length) return;
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const s of nodes) {
+        const r = radius(s.degree);
+        minX = Math.min(minX, s.x - r);
+        maxX = Math.max(maxX, s.x + r);
+        minY = Math.min(minY, s.y - r);
+        maxY = Math.max(maxY, s.y + r);
+      }
+      const rect = canvas.getBoundingClientRect();
+      const w = maxX - minX || 1;
+      const h = maxY - minY || 1;
+      const scale = clamp(Math.min((rect.width * 0.86) / w, (rect.height * 0.86) / h), 0.05, 1.5);
+      const bxc = (minX + maxX) / 2;
+      const byc = (minY + maxY) / 2;
+      const ox = -bxc * scale;
+      const oy = -byc * scale;
+      const v = viewRef.current;
+      if (
+        Math.abs(v.scale - scale) > 1e-3 ||
+        Math.abs(v.ox - ox) > 0.5 ||
+        Math.abs(v.oy - oy) > 0.5
+      ) {
+        v.scale = scale;
+        v.ox = ox;
+        v.oy = oy;
+        needsDraw = true;
+      }
+    };
+
     const frame = () => {
       if (alpha > 0.02 || dragNode) {
         physics();
         needsDraw = true;
       }
+      if (!interactedRef.current) fitView();
       if (needsDraw) {
         draw();
         needsDraw = false;
@@ -242,6 +286,7 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
         canvas.style.cursor = "grabbing";
       } else {
         panning = true;
+        interactedRef.current = true; // panning takes over the viewport
         canvas.style.cursor = "grabbing";
       }
       canvas.setPointerCapture(e.pointerId);
@@ -257,6 +302,7 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
       }
       if (Math.hypot(mx - downX, my - downY) > 3) moved = true;
       if (dragNode) {
+        if (moved) interactedRef.current = true; // stop refitting mid-drag
         const w = toWorld(mx, my, rect);
         dragNode.x = w.x;
         dragNode.y = w.y;
@@ -287,6 +333,7 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
+      interactedRef.current = true; // zooming takes over the viewport
       const rect = canvas.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
@@ -297,7 +344,7 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
       const wx = (mx - cx - view.ox) / view.scale;
       const wy = (my - cy - view.oy) / view.scale;
       const factor = Math.exp(-e.deltaY * 0.0015);
-      view.scale = clamp(view.scale * factor, 0.15, 5);
+      view.scale = clamp(view.scale * factor, 0.05, 5);
       view.ox = mx - cx - wx * view.scale;
       view.oy = my - cy - wy * view.scale;
       needsDraw = true;
@@ -321,7 +368,8 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
   }, [graph]);
 
   const resetView = () => {
-    viewRef.current = { scale: 1, ox: 0, oy: 0 };
+    // Hand control back to auto-fit so every node snaps into view again.
+    interactedRef.current = false;
   };
 
   return (
