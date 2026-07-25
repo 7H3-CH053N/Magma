@@ -123,6 +123,57 @@ impl Server {
                 let note = core::read_note(v, &path).map_err(io)?;
                 Ok(json!(note))
             }
+            // Structure tools: the vault is a tree of folders and subfolders,
+            // so an agent has to be able to see it before deciding where a note
+            // belongs.
+            "list_folders" => {
+                let folders = core::list_folders(v).map_err(io)?;
+                Ok(json!({ "folders": folders }))
+            }
+            "list_notes" => {
+                let notes = core::list_notes(v).map_err(io)?;
+                let folder = args
+                    .get("folder")
+                    .and_then(|f| f.as_str())
+                    .map(|f| f.trim().trim_matches('/').to_string())
+                    .filter(|f| !f.is_empty());
+                let filtered: Vec<_> = match &folder {
+                    Some(dir) => {
+                        let prefix = format!("{}/", dir.to_lowercase());
+                        let recursive = args
+                            .get("recursive")
+                            .and_then(|r| r.as_bool())
+                            .unwrap_or(true);
+                        notes
+                            .into_iter()
+                            .filter(|n| {
+                                let p = n.path.to_lowercase();
+                                if !p.starts_with(&prefix) {
+                                    return false;
+                                }
+                                // Non-recursive: only notes directly in `dir`.
+                                recursive || !p[prefix.len()..].contains('/')
+                            })
+                            .collect()
+                    }
+                    None => notes,
+                };
+                Ok(json!({ "notes": filtered }))
+            }
+            "create_folder" => {
+                self.ensure_write()?;
+                let path = str_arg(args, "path")?;
+                let created = core::create_folder(v, &path).map_err(io)?;
+                Ok(json!({ "folder": created }))
+            }
+            "move_note" => {
+                self.ensure_write()?;
+                let path = str_arg(args, "path")?;
+                core::safe_join(v, &path).ok_or("invalid path")?;
+                let folder = args.get("folder").and_then(|f| f.as_str()).unwrap_or("");
+                let moved = core::move_note(v, &path, folder).map_err(io)?;
+                Ok(json!({ "path": moved }))
+            }
             "list_backlinks" => {
                 let path = str_arg(args, "path")?;
                 let back = core::backlinks(v, &path).map_err(io)?;
@@ -186,6 +237,43 @@ fn tools_spec() -> Value {
             }
         },
         {
+            "name": "list_folders",
+            "description": "List every folder in the vault as vault-relative paths, including nested ones (e.g. 'Blog', 'Blog/KI-Wissen'). Call this before creating a note so you can file it in the folder it belongs to instead of the vault root.",
+            "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "list_notes",
+            "description": "List notes in the vault. Pass 'folder' (a vault-relative path such as 'Blog/KI-Wissen') to list only that folder; by default subfolders are included, set 'recursive' to false for that folder alone. Use it to see how a folder is organised before adding to it.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "folder": { "type": "string" },
+                    "recursive": { "type": "boolean" }
+                }
+            }
+        },
+        {
+            "name": "create_folder",
+            "description": "Create a folder, nested paths included (e.g. 'Projekte/2026'). Only needed for an empty folder — create_note makes any missing folders itself.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "path": { "type": "string" } },
+                "required": ["path"]
+            }
+        },
+        {
+            "name": "move_note",
+            "description": "Move a note into a folder, keeping its filename so every [[wikilink]] to it still resolves. Pass an empty 'folder' to move it to the vault root.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" },
+                    "folder": { "type": "string" }
+                },
+                "required": ["path"]
+            }
+        },
+        {
             "name": "list_backlinks",
             "description": "List notes that link to the given note (by its vault-relative path).",
             "inputSchema": {
@@ -208,7 +296,7 @@ fn tools_spec() -> Value {
         },
         {
             "name": "create_note",
-            "description": "Create a new note authored by the AI (frontmatter author: ai is added automatically). Reference related notes with [[Name]] wikilinks — call find_link_candidates first and link by each candidate's `name`. When creating several related notes in one task, pass the SAME `folder` for all of them so they are grouped together instead of cluttering the vault root. The response reports resolved and broken links; fix any broken ones with a follow-up update_note.",
+            "description": "Create a new note authored by the AI (frontmatter author: ai is added automatically). Reference related notes with [[Name]] wikilinks — call find_link_candidates first and link by each candidate's `name`. The `folder` may be nested (e.g. 'Projekte/2026') and is created if missing — call list_folders first and reuse an existing one where it fits. When creating several related notes in one task, pass the SAME `folder` for all of them so they are grouped together instead of cluttering the vault root. The response reports resolved and broken links; fix any broken ones with a follow-up update_note.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -257,4 +345,81 @@ fn to_text(value: &Value) -> String {
 
 fn io(e: std::io::Error) -> String {
     e.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn vault() -> PathBuf {
+        let p = std::env::temp_dir().join(format!("magma-mcp-{:?}", std::thread::current().id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        core::write_note(&p, "Blog/KI-Wissen/Post A.md", "# A").unwrap();
+        core::write_note(&p, "Blog/KI-Wissen/Tief/Post B.md", "# B").unwrap();
+        core::write_note(&p, "Blog/Uebersicht.md", "# U").unwrap();
+        core::write_note(&p, "Root.md", "# R").unwrap();
+        p
+    }
+
+    fn srv(v: PathBuf) -> Server {
+        Server { vault: v, allow_write: true }
+    }
+
+    #[test]
+    fn lists_nested_folders() {
+        let v = vault();
+        let out = srv(v.clone()).call_tool("list_folders", &json!({})).unwrap();
+        let folders: Vec<String> = serde_json::from_value(out["folders"].clone()).unwrap();
+        assert!(folders.contains(&"Blog".to_string()));
+        assert!(folders.contains(&"Blog/KI-Wissen".to_string()));
+        assert!(folders.contains(&"Blog/KI-Wissen/Tief".to_string()));
+        std::fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn lists_notes_of_a_folder_recursively_or_not() {
+        let v = vault();
+        let s = srv(v.clone());
+        let all = s.call_tool("list_notes", &json!({})).unwrap();
+        assert_eq!(all["notes"].as_array().unwrap().len(), 4);
+
+        let deep = s
+            .call_tool("list_notes", &json!({ "folder": "Blog/KI-Wissen" }))
+            .unwrap();
+        assert_eq!(deep["notes"].as_array().unwrap().len(), 2, "includes the subfolder");
+
+        let shallow = s
+            .call_tool(
+                "list_notes",
+                &json!({ "folder": "Blog/KI-Wissen", "recursive": false }),
+            )
+            .unwrap();
+        assert_eq!(shallow["notes"].as_array().unwrap().len(), 1, "that folder alone");
+        std::fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn moves_a_note_between_folders() {
+        let v = vault();
+        let out = srv(v.clone())
+            .call_tool("move_note", &json!({ "path": "Root.md", "folder": "Blog/KI-Wissen" }))
+            .unwrap();
+        assert_eq!(out["path"], "Blog/KI-Wissen/Root.md");
+        assert!(v.join("Blog/KI-Wissen/Root.md").exists());
+        std::fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn structure_tools_are_advertised() {
+        let names: Vec<String> = tools_spec()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect();
+        for expected in ["list_folders", "list_notes", "create_folder", "move_note"] {
+            assert!(names.contains(&expected.to_string()), "missing tool: {expected}");
+        }
+    }
 }

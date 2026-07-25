@@ -273,10 +273,26 @@ fn install_mcp(vault: String) -> Result<String, String> {
     if !servers.is_object() {
         *servers = json!({});
     }
-    servers
-        .as_object_mut()
-        .unwrap()
-        .insert("magma".to_string(), mcp_server_entry(&vault));
+    let servers = servers.as_object_mut().unwrap();
+
+    // Replace *any* previous Magma entry, not just one named "magma": an older
+    // install may sit under a different key or point at a stale executable or
+    // vault, and leaving it behind means Claude keeps talking to the old one.
+    let stale: Vec<String> = servers
+        .iter()
+        .filter(|(key, val)| {
+            if key.as_str() == "magma" {
+                return true;
+            }
+            let text = val.to_string().to_lowercase();
+            text.contains("--mcp") && text.contains("magma")
+        })
+        .map(|(key, _)| key.clone())
+        .collect();
+    for key in stale {
+        servers.remove(&key);
+    }
+    servers.insert("magma".to_string(), mcp_server_entry(&vault));
     let pretty = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
     std::fs::write(&path, pretty).map_err(|e| e.to_string())?;
     Ok(path.to_string_lossy().to_string())
