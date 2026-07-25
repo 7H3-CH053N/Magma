@@ -150,6 +150,20 @@ body {
   cursor: pointer;
   border-radius: 3px;
 }
+/* A link to a note that doesn't exist yet — click it to create that note.
+   Deliberately NOT the accent colour: the accent is user-chosen (and red by
+   default), so tying "missing" to a fixed red would look identical to a normal
+   link. Muted + dashed reads as "not there yet" whatever accent is set. */
+.magma-prose .wikilink-missing {
+  color: var(--magma-muted, #8a8178);
+  text-decoration: underline;
+  text-decoration-style: dashed;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+.magma-prose .wikilink-missing:hover {
+  color: var(--magma-ink, inherit);
+}
 .magma-prose .wikilink:hover {
   text-decoration: underline;
 }

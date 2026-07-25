@@ -10,17 +10,20 @@ const WIKI = /\[\[([^\]\n]+)\]\]/g;
 
 export interface WikiLinkOptions {
   onOpen: (name: string) => void;
+  /** Whether a note of that name exists — drives the "missing" styling. */
+  exists: (name: string) => boolean;
 }
 
 export const WikiLink = Extension.create<WikiLinkOptions>({
   name: "wikilink",
 
   addOptions() {
-    return { onOpen: () => {} };
+    return { onOpen: () => {}, exists: () => true };
   },
 
   addProseMirrorPlugins() {
     const onOpen = this.options.onOpen;
+    const exists = this.options.exists;
     return [
       new Plugin({
         key: new PluginKey("wikilink"),
@@ -35,9 +38,11 @@ export const WikiLink = Extension.create<WikiLinkOptions>({
                 const from = pos + m.index;
                 const to = from + m[0].length;
                 const name = m[1].split("|")[0].split(/[#^]/)[0].trim();
+                // A link to a note that doesn't exist yet is marked, so you can
+                // see at a glance what is still missing (and click to create it).
                 decos.push(
                   Decoration.inline(from, to, {
-                    class: "wikilink",
+                    class: exists(name) ? "wikilink" : "wikilink wikilink-missing",
                     "data-name": name,
                   })
                 );

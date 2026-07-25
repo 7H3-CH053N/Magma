@@ -124,6 +124,13 @@ export default function App() {
     [vault]
   );
 
+  const flushSave = useCallback(() => {
+    if (saveTimer.current) {
+      window.clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+  }, []);
+
   // Open a note by its `[[wikilink]]` name (filename stem).
   const openByName = useCallback(
     async (name: string) => {
@@ -133,17 +140,19 @@ export default function App() {
         return f.replace(/\.md$/i, "");
       };
       const found = notes.find((n) => stem(n.path).toLowerCase() === name.toLowerCase());
-      if (found) await selectNote(found.path);
+      if (found) {
+        await selectNote(found.path);
+        return;
+      }
+      // Wikipedia-style: a link to a note that doesn't exist yet creates it,
+      // named after the link, and opens it.
+      flushSave();
+      const path = await createNote(vault, name);
+      await refreshNotes(vault);
+      await selectNote(path);
     },
-    [vault, notes, selectNote]
+    [vault, notes, selectNote, flushSave, refreshNotes]
   );
-
-  const flushSave = useCallback(() => {
-    if (saveTimer.current) {
-      window.clearTimeout(saveTimer.current);
-      saveTimer.current = null;
-    }
-  }, []);
 
   const handleChange = useCallback(
     (next: string) => {
@@ -453,6 +462,7 @@ export default function App() {
                   onOpenExternal={(url) => {
                     void openExternal(url);
                   }}
+                  notes={notes}
                 />
               </div>
               <BacklinksPanel backlinks={links} onSelect={selectNote} />
