@@ -48,8 +48,10 @@ export default function Settings({
   onOpenVault,
 }: SettingsProps) {
   const [tab, setTab] = useState<Tab>("vault");
-  const { t, lang, setLang } = useI18n();
-  const { theme, setTheme, reset } = useTheme();
+  const { t, lang, setLang, saveLang, revertLang, langDirty } = useI18n();
+  const { theme, setTheme, save, revert, resetDefaults, dirty: themeDirty } = useTheme();
+  const dirty = themeDirty || langDirty;
+  const [savedNote, setSavedNote] = useState(false);
   const initial = savedRemote();
   const [url, setUrl] = useState(initial.url);
   const [username, setUsername] = useState(initial.username);
@@ -136,6 +138,31 @@ export default function Settings({
     }
   };
 
+  // Appearance and language preview live so you can judge them; this is the
+  // only thing that writes them down.
+  const saveAll = () => {
+    save();
+    saveLang();
+    setSavedNote(true);
+    window.setTimeout(() => setSavedNote(false), 1800);
+  };
+
+  // Closing must not leave a half-applied look behind: anything not saved is
+  // taken back, which is also what makes the save button mean something.
+  const close = () => {
+    revert();
+    revertLang();
+    onClose();
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   const connect = async () => {
     setErr(null);
     setBusy(true);
@@ -150,9 +177,9 @@ export default function Settings({
   };
 
   return (
-    <div className="fixed inset-0 z-40 grid place-items-center bg-black/40 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-40 grid place-items-center bg-black/40 p-4" onClick={close}>
       <div
-        className="flex h-[min(90vh,44rem)] w-full max-w-3xl overflow-hidden rounded-2xl bg-magma-bg shadow-xl dark:bg-[#201c19]"
+        className="flex h-[min(90vh,44rem)] w-full max-w-4xl overflow-hidden rounded-2xl bg-magma-bg shadow-xl dark:bg-[#201c19]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Navigation: settings grouped by what you came here to do. */}
@@ -181,29 +208,15 @@ export default function Settings({
           ))}
         </nav>
 
-        <div className="relative flex-1 overflow-auto p-6">
-          <button
-            onClick={onClose}
-            className="absolute right-4 top-4 grid h-7 w-7 place-items-center rounded-md text-magma-muted hover:bg-black/10 dark:hover:bg-white/10"
-            aria-label={t("settings.close")}
-          >
-            ✕
-          </button>
+        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex-1 overflow-auto p-6">
 
         {tab === "appearance" && (<>
         {/* Appearance */}
         <section className="mb-5">
-          <div className="mb-2 flex items-center justify-between">
-            <label className="block text-xs font-medium uppercase tracking-wide text-magma-muted">
-              {t("settings.appearance")}
-            </label>
-            <button
-              onClick={reset}
-              className="text-xs text-magma-muted underline-offset-2 hover:text-magma-accent hover:underline"
-            >
-              {t("settings.reset")}
-            </button>
-          </div>
+          <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-magma-muted">
+            {t("settings.appearance")}
+          </label>
 
           {/* Theme mode */}
           <div className="mb-3 inline-flex rounded-lg bg-black/[0.04] p-1 dark:bg-white/[0.06]">
@@ -279,7 +292,7 @@ export default function Settings({
             {(["en", "de"] as Lang[]).map((l) => (
               <button
                 key={l}
-                onClick={() => setLang(l)}
+                onClick={() => setLang(l, false)}
                 className={`rounded-md px-3 py-1 text-sm transition ${
                   lang === l
                     ? "bg-magma-bg text-magma-ink shadow-sm dark:bg-[#332d28] dark:text-[#ece9e4]"
@@ -497,6 +510,48 @@ export default function Settings({
           </div>
         </section>
         )}
+        </div>
+
+        {/* Everything that leaves this dialog lives down here, where it is hard
+            to miss — no small ✕ in a corner. Appearance and language preview
+            live, so "save" is what actually commits them. */}
+        <footer className="flex items-center gap-2 border-t border-black/5 px-6 py-3.5 dark:border-white/5">
+          <button
+            onClick={resetDefaults}
+            title={t("settings.resetHint")}
+            className="whitespace-nowrap rounded-lg border border-black/10 px-3 py-1.5 text-sm text-magma-muted transition hover:border-black/20 hover:text-magma-ink dark:border-white/15 dark:hover:border-white/30"
+          >
+            {t("settings.reset")}
+          </button>
+          {/* A dot rather than a sentence: the row is narrow, and "Discard"
+              already spells out that something is pending. */}
+          <span className="flex flex-1 items-center justify-end gap-1.5 px-1 text-xs text-magma-muted">
+            {savedNote ? (
+              t("settings.saved")
+            ) : dirty ? (
+              <>
+                <span
+                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-magma-accent"
+                  aria-hidden
+                />
+                <span className="truncate">{t("settings.unsaved")}</span>
+              </>
+            ) : null}
+          </span>
+          <button
+            onClick={close}
+            className="whitespace-nowrap rounded-lg px-4 py-1.5 text-sm text-magma-muted transition hover:bg-black/5 dark:hover:bg-white/10"
+          >
+            {dirty ? t("settings.discard") : t("settings.close")}
+          </button>
+          <button
+            onClick={saveAll}
+            disabled={!dirty}
+            className="whitespace-nowrap rounded-lg bg-magma-accent px-4 py-1.5 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {t("settings.save")}
+          </button>
+        </footer>
         </div>
       </div>
     </div>

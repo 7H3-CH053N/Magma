@@ -159,6 +159,46 @@ export async function search(vault: string, query: string): Promise<SearchHit[]>
   return invoke<SearchHit[]>("search", { vault, query });
 }
 
+export interface ReplaceHit {
+  path: string;
+  title: string;
+  count: number;
+}
+export interface ReplaceRename {
+  path: string;
+  from: string;
+  to: string;
+}
+export interface ReplaceReport {
+  hits: ReplaceHit[];
+  /** Notes renamed along with the text, so wikilinks keep resolving. */
+  renames: ReplaceRename[];
+  total: number;
+  applied: boolean;
+}
+
+/**
+ * Vault-wide find & replace. With `dryRun`, nothing is written.
+ * `renameNotes` also renames notes whose own name holds the term — otherwise a
+ * rewritten `[[wikilink]]` would point at a note that no longer exists.
+ */
+export async function replaceAll(
+  vault: string,
+  find: string,
+  replace: string,
+  dryRun: boolean,
+  renameNotes: boolean
+): Promise<ReplaceReport> {
+  if (!hasTauri) return { hits: [], renames: [], total: 0, applied: false };
+  return invoke<ReplaceReport>("replace_all", {
+    vault,
+    find,
+    replace,
+    dryRun,
+    renameNotes,
+  });
+}
+
 export interface RemoteConfig {
   url: string;
   username: string;
@@ -199,6 +239,18 @@ export interface McpInstall {
 /** One-click: write the Magma server into Claude Desktop's config. */
 export async function installMcp(vault: string): Promise<McpInstall> {
   return invoke<McpInstall>("install_mcp", { vault });
+}
+
+/** The vault that was open last time, if that folder still exists. */
+export async function lastVault(): Promise<string | null> {
+  if (!hasTauri) return null;
+  return invoke<string | null>("last_vault");
+}
+
+/** Remember the vault so the next start opens it straight away. */
+export async function setLastVault(vault: string): Promise<void> {
+  if (!hasTauri) return;
+  return invoke("set_last_vault", { vault });
 }
 
 /** Open an http(s) link in the system browser (never inside the app WebView). */

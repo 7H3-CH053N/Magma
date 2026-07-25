@@ -73,15 +73,28 @@ function apply(s: ThemeSettings, systemDark: boolean) {
 }
 
 interface ThemeCtx {
+  /** The settings currently on screen — a draft until `save()` is called. */
   theme: ThemeSettings;
+  /** Live preview: you see the change immediately, disk is not touched. */
   setTheme: (patch: Partial<ThemeSettings>) => void;
-  reset: () => void;
+  /** Write the draft to storage — this is what makes a change survive. */
+  save: () => void;
+  /** Throw the draft away and go back to what was last saved. */
+  revert: () => void;
+  /** Put the factory defaults into the draft (still needs `save()`). */
+  resetDefaults: () => void;
+  /** True while the draft differs from what is stored. */
+  dirty: boolean;
 }
 
 const Context = createContext<ThemeCtx | null>(null);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
+  // Two copies on purpose: what you are looking at, and what is on disk.
+  // Settings previews live, so without the second one there would be nothing
+  // to go back to when you close the dialog without saving.
   const [theme, setThemeState] = useState<ThemeSettings>(load);
+  const [saved, setSaved] = useState<ThemeSettings>(theme);
   const media = useMemo(() => window.matchMedia("(prefers-color-scheme: dark)"), []);
 
   // Apply on change and follow the OS when in "system" mode.
@@ -95,27 +108,32 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [theme, media]);
 
   const setTheme = useCallback((patch: Partial<ThemeSettings>) => {
-    setThemeState((prev) => {
-      const next = { ...prev, ...patch };
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      } catch {
-        /* ignore */
-      }
-      return next;
-    });
+    setThemeState((prev) => ({ ...prev, ...patch }));
   }, []);
 
-  const reset = useCallback(() => {
+  const save = useCallback(() => {
     try {
-      localStorage.removeItem(STORAGE_KEY);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(theme));
     } catch {
       /* ignore */
     }
-    setThemeState(DEFAULT_THEME);
-  }, []);
+    setSaved(theme);
+  }, [theme]);
 
-  return <Context.Provider value={{ theme, setTheme, reset }}>{children}</Context.Provider>;
+  const revert = useCallback(() => setThemeState(saved), [saved]);
+
+  const resetDefaults = useCallback(() => setThemeState(DEFAULT_THEME), []);
+
+  const dirty = useMemo(
+    () => JSON.stringify(theme) !== JSON.stringify(saved),
+    [theme, saved]
+  );
+
+  return (
+    <Context.Provider value={{ theme, setTheme, save, revert, resetDefaults, dirty }}>
+      {children}
+    </Context.Provider>
+  );
 }
 
 export function useTheme(): ThemeCtx {

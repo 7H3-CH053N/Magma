@@ -9,6 +9,7 @@ import FlameIcon from "./components/FlameIcon";
 import PromptDialog from "./components/PromptDialog";
 import ConfirmDialog from "./components/ConfirmDialog";
 import NodePreview from "./components/NodePreview";
+import ReplaceDialog from "./components/ReplaceDialog";
 import { useI18n } from "./lib/i18n";
 import { splitFrontmatter, joinFrontmatter } from "./lib/markdown";
 import {
@@ -19,6 +20,7 @@ import {
   deleteFolder,
   deleteNote,
   hasTauri,
+  lastVault,
   listFolders,
   listNotes,
   moveNote,
@@ -30,10 +32,12 @@ import {
   remotePut,
   renameNote,
   search as searchNotes,
+  setLastVault,
   writeNote,
   type Graph,
   type NoteMeta,
   type RemoteConfig,
+  type ReplaceReport,
   type SearchHit,
 } from "./lib/api";
 
@@ -53,6 +57,7 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [showSettings, setShowSettings] = useState(false);
+  const [showReplace, setShowReplace] = useState(false);
   // Graph node being previewed (path + title); null closes the panel.
   const [preview, setPreview] = useState<{ path: string; title: string } | null>(null);
   const [remote, setRemote] = useState<RemoteConfig | null>(null);
@@ -110,7 +115,20 @@ export default function App() {
     if (picked) {
       setVault(picked);
       await refreshNotes(picked);
+      // Remembered on the Rust side, so the next start opens it straight away.
+      void setLastVault(picked).catch(() => {});
     }
+  }, [refreshNotes]);
+
+  // Reopen the vault from the last session on start.
+  useEffect(() => {
+    void (async () => {
+      const last = await lastVault().catch(() => null);
+      if (last) {
+        setVault(last);
+        await refreshNotes(last);
+      }
+    })();
   }, [refreshNotes]);
 
   const selectNote = useCallback(
@@ -133,6 +151,38 @@ export default function App() {
       saveTimer.current = null;
     }
   }, []);
+
+  // After a vault-wide replace: everything on disk changed underneath us.
+  const handleReplaced = useCallback(
+    async (report: ReplaceReport) => {
+      if (!vault) return;
+      // A queued autosave still holds the pre-replace text — letting it fire
+      // would write the old wording straight back into the open note.
+      flushSave();
+      const fresh = await listNotes(vault);
+      setNotes(fresh);
+      try {
+        setFolders(await listFolders(vault));
+      } catch {
+        setFolders([]);
+      }
+      setQuery("");
+      if (!activePath) return;
+      // The open note may have been renamed along with the text, in which case
+      // its path is gone; find it again under its new name.
+      if (fresh.some((n) => n.path === activePath)) {
+        await selectNote(activePath);
+        return;
+      }
+      const renamed = report.renames.find((r) => r.path === activePath);
+      const stem = (p: string) => (p.split("/").pop() ?? p).replace(/\.md$/i, "");
+      const moved =
+        renamed && fresh.find((n) => stem(n.path).toLowerCase() === renamed.to.toLowerCase());
+      if (moved) await selectNote(moved.path);
+      else setActivePath(null);
+    },
+    [vault, activePath, flushSave, selectNote]
+  );
 
   // Open a note by its `[[wikilink]]` name (filename stem).
   const openByName = useCallback(
@@ -321,6 +371,7 @@ export default function App() {
     setRemote(cfg);
     setVault(cacheDir);
     setNotes(await listNotes(cacheDir));
+    void setLastVault(cacheDir).catch(() => {});
     setActivePath(null);
     setContent("");
     setLinks([]);
@@ -432,6 +483,14 @@ export default function App() {
           onOpenVault={openVault}
         />
       )}
+      {showReplace && vault && (
+        <ReplaceDialog
+          vault={vault}
+          initialFind={query}
+          onClose={() => setShowReplace(false)}
+          onApplied={handleReplaced}
+        />
+      )}
       <Sidebar
         vault={vault}
         notes={notes}
@@ -449,6 +508,7 @@ export default function App() {
         query={query}
         onQuery={setQuery}
         searchHits={hits}
+        onReplace={() => setShowReplace(true)}
         onOpenSettings={() => setShowSettings(true)}
       />
 

@@ -141,6 +141,22 @@ fn search(vault: String, query: String) -> Result<Vec<vault::SearchHit>, String>
         .map_err(|e| e.to_string())
 }
 
+/// Vault-wide find & replace. `dryRun` reports what would change without
+/// writing, so a bulk rewrite is never fired blind. With `renameNotes`, notes
+/// whose own name carries the term are renamed too, so `[[wikilinks]]` and the
+/// notes they point at stay in sync.
+#[tauri::command]
+fn replace_all(
+    vault: String,
+    find: String,
+    replace: String,
+    dry_run: bool,
+    rename_notes: bool,
+) -> Result<vault::ReplaceReport, String> {
+    vault::replace_in_vault(&PathBuf::from(vault), &find, &replace, dry_run, rename_notes)
+        .map_err(|e| e.to_string())
+}
+
 // --- Optional remote (WebDAV) vault ---------------------------------------
 //
 // A remote vault is synced into a local cache directory, which the rest of the
@@ -219,6 +235,57 @@ fn djb2(s: &str) -> u64 {
 // MCP from its own executable when launched as `magma --mcp <vault>` (see the
 // early return in `run`). The one-click installer writes that command straight
 // into Claude Desktop's config, so connecting Claude is a single button.
+
+// --- Remembering the vault across restarts --------------------------------
+//
+// Deliberately a file next to Magma's own settings rather than the WebView's
+// localStorage: clearing the app's web data (or a WebView reset on update)
+// would otherwise dump you back on the "open a vault" screen with no idea
+// which folder it was.
+
+/// Magma's own config file: `<config dir>/Magma/settings.json`.
+fn app_settings_path() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    let base = std::env::var_os("HOME")
+        .map(|h| PathBuf::from(h).join("Library/Application Support"))?;
+    #[cfg(target_os = "windows")]
+    let base = std::env::var_os("APPDATA").map(PathBuf::from)?;
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
+    Some(base.join("Magma/settings.json"))
+}
+
+fn read_app_settings() -> serde_json::Value {
+    app_settings_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .filter(|v| v.is_object())
+        .unwrap_or_else(|| json!({}))
+}
+
+/// The vault that was open last time — `None` on a first run, and also when
+/// the folder has since been moved or deleted (never hand back a dead path).
+#[tauri::command]
+fn last_vault() -> Option<String> {
+    let v = read_app_settings();
+    let path = v.get("vault")?.as_str()?.to_string();
+    PathBuf::from(&path).is_dir().then_some(path)
+}
+
+/// Remember the vault for the next start.
+#[tauri::command]
+fn set_last_vault(vault: String) -> Result<(), String> {
+    let path = app_settings_path().ok_or("could not locate the settings folder")?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let mut root = read_app_settings();
+    root.as_object_mut().unwrap().insert("vault".into(), json!(vault));
+    std::fs::write(&path, serde_json::to_string_pretty(&root).unwrap_or_default())
+        .map_err(|e| e.to_string())
+}
 
 /// The recommended MCP client entry: run *this* executable with `--mcp <vault>`.
 fn mcp_server_entry(vault: &str) -> serde_json::Value {
@@ -386,11 +453,14 @@ pub fn run() {
             build_graph,
             backlinks,
             search,
+            replace_all,
             remote_connect,
             remote_put,
             remote_delete,
             mcp_config,
             install_mcp,
+            last_vault,
+            set_last_vault,
             open_external
         ])
         .run(tauri::generate_context!())

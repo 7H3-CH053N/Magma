@@ -92,3 +92,12 @@ export function SearchIcon({ size = 16, className }: IconProps) {
     </svg>
   );
 }
+
+/** Find & replace: two arrows swapping, the common shorthand for "replace". */
+export function ReplaceIcon({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size, className)}>
+      <path d="M4 7h11l-3-3M20 17H9l3 3" />
+    </svg>
+  );
+}

@@ -21,6 +21,21 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "sidebar.newFolder": "New folder",
     "sidebar.newFolderPrompt": "New folder name",
     "sidebar.movePrompt": "Move to folder (leave empty for root)",
+    "sidebar.replace": "Find & replace",
+    "replace.title": "Find & replace",
+    "replace.find": "Find",
+    "replace.with": "Replace with",
+    "replace.renameNotes": "Rename matching notes too",
+    "replace.renameNotesHint":
+      "Wikilinks point at a note's name. Without this, links are rewritten but their target note keeps the old name — and the links break.",
+    "replace.typeToPreview": "Type something to search for; you'll see what changes before anything is written.",
+    "replace.noMatches": "Nothing in this vault matches.",
+    "replace.summary": "{total} occurrences in {notes} notes",
+    "replace.renameBadge": "Rename",
+    "replace.cancel": "Cancel",
+    "replace.apply": "Replace in {notes} notes",
+    "replace.applying": "Replacing…",
+    "replace.done": "{total} occurrences replaced in {notes} notes.",
     "view.editor": "Editor",
     "view.graph": "Graph",
     "graph.empty": "No notes to graph yet.",
@@ -73,6 +88,12 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "settings.fontSize": "Font size",
     "settings.readingWidth": "Reading width",
     "settings.reset": "Reset to defaults",
+    "settings.resetHint":
+      "Puts appearance and language back to Magma's defaults — save to keep it.",
+    "settings.save": "Save",
+    "settings.saved": "Saved.",
+    "settings.unsaved": "Unsaved",
+    "settings.discard": "Discard",
     "settings.language": "Language",
     "settings.about": "About",
     "settings.version": "Version {version} · Build {build}",
@@ -133,6 +154,21 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "sidebar.newFolder": "Neuer Ordner",
     "sidebar.newFolderPrompt": "Name des neuen Ordners",
     "sidebar.movePrompt": "In Ordner verschieben (leer = Wurzel)",
+    "sidebar.replace": "Suchen & ersetzen",
+    "replace.title": "Suchen & ersetzen",
+    "replace.find": "Suchen nach",
+    "replace.with": "Ersetzen durch",
+    "replace.renameNotes": "Passende Notizen mit umbenennen",
+    "replace.renameNotesHint":
+      "Wikilinks zeigen auf den Namen einer Notiz. Ohne das werden die Links umgeschrieben, die Zielnotiz behält aber ihren alten Namen — und die Links gehen ins Leere.",
+    "replace.typeToPreview": "Suchbegriff eingeben — du siehst vorher, was sich ändert.",
+    "replace.noMatches": "Nichts in diesem Vault passt dazu.",
+    "replace.summary": "{total} Vorkommen in {notes} Notizen",
+    "replace.renameBadge": "Umbenennen",
+    "replace.cancel": "Abbrechen",
+    "replace.apply": "In {notes} Notizen ersetzen",
+    "replace.applying": "Ersetze…",
+    "replace.done": "{total} Vorkommen in {notes} Notizen ersetzt.",
     "view.editor": "Editor",
     "view.graph": "Graph",
     "graph.empty": "Noch keine Notizen für den Graphen.",
@@ -185,6 +221,12 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "settings.fontSize": "Schriftgröße",
     "settings.readingWidth": "Lesebreite",
     "settings.reset": "Auf Standard zurücksetzen",
+    "settings.resetHint":
+      "Setzt Aussehen und Sprache auf Magmas Standard zurück — mit Speichern übernehmen.",
+    "settings.save": "Speichern",
+    "settings.saved": "Gespeichert.",
+    "settings.unsaved": "Nicht gespeichert",
+    "settings.discard": "Verwerfen",
     "settings.language": "Sprache",
     "settings.about": "Über",
     "settings.version": "Version {version} · Build {build}",
@@ -232,7 +274,14 @@ const STRINGS: Record<Lang, Record<string, string>> = {
 
 interface I18n {
   lang: Lang;
-  setLang: (l: Lang) => void;
+  /** Switch the language. `persist: false` previews it without storing it. */
+  setLang: (l: Lang, persist?: boolean) => void;
+  /** Store the language currently shown (used by Settings' save button). */
+  saveLang: () => void;
+  /** Go back to the stored language, dropping an unsaved preview. */
+  revertLang: () => void;
+  /** True while the shown language differs from the stored one. */
+  langDirty: boolean;
   t: (key: string, vars?: Record<string, string>) => string;
 }
 
@@ -248,15 +297,25 @@ function detectLang(): Lang {
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(detectLang);
+  // What is actually stored, so an unsaved preview can be taken back.
+  const [savedLang, setSavedLang] = useState<Lang>(lang);
 
-  const setLang = useCallback((l: Lang) => {
-    setLangState(l);
+  const store = (l: Lang) => {
     try {
       localStorage.setItem(STORAGE_KEY, l);
     } catch {
       /* ignore storage errors */
     }
+    setSavedLang(l);
+  };
+
+  const setLang = useCallback((l: Lang, persist = true) => {
+    setLangState(l);
+    if (persist) store(l);
   }, []);
+
+  const saveLang = useCallback(() => store(lang), [lang]);
+  const revertLang = useCallback(() => setLangState(savedLang), [savedLang]);
 
   useEffect(() => {
     document.documentElement.lang = lang;
@@ -273,7 +332,13 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     [lang]
   );
 
-  return <I18nContext.Provider value={{ lang, setLang, t }}>{children}</I18nContext.Provider>;
+  return (
+    <I18nContext.Provider
+      value={{ lang, setLang, saveLang, revertLang, langDirty: lang !== savedLang, t }}
+    >
+      {children}
+    </I18nContext.Provider>
+  );
 }
 
 export function useI18n(): I18n {

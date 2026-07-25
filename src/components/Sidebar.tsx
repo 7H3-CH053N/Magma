@@ -8,6 +8,7 @@ import {
   NewFolderIcon,
   PencilIcon,
   PlusIcon,
+  ReplaceIcon,
   SearchIcon,
   SettingsIcon,
   TrashIcon,
@@ -34,6 +35,7 @@ interface SidebarProps {
   query: string;
   onQuery: (q: string) => void;
   searchHits: SearchHit[];
+  onReplace: () => void;
   onOpenSettings: () => void;
 }
 
@@ -54,6 +56,7 @@ export default function Sidebar({
   query,
   onQuery,
   searchHits,
+  onReplace,
   onOpenSettings,
 }: SidebarProps) {
   const { t } = useI18n();
@@ -286,8 +289,18 @@ export default function Sidebar({
             value={query}
             onChange={(e) => onQuery(e.target.value)}
             placeholder={t("sidebar.search")}
-            className="w-full rounded-lg border border-black/10 bg-transparent py-1.5 pl-8 pr-3 text-sm outline-none placeholder:text-magma-muted focus:border-magma-accent dark:border-white/10"
+            className="w-full rounded-lg border border-black/10 bg-transparent py-1.5 pl-8 pr-9 text-sm outline-none placeholder:text-magma-muted focus:border-magma-accent dark:border-white/10"
           />
+          {/* Sits in the search field: replacing is what you reach for once
+              searching has shown you how often the term actually occurs. */}
+          <button
+            onClick={onReplace}
+            title={t("sidebar.replace")}
+            aria-label={t("sidebar.replace")}
+            className="absolute right-1.5 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-md text-magma-muted transition hover:bg-black/10 hover:text-magma-ink dark:hover:bg-white/10"
+          >
+            <ReplaceIcon size={14} />
+          </button>
         </div>
       )}
 

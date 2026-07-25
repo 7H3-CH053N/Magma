@@ -437,6 +437,80 @@ mod tests {
     }
 
     #[test]
+    fn replace_previews_before_it_writes() {
+        let v = tmp_vault();
+        vault::write_note(&v, "A.md", "Von [[Profil Alex Januschewsky]] und Profil Alex Januschewsky.").unwrap();
+        vault::write_note(&v, "B.md", "Nur Profil Alex Januschewsky hier.").unwrap();
+        vault::write_note(&v, "C.md", "Nichts davon.").unwrap();
+
+        let preview =
+            replace_in_vault(&v, "Profil Alex Januschewsky", "Alex Januschewsky", true, false)
+                .unwrap();
+        assert_eq!(preview.total, 3);
+        assert_eq!(preview.hits.len(), 2, "C.md is untouched");
+        assert!(!preview.applied);
+        assert!(
+            std::fs::read_to_string(v.join("A.md")).unwrap().contains("Profil Alex"),
+            "a preview must not write"
+        );
+
+        let done =
+            replace_in_vault(&v, "Profil Alex Januschewsky", "Alex Januschewsky", false, false)
+                .unwrap();
+        assert_eq!(done.total, 3);
+        assert!(done.applied);
+        let a = std::fs::read_to_string(v.join("A.md")).unwrap();
+        assert!(!a.contains("Profil"), "got: {a}");
+        assert!(a.contains("[[Alex Januschewsky]]"), "links rewritten too: {a}");
+        assert_eq!(std::fs::read_to_string(v.join("C.md")).unwrap(), "Nichts davon.");
+        fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn replace_moves_wikilink_targets_with_the_text() {
+        let v = tmp_vault();
+        // The note the links point at carries the term in its *filename* —
+        // rewriting only the text would aim every link at nothing.
+        vault::write_note(
+            &v,
+            "Profil Alex Januschewsky.md",
+            "# Profil Alex Januschewsky\n\nÜber mich.",
+        )
+        .unwrap();
+        vault::write_note(
+            &v,
+            "Blog.md",
+            "Von [[Profil Alex Januschewsky]], siehe auch [[Profil Alex Januschewsky|den Autor]].",
+        )
+        .unwrap();
+
+        let preview =
+            replace_in_vault(&v, "Profil Alex Januschewsky", "Alex Januschewsky", true, true)
+                .unwrap();
+        assert_eq!(preview.renames.len(), 1);
+        assert_eq!(preview.renames[0].to, "Alex Januschewsky");
+        assert!(v.join("Profil Alex Januschewsky.md").exists(), "preview writes nothing");
+
+        replace_in_vault(&v, "Profil Alex Januschewsky", "Alex Januschewsky", false, true).unwrap();
+
+        assert!(!v.join("Profil Alex Januschewsky.md").exists(), "note renamed");
+        let target = std::fs::read_to_string(v.join("Alex Januschewsky.md")).unwrap();
+        assert_eq!(target, "# Alex Januschewsky\n\nÜber mich.", "heading rewritten too");
+
+        let blog = std::fs::read_to_string(v.join("Blog.md")).unwrap();
+        assert!(blog.contains("[[Alex Januschewsky]]"), "got: {blog}");
+        assert!(blog.contains("[[Alex Januschewsky|den Autor]]"), "alias kept: {blog}");
+        // The whole point: every link still resolves to a note that exists.
+        for link in extract_links(&blog) {
+            assert!(
+                v.join(format!("{link}.md")).exists(),
+                "link [[{link}]] points at nothing"
+            );
+        }
+        fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
     fn search_matches_title_and_body() {
         let v = tmp_vault();
         vault::write_note(&v, "Recipes.md", "# Recipes\n\nhow to bake sourdough bread").unwrap();
@@ -447,4 +521,115 @@ mod tests {
         assert!(hits[0].snippet.to_lowercase().contains("sourdough"));
         fs::remove_dir_all(&v).ok();
     }
+}
+
+/// One note affected by a replace, and how many occurrences it holds.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplaceHit {
+    pub path: String,
+    pub title: String,
+    pub count: usize,
+}
+
+/// A note whose own name carries the search term, so the note itself is
+/// renamed instead of being left behind as the dead target of rewritten links.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplaceRename {
+    pub path: String,
+    pub from: String,
+    pub to: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplaceReport {
+    pub hits: Vec<ReplaceHit>,
+    /// Notes that get renamed along with the text (empty when off).
+    pub renames: Vec<ReplaceRename>,
+    pub total: usize,
+    /// False when this was only a preview and nothing was written.
+    pub applied: bool,
+}
+
+/// Replace `find` with `replace` across every note in the vault.
+///
+/// `dry_run` reports what *would* change without touching anything — a bulk
+/// rewrite over hundreds of notes is not something to fire blind. Matching is
+/// exact and case-sensitive, so replacing "Profil Alex" cannot also hit
+/// "profil alex" in a URL by accident.
+///
+/// Wikilinks resolve on the *filename*, so a plain text pass would rewrite
+/// `[[Profil Alex]]` to `[[Alex]]` and leave every one of them pointing at a
+/// note that does not exist. With `rename_notes`, a note whose own name holds
+/// the term is renamed first (repointing all links to it), and only then does
+/// the text pass run — links and their targets move together.
+pub fn replace_in_vault(
+    vault: &Path,
+    find: &str,
+    replace: &str,
+    dry_run: bool,
+    rename_notes: bool,
+) -> std::io::Result<ReplaceReport> {
+    if find.is_empty() {
+        return Ok(ReplaceReport {
+            hits: Vec::new(),
+            renames: Vec::new(),
+            total: 0,
+            applied: false,
+        });
+    }
+
+    // Scan first, so the preview and the applied run report the same thing:
+    // renaming rewrites links, which would otherwise change the text counts
+    // underneath us.
+    let mut hits = Vec::new();
+    let mut renames = Vec::new();
+    let mut total = 0;
+    for note in vault::list_notes(vault)? {
+        if rename_notes {
+            let name = note_name(&note.path);
+            if name.contains(find) {
+                let renamed = name.replace(find, replace);
+                if !renamed.trim().is_empty() {
+                    renames.push(ReplaceRename {
+                        path: note.path.clone(),
+                        from: name.to_string(),
+                        to: renamed,
+                    });
+                }
+            }
+        }
+        let content = match std::fs::read_to_string(vault.join(&note.path)) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let count = content.matches(find).count();
+        if count == 0 {
+            continue;
+        }
+        total += count;
+        hits.push(ReplaceHit { path: note.path.clone(), title: note.title.clone(), count });
+    }
+
+    if dry_run {
+        return Ok(ReplaceReport { hits, renames, total, applied: false });
+    }
+
+    for rename in &renames {
+        rename_note_updating_links(vault, &rename.path, &rename.to)?;
+    }
+    // Re-list: the renames moved files, so the paths from the scan are stale.
+    for note in vault::list_notes(vault)? {
+        let path = vault.join(&note.path);
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        if content.contains(find) {
+            std::fs::write(&path, content.replace(find, replace))?;
+        }
+    }
+    Ok(ReplaceReport { hits, renames, total, applied: true })
 }
