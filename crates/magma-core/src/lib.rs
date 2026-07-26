@@ -26,6 +26,6 @@ pub use links::{
 pub use related::{related_notes, RelatedNote};
 pub use vault::{
     append_note, create_folder, create_note, create_note_in, delete_folder, delete_note, list_folders,
-    list_notes, move_note, open_or_create, read_note, rename_note, safe_join, save_asset, slugify, write_note,
+    list_notes, move_folder, move_note, open_or_create, read_note, rename_note, safe_join, save_asset, slugify, write_note,
     Note, NoteMeta,
 };

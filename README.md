@@ -134,7 +134,10 @@ links (aliases and anchors included), and only then rewrites the text.
 
 Everything visual is adjustable in **Settings → Appearance**: light/dark/system
 mode, accent and AI-note colors, interface and editor fonts, font size, and
-reading width. Changes apply live and persist. Fonts use only what's already on
+reading width. Changes apply live and are written when you save. The native
+menu bar follows the language you pick, too — only the entries macOS injects
+itself (Writing Tools, AutoFill, Dictation, Emoji & Symbols) stay in the system
+language, because they belong to macOS rather than to Magma. Changes persist. Fonts use only what's already on
 your system, so nothing is downloaded.
 
 ## Remote vault (optional)

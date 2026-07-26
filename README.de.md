@@ -130,7 +130,11 @@ und schreibt erst danach den Text.
 
 Alles Visuelle ist unter **Einstellungen → Darstellung** anpassbar: Hell-/Dunkel-/
 System-Modus, Akzent- und KI-Notiz-Farben, Oberflächen- und Editor-Schrift,
-Schriftgröße und Lesebreite. Änderungen wirken sofort und bleiben erhalten.
+Schriftgröße und Lesebreite. Änderungen wirken sofort in der Vorschau und
+werden beim Speichern übernommen. Auch die native Menüleiste folgt der
+gewählten Sprache — nur die Einträge, die macOS selbst einhängt (Writing Tools,
+AutoFill, Diktat, Emoji & Symbole), bleiben in der Systemsprache, weil sie zu
+macOS gehören und nicht zu Magma.
 Schriften nutzen nur, was bereits auf deinem System vorhanden ist – nichts wird
 heruntergeladen.
 

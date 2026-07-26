@@ -74,6 +74,15 @@ export async function deleteFolder(vault: string, folder: string): Promise<void>
   return invoke("delete_folder", { vault, folder });
 }
 
+/** Move a folder (and everything in it) into another folder ("" = root). */
+export async function moveFolder(
+  vault: string,
+  folder: string,
+  into: string
+): Promise<string> {
+  return invoke<string>("move_folder", { vault, folder, into });
+}
+
 export async function listFolders(vault: string): Promise<string[]> {
   if (!hasTauri) return [];
   return invoke<string[]>("list_folders", { vault });
@@ -146,9 +155,10 @@ export interface SearchHit {
   snippet: string;
 }
 
-export async function buildGraph(vault: string): Promise<Graph> {
+/** Build the link graph. `exclude` drops whole folders (templates, scaffolding). */
+export async function buildGraph(vault: string, exclude: string[] = []): Promise<Graph> {
   if (!hasTauri) return { nodes: [], edges: [] };
-  return invoke<Graph>("build_graph", { vault });
+  return invoke<Graph>("build_graph", { vault, exclude });
 }
 
 export async function backlinks(vault: string, path: string): Promise<NoteMeta[]> {
@@ -379,6 +389,12 @@ export async function openExternal(url: string): Promise<void> {
     return;
   }
   return invoke("open_external", { url });
+}
+
+/** Store the interface language and relabel the native menu bar to match. */
+export async function setLanguage(lang: string): Promise<void> {
+  if (!hasTauri) return;
+  return invoke("set_language", { lang });
 }
 
 export { hasTauri };

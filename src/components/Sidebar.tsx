@@ -27,7 +27,10 @@ interface SidebarProps {
   onOpenVault: () => void;
   onSelect: (path: string) => void;
   onCreate: () => void;
-  onCreateFolder: () => void;
+  /** Create a folder; the argument is the parent ("" = vault root). */
+  onCreateFolder: (parent: string) => void;
+  /** Move a folder (with everything in it) into another ("" = root). */
+  onMoveFolder: (folder: string, into: string) => void;
   onRename: (path: string, currentTitle: string) => void;
   onDelete: (path: string, title: string) => void;
   onMove: (path: string) => void;
@@ -53,6 +56,7 @@ export default function Sidebar({
   onSelect,
   onCreate,
   onCreateFolder,
+  onMoveFolder,
   onRename,
   onDelete,
   onMove,
@@ -112,16 +116,26 @@ export default function Sidebar({
       return next;
     });
 
-  // Drag-and-drop: a note carries its path; folder headers and the root are drops.
+  // Drag-and-drop. Notes and folders both drop onto folder headers and onto the
+  // root, so the payload says which it is: "note:<path>" or "folder:<path>".
   const onDropInto = (folder: string) => (e: DragEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     setDropTarget(null);
-    const path = e.dataTransfer.getData("text/plain");
-    if (path) onMoveTo(path, folder);
+    const payload = e.dataTransfer.getData("text/plain");
+    if (payload.startsWith("folder:")) {
+      const from = payload.slice(7);
+      // Into itself or into its own subtree is not a move, it's a paradox.
+      if (from && folder !== from && !folder.startsWith(`${from}/`)) {
+        onMoveFolder(from, folder);
+      }
+    } else if (payload.startsWith("note:")) {
+      onMoveTo(payload.slice(5), folder);
+    }
   };
   const dragProps = (n: NoteMeta) => ({
     draggable: true,
-    onDragStart: (e: DragEvent) => e.dataTransfer.setData("text/plain", n.path),
+    onDragStart: (e: DragEvent) => e.dataTransfer.setData("text/plain", `note:${n.path}`),
   });
 
   // Real hierarchy: "Blog/KI-Wissen" becomes KI-Wissen *inside* Blog, not a
@@ -138,8 +152,16 @@ export default function Sidebar({
     return (
       <div key={node.path}>
         <div
+          // Folders are draggable too — that is how one becomes a subfolder of
+          // another without a dialog.
+          draggable
+          onDragStart={(e) => {
+            e.stopPropagation();
+            e.dataTransfer.setData("text/plain", `folder:${node.path}`);
+          }}
           onDragOver={(e) => {
             e.preventDefault();
+            e.stopPropagation();
             setDropTarget(node.path);
           }}
           onDragLeave={() => setDropTarget((d) => (d === node.path ? null : d))}
@@ -158,6 +180,14 @@ export default function Sidebar({
             <span className="ml-auto pl-1 text-xs tabular-nums opacity-50">
               {node.total || ""}
             </span>
+          </button>
+          <button
+            onClick={() => onCreateFolder(node.path)}
+            title={t("sidebar.newSubfolder")}
+            aria-label={`${t("sidebar.newSubfolder")}: ${node.name}`}
+            className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-magma-muted opacity-0 transition hover:bg-black/10 hover:text-magma-ink group-hover:opacity-100 dark:hover:bg-white/20"
+          >
+            <NewFolderIcon size={14} />
           </button>
           <button
             onClick={() => onDeleteFolder(node.path)}
@@ -252,7 +282,7 @@ export default function Sidebar({
           {vault && (
             <>
               <button
-                onClick={onCreateFolder}
+                onClick={() => onCreateFolder("")}
                 title={t("sidebar.newFolder")}
                 className="grid h-7 w-7 place-items-center rounded-md text-magma-muted transition hover:bg-black/10 hover:text-magma-text dark:hover:bg-white/10"
               >

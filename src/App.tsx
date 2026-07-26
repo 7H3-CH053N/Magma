@@ -31,6 +31,7 @@ import {
   lastVault,
   listFolders,
   listNotes,
+  moveFolder,
   moveNote,
   openExternal,
   openOrCreate,
@@ -41,6 +42,7 @@ import {
   remotePut,
   renameNote,
   search as searchNotes,
+  setLanguage,
   setLastVault,
   writeNote,
   type Graph,
@@ -54,7 +56,7 @@ const AUTOSAVE_MS = 600;
 type View = "editor" | "graph" | "ai";
 
 export default function App() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const { prefs } = usePrefs();
   const [vault, setVault] = useState<string | null>(null);
   const [notes, setNotes] = useState<NoteMeta[]>([]);
@@ -87,6 +89,8 @@ export default function App() {
   const [confirm, setConfirm] = useState<{
     title: string;
     detail?: string;
+    /** An error or notice: one button, nothing destructive about it. */
+    notice?: boolean;
     onConfirm: () => void;
   } | null>(null);
   // The active note's frontmatter, kept out of the editor and re-attached on save.
@@ -395,18 +399,50 @@ export default function App() {
     [vault, notes, activePath, flushSave, refreshNotes, deleteRemote, t]
   );
 
-  const handleCreateFolder = useCallback(() => {
-    if (!vault) return;
-    setDialog({
-      title: t("sidebar.newFolderPrompt"),
-      initial: "",
-      onSubmit: async (name) => {
-        if (!name.trim()) return;
-        await createFolder(vault, name.trim());
+  /** New folder; `parent` is "" for the vault root, or a folder to nest under. */
+  const handleCreateFolder = useCallback(
+    (parent = "") => {
+      if (!vault) return;
+      setDialog({
+        title: parent
+          ? t("sidebar.newSubfolderPrompt", { parent })
+          : t("sidebar.newFolderPrompt"),
+        initial: "",
+        onSubmit: async (name) => {
+          if (!name.trim()) return;
+          const full = parent ? `${parent}/${name.trim()}` : name.trim();
+          await createFolder(vault, full);
+          await refreshNotes(vault);
+        },
+      });
+    },
+    [vault, refreshNotes, t]
+  );
+
+  /** Move a folder (with everything in it) into another; "" is the vault root. */
+  const moveFolderTo = useCallback(
+    async (folder: string, into: string) => {
+      if (!vault) return;
+      flushSave();
+      try {
+        const moved = await moveFolder(vault, folder, into);
         await refreshNotes(vault);
-      },
-    });
-  }, [vault, refreshNotes, t]);
+        // The open note may have travelled with the folder.
+        if (activePath?.startsWith(`${folder}/`)) {
+          setActivePath(`${moved}${activePath.slice(folder.length)}`);
+        }
+      } catch (e) {
+        // The Rust side refuses a move into itself or onto an existing name.
+        setConfirm({
+          title: t("sidebar.moveFolderFailed"),
+          detail: String(e),
+          notice: true,
+          onConfirm: () => {},
+        });
+      }
+    },
+    [vault, activePath, flushSave, refreshNotes, t]
+  );
 
   // Move a note into a folder ("" = root). Used by both the dialog and drag-drop.
   const moveTo = useCallback(
@@ -443,17 +479,24 @@ export default function App() {
   // reflected immediately, not only after leaving and re-entering the view.
   // Only the set of paths matters here: editing a note's text must not restart
   // the layout, but moving one (which changes its folder colour) must.
+  // Templates are scaffolding, not knowledge: their placeholder links would
+  // put a node in the graph for every "{{title}}" and connect nothing.
+  const graphExclude = useMemo(
+    () => [prefs.templateFolder.trim()].filter(Boolean),
+    [prefs.templateFolder]
+  );
+
   const notePathsKey = notes.map((n) => n.path).join("|");
   useEffect(() => {
     if (view !== "graph" || !vault) return;
-    void buildGraph(vault).then(setGraph);
-  }, [notePathsKey, view, vault]);
+    void buildGraph(vault, graphExclude).then(setGraph);
+  }, [notePathsKey, view, vault, graphExclude]);
 
   const showGraph = useCallback(async () => {
     if (!vault) return;
-    setGraph(await buildGraph(vault));
+    setGraph(await buildGraph(vault, graphExclude));
     setView("graph");
-  }, [vault]);
+  }, [vault, graphExclude]);
 
   // Connect a remote WebDAV vault: sync it into a local cache and open that.
   const connectRemote = useCallback(async (cfg: RemoteConfig) => {
@@ -521,7 +564,7 @@ export default function App() {
       { id: "ai", label: t("cmd.aiReview"), run: () => setView("ai") },
       { id: "replace", label: t("cmd.replace"), run: () => setShowReplace(true) },
       { id: "settings", label: t("cmd.settings"), run: () => setShowSettings(true) },
-      { id: "folder", label: t("cmd.newFolder"), run: handleCreateFolder },
+      { id: "folder", label: t("cmd.newFolder"), run: () => handleCreateFolder("") },
       { id: "openVault", label: t("cmd.openVault"), run: () => void openVault() },
     ];
     if (activePath) {
@@ -593,6 +636,12 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [createNewNote]);
 
+  // Keep the native menu bar in the language the app is showing. Runs on start
+  // too, so a fresh install matches before anything is saved in Settings.
+  useEffect(() => {
+    void setLanguage(lang).catch(() => {});
+  }, [lang]);
+
   // Suppress the webview's own context menu everywhere — "Look Up", "Translate",
   // "Inspect Element", "Take Photo", in the system's language. It belongs to
   // Safari, not to Magma. Exempting the editor (so paste kept its menu) was the
@@ -645,9 +694,9 @@ export default function App() {
         <ConfirmDialog
           title={confirm.title}
           detail={confirm.detail}
-          destructive
-          confirmLabel={t("dialog.delete")}
-          cancelLabel={t("dialog.cancel")}
+          destructive={!confirm.notice}
+          confirmLabel={confirm.notice ? t("dialog.ok") : t("dialog.delete")}
+          cancelLabel={confirm.notice ? "" : t("dialog.cancel")}
           onConfirm={() => {
             confirm.onConfirm();
             setConfirm(null);
@@ -718,6 +767,7 @@ export default function App() {
         onSelect={selectNote}
         onCreate={createNewNote}
         onCreateFolder={handleCreateFolder}
+        onMoveFolder={(folder, into) => void moveFolderTo(folder, into)}
         onRename={handleRename}
         onDelete={handleDelete}
         onMove={handleMove}

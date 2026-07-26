@@ -329,6 +329,57 @@ pub fn delete_folder(vault: &Path, folder: &str) -> std::io::Result<()> {
     fs::remove_dir_all(target)
 }
 
+/// Move a whole folder (with everything in it) into `into` ("" = vault root).
+///
+/// Wikilinks resolve on filenames, so nothing needs rewriting — the notes keep
+/// their names, only their path changes. Returns the folder's new path.
+pub fn move_folder(vault: &Path, folder: &str, into: &str) -> std::io::Result<String> {
+    let bad = |msg: &str| std::io::Error::new(std::io::ErrorKind::InvalidInput, msg.to_string());
+    // Segments are kept as-is (not re-slugified) so folders created elsewhere,
+    // which keep the user's own casing and spacing, still match on disk.
+    let clean = |p: &str| {
+        p.split(['/', '\\'])
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && *s != "..")
+            .collect::<Vec<_>>()
+            .join("/")
+    };
+    let from = clean(folder);
+    let into = clean(into);
+    if from.is_empty() {
+        return Err(bad("refusing to move the vault root"));
+    }
+    if !vault.join(&from).is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "folder not found",
+        ));
+    }
+    // Dropping a folder onto itself or onto one of its own children would make
+    // the tree swallow itself; the filesystem would either fail cryptically or
+    // strand the contents.
+    if into == from || into.starts_with(&format!("{from}/")) {
+        return Err(bad("a folder cannot be moved inside itself"));
+    }
+    let name = from.rsplit('/').next().unwrap_or(&from).to_string();
+    let target = if into.is_empty() {
+        name
+    } else {
+        format!("{into}/{name}")
+    };
+    if target == from {
+        return Ok(from); // already there
+    }
+    if vault.join(&target).exists() {
+        return Err(bad("a folder with that name already exists there"));
+    }
+    if let Some(parent) = vault.join(&target).parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::rename(vault.join(&from), vault.join(&target))?;
+    Ok(target)
+}
+
 /// Move a note into `folder` (vault-relative; "" means the root), keeping its
 /// filename. Wikilinks still resolve afterwards because they match on the
 /// filename, not the folder. Returns the new vault-relative path.
@@ -550,6 +601,36 @@ mod tests {
         assert!(folders.contains(&"Ideas".to_string()));
         assert!(folders.contains(&"Work".to_string()));
         assert!(folders.contains(&"Work/Clients".to_string()));
+        fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn move_folder_nests_and_refuses_to_swallow_itself() {
+        let v = tmp_vault();
+        create_folder(&v, "Kunden").unwrap();
+        create_folder(&v, "Archiv").unwrap();
+        write_note(&v, "Kunden/Michael Klotz.md", "# Michael Klotz").unwrap();
+
+        let moved = move_folder(&v, "Kunden", "Archiv").unwrap();
+        assert_eq!(moved, "Archiv/Kunden");
+        assert!(v.join("Archiv/Kunden/Michael Klotz.md").is_file(), "notes came along");
+        assert!(!v.join("Kunden").exists());
+
+        // Into itself, into a child, and the vault root are all refused.
+        assert!(move_folder(&v, "Archiv", "Archiv").is_err());
+        assert!(move_folder(&v, "Archiv", "Archiv/Kunden").is_err());
+        assert!(move_folder(&v, "", "Archiv").is_err());
+        fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn move_folder_refuses_to_clobber_a_name_already_there() {
+        let v = tmp_vault();
+        create_folder(&v, "A/Notizen").unwrap();
+        create_folder(&v, "Notizen").unwrap();
+        write_note(&v, "Notizen/x.md", "x").unwrap();
+        assert!(move_folder(&v, "Notizen", "A").is_err(), "would have merged silently");
+        assert!(v.join("Notizen/x.md").is_file(), "nothing was moved");
         fs::remove_dir_all(&v).ok();
     }
 

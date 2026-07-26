@@ -97,6 +97,19 @@ fn delete_folder(vault: String, folder: String) -> Result<(), String> {
     vault::delete_folder(&root, &folder).map_err(|e| e.to_string())
 }
 
+/// Move a folder (with everything in it) into another folder; "" = vault root.
+#[tauri::command]
+fn move_folder(vault: String, folder: String, into: String) -> Result<String, String> {
+    let root = PathBuf::from(vault);
+    vault::safe_join(&root, &folder).ok_or_else(|| "invalid path".to_string())?;
+    vault::safe_join(&root, &into).ok_or_else(|| "invalid path".to_string())?;
+    let moved = vault::move_folder(&root, &folder, &into).map_err(|e| e.to_string())?;
+    // History is filed under the note path, so it mirrors the folder tree and
+    // moves as one piece.
+    vault::relocate_history(&root, &folder, &moved);
+    Ok(moved)
+}
+
 #[tauri::command]
 fn list_folders(vault: String) -> Result<Vec<String>, String> {
     vault::list_folders(&PathBuf::from(vault)).map_err(|e| e.to_string())
@@ -134,8 +147,9 @@ fn save_asset(vault: String, file_name: String, bytes: Vec<u8>) -> Result<String
 }
 
 #[tauri::command]
-fn build_graph(vault: String) -> Result<vault::Graph, String> {
-    vault::build_graph(&PathBuf::from(vault)).map_err(|e| e.to_string())
+fn build_graph(vault: String, exclude: Option<Vec<String>>) -> Result<vault::Graph, String> {
+    vault::build_graph(&PathBuf::from(vault), &exclude.unwrap_or_default())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -501,6 +515,143 @@ pub struct McpInstall {
     dev_build: bool,
 }
 
+// --- The native menu bar, in the language you chose -----------------------
+//
+// Tauri installs a default menu whose labels are hardcoded English. On macOS
+// that menu is the one strip of Magma the user cannot restyle away, so an
+// English "Edit / Undo / Paste" above a German app is the most visible thing
+// in the window that ignores the language setting. We build the whole menu
+// ourselves instead, and rebuild it when the language changes.
+//
+// The items macOS injects into the edit menu itself — Writing Tools, AutoFill,
+// Start Dictation, Emoji & Symbols — belong to AppKit and follow the *system*
+// language, not ours. Nothing an app can do about those.
+
+fn menu_text(lang: &str, key: &str) -> &'static str {
+    let de = lang.starts_with("de");
+    match (key, de) {
+        ("edit", true) => "Bearbeiten",
+        ("edit", false) => "Edit",
+        ("view", true) => "Ansicht",
+        ("view", false) => "View",
+        ("window", true) => "Fenster",
+        ("window", false) => "Window",
+        ("undo", true) => "Rückgängig",
+        ("undo", false) => "Undo",
+        ("redo", true) => "Wiederholen",
+        ("redo", false) => "Redo",
+        ("cut", true) => "Ausschneiden",
+        ("cut", false) => "Cut",
+        ("copy", true) => "Kopieren",
+        ("copy", false) => "Copy",
+        ("paste", true) => "Einfügen",
+        ("paste", false) => "Paste",
+        ("selectAll", true) => "Alles auswählen",
+        ("selectAll", false) => "Select All",
+        ("about", true) => "Über Magma",
+        ("about", false) => "About Magma",
+        ("services", true) => "Dienste",
+        ("services", false) => "Services",
+        ("hide", true) => "Magma ausblenden",
+        ("hide", false) => "Hide Magma",
+        ("hideOthers", true) => "Andere ausblenden",
+        ("hideOthers", false) => "Hide Others",
+        ("showAll", true) => "Alle einblenden",
+        ("showAll", false) => "Show All",
+        ("quit", true) => "Magma beenden",
+        ("quit", false) => "Quit Magma",
+        ("fullscreen", true) => "Vollbild",
+        ("fullscreen", false) => "Full Screen",
+        ("minimize", true) => "Minimieren",
+        ("minimize", false) => "Minimize",
+        ("close", true) => "Fenster schließen",
+        ("close", false) => "Close Window",
+        _ => "",
+    }
+}
+
+fn build_menu<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    lang: &str,
+) -> tauri::Result<tauri::menu::Menu<R>> {
+    use tauri::menu::{Menu, PredefinedMenuItem as P, Submenu};
+    let t = |key: &str| menu_text(lang, key);
+
+    // On macOS the first submenu becomes the application menu; elsewhere it is
+    // an ordinary one, which is why it carries the app name either way.
+    let app_menu = Submenu::with_items(
+        app,
+        "Magma",
+        true,
+        &[
+            &P::about(app, Some(t("about")), None)?,
+            &P::separator(app)?,
+            &P::services(app, Some(t("services")))?,
+            &P::separator(app)?,
+            &P::hide(app, Some(t("hide")))?,
+            &P::hide_others(app, Some(t("hideOthers")))?,
+            &P::show_all(app, Some(t("showAll")))?,
+            &P::separator(app)?,
+            &P::quit(app, Some(t("quit")))?,
+        ],
+    )?;
+
+    let edit = Submenu::with_items(
+        app,
+        t("edit"),
+        true,
+        &[
+            &P::undo(app, Some(t("undo")))?,
+            &P::redo(app, Some(t("redo")))?,
+            &P::separator(app)?,
+            &P::cut(app, Some(t("cut")))?,
+            &P::copy(app, Some(t("copy")))?,
+            &P::paste(app, Some(t("paste")))?,
+            &P::select_all(app, Some(t("selectAll")))?,
+        ],
+    )?;
+
+    let view = Submenu::with_items(app, t("view"), true, &[&P::fullscreen(app, Some(t("fullscreen")))?])?;
+
+    let window = Submenu::with_items(
+        app,
+        t("window"),
+        true,
+        &[
+            &P::minimize(app, Some(t("minimize")))?,
+            &P::close_window(app, Some(t("close")))?,
+        ],
+    )?;
+
+    // No "File" menu on purpose: everything Magma does with notes lives in the
+    // command palette, and a File menu holding only "Close window" is furniture.
+    Menu::with_items(app, &[&app_menu, &edit, &view, &window])
+}
+
+fn stored_language() -> String {
+    read_app_settings()
+        .get("lang")
+        .and_then(|v| v.as_str())
+        .unwrap_or("en")
+        .to_string()
+}
+
+/// Remember the interface language and relabel the native menu bar to match.
+#[tauri::command]
+fn set_language(app: tauri::AppHandle, lang: String) -> Result<(), String> {
+    if let Some(path) = app_settings_path() {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let mut root = read_app_settings();
+        root.as_object_mut().unwrap().insert("lang".into(), json!(lang));
+        let _ = std::fs::write(&path, serde_json::to_string_pretty(&root).unwrap_or_default());
+    }
+    let menu = build_menu(&app, &lang).map_err(|e| e.to_string())?;
+    app.set_menu(menu).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Open an http(s) URL in the user's default browser. Used for real links in
 /// notes (the WebView must not navigate away from the app itself).
 #[tauri::command]
@@ -538,6 +689,14 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // Build the menu from the stored language before the window shows, so
+        // it never flashes English on the way to German.
+        .setup(|app| {
+            let handle = app.handle().clone();
+            let menu = build_menu(&handle, &stored_language())?;
+            handle.set_menu(menu)?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             pick_vault,
             list_notes,
@@ -549,6 +708,7 @@ pub fn run() {
             move_note,
             create_folder,
             delete_folder,
+            move_folder,
             list_folders,
             import_wordpress,
             save_asset,
@@ -572,6 +732,7 @@ pub fn run() {
             install_mcp,
             last_vault,
             set_last_vault,
+            set_language,
             open_external
         ])
         .run(tauri::generate_context!())

@@ -31,6 +31,12 @@ export default function ConfirmDialog({
   useEffect(() => {
     cancelRef.current?.focus();
   }, []);
+  // With no cancel button there is nothing to hold the focus, so the confirm
+  // button takes it — Escape and Enter both then do the harmless thing.
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!cancelLabel) confirmRef.current?.focus();
+  }, [cancelLabel]);
 
   return (
     <div
@@ -47,7 +53,9 @@ export default function ConfirmDialog({
         <p className="text-sm font-medium">{title}</p>
         {detail && <p className="mt-1.5 text-sm text-magma-muted">{detail}</p>}
         <div className="mt-4 flex justify-end gap-2">
+          {/* An empty cancel label means this is a notice, not a choice. */}
           <button
+            hidden={!cancelLabel}
             ref={cancelRef}
             onClick={onCancel}
             className="rounded-lg px-3 py-1.5 text-sm text-magma-muted transition hover:bg-black/5 dark:hover:bg-white/10"
@@ -55,6 +63,7 @@ export default function ConfirmDialog({
             {cancelLabel}
           </button>
           <button
+            ref={confirmRef}
             onClick={onConfirm}
             className={`rounded-lg px-3 py-1.5 text-sm font-medium text-white transition hover:opacity-90 ${
               destructive ? "bg-red-600" : "bg-magma-accent"

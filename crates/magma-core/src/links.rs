@@ -84,8 +84,24 @@ pub struct Graph {
 /// target has no note yet becomes a `missing:` ghost node rather than being
 /// dropped — otherwise a note whose links all point nowhere looks unconnected
 /// with nothing to explain why.
-pub fn build_graph(vault: &Path) -> std::io::Result<Graph> {
-    let notes = vault::list_notes(vault)?;
+pub fn build_graph(vault: &Path, exclude: &[String]) -> std::io::Result<Graph> {
+    // Folders whose notes are scaffolding, not knowledge — templates above all.
+    // A template's links are placeholders; drawing them would put a node in the
+    // graph for every "{{title}}" and connect nothing to anything.
+    let hidden: Vec<String> = exclude
+        .iter()
+        .map(|f| f.trim().trim_matches('/').to_string())
+        .filter(|f| !f.is_empty())
+        .collect();
+    let is_hidden = |path: &str| {
+        hidden
+            .iter()
+            .any(|f| path == f || path.starts_with(&format!("{f}/")))
+    };
+    let notes: Vec<NoteMeta> = vault::list_notes(vault)?
+        .into_iter()
+        .filter(|n| !is_hidden(&n.path))
+        .collect();
     let by_name = name_index(&notes);
 
     let mut degree: HashMap<String, usize> = HashMap::new();
@@ -571,7 +587,7 @@ mod tests {
         let v = tmp_vault();
         vault::write_note(&v, "Alpha.md", "links to [[beta]]").unwrap();
         vault::write_note(&v, "Beta.md", "no links").unwrap();
-        let g = build_graph(&v).unwrap();
+        let g = build_graph(&v, &[]).unwrap();
         assert_eq!(g.nodes.len(), 2);
         assert_eq!(g.edges.len(), 1);
         assert_eq!(g.edges[0].source, "Alpha.md");
@@ -594,7 +610,7 @@ mod tests {
         let v = tmp_vault();
         // Mirrors a family note whose links name notes that don't exist.
         vault::write_note(&v, "Familie/Oma.md", "# Oma\n\n[[Opa]] und [[Mama]]").unwrap();
-        let g = build_graph(&v).unwrap();
+        let g = build_graph(&v, &[]).unwrap();
 
         let oma = g.nodes.iter().find(|n| n.path == "Familie/Oma.md").unwrap();
         assert_eq!(oma.degree, 2, "the note is no longer isolated");
@@ -663,6 +679,22 @@ mod tests {
                 assert!(s.is_char_boundary(0));
             }
         }
+    }
+
+    #[test]
+    fn excluded_folders_stay_out_of_the_graph() {
+        let v = tmp_vault();
+        vault::write_note(&v, "Echt.md", "# Echt\n\nVerlinkt [[Auch echt]].").unwrap();
+        vault::write_note(&v, "Auch echt.md", "# Auch echt").unwrap();
+        vault::write_note(&v, "Templates/Kunde.md", "# {{title}}\n\n[[Platzhalter]]").unwrap();
+
+        let g = build_graph(&v, &["Templates".to_string()]).unwrap();
+        let paths: Vec<&str> = g.nodes.iter().map(|n| n.path.as_str()).collect();
+        assert!(!paths.iter().any(|p| p.starts_with("Templates")), "got: {paths:?}");
+        // ...and the placeholder link inside the template makes no ghost node.
+        assert!(!paths.iter().any(|p| p.contains("platzhalter")), "got: {paths:?}");
+        assert_eq!(g.nodes.len(), 2);
+        fs::remove_dir_all(&v).ok();
     }
 
     #[test]
