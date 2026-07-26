@@ -1,0 +1,12 @@
+# Workspace root. `magma-core` holds the platform-independent vault logic and
+# is testable anywhere; `src-tauri` is the desktop shell that pulls in the
+# heavier native dependencies.
+[workspace]
+members = [
+    "crates/magma-core",
+    "crates/magma-mcp",
+    "crates/magma-webdav",
+    "crates/magma-import",
+    "src-tauri",
+]
+resolver = "2"

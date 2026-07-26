@@ -1,0 +1,9 @@
+[package]
+name = "magma-webdav"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+description = "Optional remote vault for Magma: sync a folder of markdown notes over WebDAV so your second brain is available on every machine."
+
+[dependencies]
+ureq = { version = "2", default-features = false, features = ["tls"] }

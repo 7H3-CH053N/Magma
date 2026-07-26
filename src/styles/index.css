@@ -1,0 +1,236 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Theme tokens as CSS variables so everything — colors, fonts, sizing — can be
+ * customized live from Settings (see src/lib/theme.tsx). Tailwind's magma-*
+ * colors map to these vars, so changing a variable re-themes the whole app.
+ */
+:root {
+  color-scheme: light dark;
+
+  --magma-bg: #faf9f7;
+  --magma-panel: #f3f1ee;
+  --magma-ink: #1c1a17;
+  --magma-muted: #6b6b6b;
+  --magma-accent: #e0533d;
+  --magma-ai: #7c5cff;
+
+  --magma-font-ui: Inter, system-ui, -apple-system, sans-serif;
+  --magma-font-editor: -apple-system, BlinkMacSystemFont, Inter, "Segoe UI",
+    system-ui, sans-serif;
+  --magma-font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --magma-font-size: 16px;
+  --magma-reading-width: 720px;
+}
+
+.dark {
+  --magma-bg: #181614;
+  --magma-panel: #201c19;
+  --magma-ink: #ece9e4;
+  --magma-muted: #9a8f82;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  @apply bg-magma-bg text-magma-ink antialiased;
+  font-family: var(--magma-font-ui);
+}
+
+/* WYSIWYG editor (TipTap/ProseMirror). Formatting renders live; the markdown
+   is never shown. All sizing/fonts come from the theme vars. */
+.magma-prose {
+  font-family: var(--magma-font-editor);
+  font-size: var(--magma-font-size);
+  line-height: 1.7;
+  color: var(--magma-ink);
+  outline: none;
+  min-height: 60vh;
+}
+.magma-prose > * + * {
+  margin-top: 0.75em;
+}
+.magma-prose h1 {
+  font-size: 1.9em;
+  font-weight: 700;
+  line-height: 1.25;
+  margin-top: 0.4em;
+}
+.magma-prose h2 {
+  font-size: 1.45em;
+  font-weight: 700;
+  line-height: 1.3;
+  margin-top: 0.6em;
+}
+.magma-prose h3 {
+  font-size: 1.2em;
+  font-weight: 600;
+}
+.magma-prose strong {
+  font-weight: 700;
+}
+.magma-prose em {
+  font-style: italic;
+}
+.magma-prose a {
+  color: var(--magma-accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+.magma-prose a:hover {
+  text-decoration: underline;
+}
+.magma-prose code {
+  font-family: var(--magma-font-mono);
+  font-size: 0.9em;
+  background: rgba(125, 125, 125, 0.15);
+  border-radius: 4px;
+  padding: 0.05em 0.3em;
+}
+.magma-prose pre {
+  font-family: var(--magma-font-mono);
+  font-size: 0.9em;
+  background: rgba(125, 125, 125, 0.14);
+  border-radius: 8px;
+  padding: 0.8em 1em;
+  overflow-x: auto;
+}
+.magma-prose pre code {
+  background: none;
+  padding: 0;
+}
+.magma-prose blockquote {
+  border-left: 3px solid color-mix(in srgb, var(--magma-accent) 45%, transparent);
+  padding-left: 0.9em;
+  color: var(--magma-muted);
+  font-style: italic;
+}
+.magma-prose ul,
+.magma-prose ol {
+  padding-left: 1.4em;
+}
+.magma-prose ul {
+  list-style: disc;
+}
+.magma-prose ol {
+  list-style: decimal;
+}
+.magma-prose ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0.2em;
+}
+.magma-prose ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5em;
+}
+.magma-prose ul[data-type="taskList"] li > label {
+  margin-top: 0.25em;
+}
+.magma-prose ul[data-type="taskList"] input[type="checkbox"] {
+  accent-color: var(--magma-accent);
+  width: 1em;
+  height: 1em;
+  cursor: pointer;
+}
+.magma-prose hr {
+  border: none;
+  border-top: 1px solid rgba(125, 125, 125, 0.3);
+}
+/* Wikilinks: styled and clickable; the [[…]] text stays in the markdown. */
+.magma-prose .wikilink {
+  color: var(--magma-accent);
+  cursor: pointer;
+  border-radius: 3px;
+}
+/* A link to a note that doesn't exist yet — click it to create that note.
+   Deliberately NOT the accent colour: the accent is user-chosen (and red by
+   default), so tying "missing" to a fixed red would look identical to a normal
+   link. Muted + dashed reads as "not there yet" whatever accent is set. */
+.magma-prose .wikilink-missing {
+  color: var(--magma-muted, #8a8178);
+  text-decoration: underline;
+  text-decoration-style: dashed;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+.magma-prose .wikilink-missing:hover {
+  color: var(--magma-ink, inherit);
+}
+.magma-prose .wikilink:hover {
+  text-decoration: underline;
+}
+/* Tables */
+.magma-prose table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.5em 0;
+  overflow: hidden;
+  font-size: 0.95em;
+}
+.magma-prose th,
+.magma-prose td {
+  border: 1px solid rgba(125, 125, 125, 0.35);
+  padding: 0.4em 0.6em;
+  text-align: left;
+  vertical-align: top;
+}
+.magma-prose th {
+  background: rgba(125, 125, 125, 0.12);
+  font-weight: 600;
+}
+.magma-prose .tableWrapper {
+  overflow-x: auto;
+}
+/* Placeholder for an empty document. */
+.magma-prose p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--magma-muted);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+/* The `[[` `]]` and `Target|` of a wikilink: present in the markdown, hidden on
+   screen so a link reads as its label. Revealed while the caret is inside. */
+.magma-prose .wikilink-syntax {
+  display: none;
+}
+
+/* Pencil after a wikilink. Clicking the link opens the note, so this is the
+   handle for editing the link itself. Quiet until you reach for it. */
+.magma-prose .wikilink-edit {
+  display: inline-block;
+  /* Enough air that it reads as a separate handle, not part of the word. The
+     padding grows the click target past the thin strokes; the margin is
+     reduced by the same amount so the icon does not visually move. */
+  margin-left: 0.22em;
+  padding: 0.14em 0.2em;
+  font-size: 0.95em;
+  /* The SVG sits on the text baseline; nudge it up to the x-height centre. */
+  vertical-align: -0.12em;
+  /* Three quarters of the text colour: present enough to find without
+     hunting, quiet enough not to compete with the link itself. */
+  color: var(--magma-ink);
+  opacity: 0.75;
+  cursor: pointer;
+  user-select: none;
+  transition: opacity 120ms, color 120ms;
+}
+/* The icon must not be the click target: a thin stroke is a hard thing to
+   hit, and the span around it is the element carrying the handler. */
+.magma-prose .wikilink-edit svg {
+  pointer-events: none;
+  display: block;
+}
+.magma-prose .wikilink-edit:hover {
+  opacity: 1;
+  color: var(--magma-accent);
+}

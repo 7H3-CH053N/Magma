@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    # Version tags build the installers and publish them to a Release. Without
+    # this the bundle job's tag condition could never fire — a tag push does
+    # not match a branch filter.
+    tags: ["v*"]
+  pull_request:
+  # Installer builds are opt-in: run them from the Actions tab when you want a
+  # .dmg/.msi to install.
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref so pushes don't pile up duplicate runs.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Fast, platform-independent checks: frontend build + core Rust tests.
+  # These run on Linux and don't need the desktop system libraries.
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: npm ci
+      - name: Build frontend
+        run: npm run build
+      - name: Rust tests (core + MCP + WebDAV)
+        run: cargo test -p magma-core -p magma-mcp -p magma-webdav -p magma-import --locked
+
+  # Full desktop bundle build on the platforms Magma targets. Each OS builds
+  # only the installer that doesn't need a flaky network download at bundle time
+  # (macOS: .dmg, Windows: .msi — Windows NSIS is skipped because it fetches a
+  # helper DLL from GitHub releases, which intermittently 504s).
+  # macOS minutes bill at 10x and Windows at 2x, so building installers on every
+  # push burns the monthly allowance fast. They only run on demand
+  # (Actions tab -> Run workflow) or on a version tag — the Linux `checks` job
+  # above still guards every push and PR.
+  bundle:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    # Needed to attach the installers to a GitHub Release on a version tag.
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            bundles: dmg
+          - os: windows-latest
+            bundles: msi
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: npm ci
+      - name: Build desktop app
+        run: npm run tauri build -- --bundles ${{ matrix.bundles }}
+      - name: Upload desktop bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: magma-${{ matrix.os }}
+          path: |
+            target/release/bundle/dmg/*.dmg
+            target/release/bundle/msi/*.msi
+          if-no-files-found: ignore
+
+      # On a version tag the installers go to a Release as well: artifacts
+      # expire after 90 days and need a GitHub login to download, which is no
+      # way to hand an app to someone. Each OS appends to the same release.
+      - name: Publish installers to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/release/bundle/dmg/*.dmg
+            target/release/bundle/msi/*.msi
+          fail_on_unmatched_files: false
+          generate_release_notes: true
+          body: |
+            Desktop builds of Magma for macOS and Windows.
+
+            **These installers are not code-signed**, so the first launch is
+            blocked by the OS. That is expected for an app without a
+            certificate — the README explains the two clicks it takes:
+
+            - macOS: right-click Magma in *Applications* → **Open** → **Open**
+            - Windows: SmartScreen → **More info** → **Run anyway**
+
+            Installation, first steps and how to connect Claude:
+            [English](https://github.com/7H3-CH053N/Magma#install) ·
+            [Deutsch](https://github.com/7H3-CH053N/Magma/blob/main/README.de.md#installation)
