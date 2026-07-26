@@ -33,10 +33,18 @@ fn read_note(vault: String, path: String) -> Result<vault::Note, String> {
     vault::read_note(&root, &path).map_err(|e| e.to_string())
 }
 
+/// How long to leave between version snapshots of the same note while it is
+/// being edited. Autosave fires seconds apart; without a gap the history would
+/// be a hundred near-identical copies of one afternoon and nothing older.
+const SNAPSHOT_EVERY_SECS: u64 = 120;
+
 #[tauri::command]
 fn write_note(vault: String, path: String, content: String) -> Result<(), String> {
     let root = PathBuf::from(vault);
     vault::safe_join(&root, &path).ok_or_else(|| "invalid path".to_string())?;
+    // Keep what is about to be overwritten. Best-effort: a history that cannot
+    // be written must never stop the note itself from being saved.
+    let _ = vault::snapshot_if_due(&root, &path, SNAPSHOT_EVERY_SECS);
     vault::write_note(&root, &path, &content).map_err(|e| e.to_string())
 }
 
@@ -53,23 +61,28 @@ fn rename_note(vault: String, path: String, new_title: String) -> Result<String,
     let root = PathBuf::from(vault);
     vault::safe_join(&root, &path).ok_or_else(|| "invalid path".to_string())?;
     // Link-safe: repoint every [[wikilink]] that named the old filename.
-    vault::rename_note_updating_links(&root, &path, &new_title)
-        .map(|(new_path, _updated)| new_path)
-        .map_err(|e| e.to_string())
+    let (new_path, _updated) =
+        vault::rename_note_updating_links(&root, &path, &new_title).map_err(|e| e.to_string())?;
+    vault::relocate_history(&root, &path, &new_path);
+    Ok(new_path)
 }
 
 #[tauri::command]
 fn delete_note(vault: String, path: String) -> Result<(), String> {
     let root = PathBuf::from(vault);
     vault::safe_join(&root, &path).ok_or_else(|| "invalid path".to_string())?;
-    vault::delete_note(&root, &path).map_err(|e| e.to_string())
+    vault::delete_note(&root, &path).map_err(|e| e.to_string())?;
+    vault::forget_history(&root, &path);
+    Ok(())
 }
 
 #[tauri::command]
 fn move_note(vault: String, path: String, folder: String) -> Result<String, String> {
     let root = PathBuf::from(vault);
     vault::safe_join(&root, &path).ok_or_else(|| "invalid path".to_string())?;
-    vault::move_note(&root, &path, &folder).map_err(|e| e.to_string())
+    let new_path = vault::move_note(&root, &path, &folder).map_err(|e| e.to_string())?;
+    vault::relocate_history(&root, &path, &new_path);
+    Ok(new_path)
 }
 
 #[tauri::command]
@@ -153,7 +166,96 @@ fn replace_all(
     dry_run: bool,
     rename_notes: bool,
 ) -> Result<vault::ReplaceReport, String> {
-    vault::replace_in_vault(&PathBuf::from(vault), &find, &replace, dry_run, rename_notes)
+    let root = PathBuf::from(vault);
+    if !dry_run {
+        // Snapshot everything this is about to touch, unconditionally — the
+        // preview shows what will change, the history is how you take it back.
+        if let Ok(preview) =
+            vault::replace_in_vault(&root, &find, &replace, true, rename_notes)
+        {
+            for hit in &preview.hits {
+                let _ = vault::snapshot(&root, &hit.path);
+            }
+            for rename in &preview.renames {
+                let _ = vault::snapshot(&root, &rename.path);
+            }
+        }
+    }
+    vault::replace_in_vault(&root, &find, &replace, dry_run, rename_notes)
+        .map_err(|e| e.to_string())
+}
+
+/// Open (or create) a note at an exact name — daily notes and notes made from
+/// a template. Returns the path plus whether it was created just now.
+#[tauri::command]
+fn open_or_create(
+    vault: String,
+    folder: String,
+    title: String,
+    content: String,
+) -> Result<(String, bool), String> {
+    vault::open_or_create(&PathBuf::from(vault), &folder, &title, &content)
+        .map_err(|e| e.to_string())
+}
+
+/// Append text to a note without opening it — what quick capture writes.
+#[tauri::command]
+fn append_note(vault: String, path: String, text: String) -> Result<(), String> {
+    let root = PathBuf::from(vault);
+    vault::safe_join(&root, &path).ok_or_else(|| "invalid path".to_string())?;
+    let _ = vault::snapshot_if_due(&root, &path, SNAPSHOT_EVERY_SECS);
+    vault::append_note(&root, &path, &text).map_err(|e| e.to_string())
+}
+
+// --- Version history -------------------------------------------------------
+
+#[tauri::command]
+fn list_versions(vault: String, path: String) -> Result<Vec<vault::Version>, String> {
+    vault::list_versions(&PathBuf::from(vault), &path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn read_version(vault: String, path: String, id: String) -> Result<String, String> {
+    vault::read_version(&PathBuf::from(vault), &path, &id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn restore_version(vault: String, path: String, id: String) -> Result<(), String> {
+    vault::restore(&PathBuf::from(vault), &path, &id).map_err(|e| e.to_string())
+}
+
+// --- Connections: outgoing links, unlinked mentions, related notes ---------
+
+#[tauri::command]
+fn outgoing_links(vault: String, path: String) -> Result<Vec<vault::OutgoingLink>, String> {
+    vault::outgoing_links(&PathBuf::from(vault), &path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn unlinked_mentions(vault: String, path: String) -> Result<Vec<vault::Mention>, String> {
+    let root = PathBuf::from(vault);
+    // Scans every note's text; same isolation as search, for the same reason.
+    std::panic::catch_unwind(|| vault::unlinked_mentions(&root, &path))
+        .map_err(|_| "scanning for mentions failed on this vault".to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// Turn plain-text mentions of `name` inside `path` into `[[name]]` links.
+#[tauri::command]
+fn link_mentions(vault: String, path: String, name: String) -> Result<usize, String> {
+    let root = PathBuf::from(vault);
+    vault::safe_join(&root, &path).ok_or_else(|| "invalid path".to_string())?;
+    let _ = vault::snapshot(&root, &path);
+    vault::link_mentions(&root, &path, &name).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn related_notes(
+    vault: String,
+    path: String,
+    limit: Option<usize>,
+) -> Result<Vec<vault::RelatedNote>, String> {
+    vault::related_notes(&PathBuf::from(vault), &path, limit.unwrap_or(8))
         .map_err(|e| e.to_string())
 }
 
@@ -454,6 +556,15 @@ pub fn run() {
             backlinks,
             search,
             replace_all,
+            open_or_create,
+            append_note,
+            list_versions,
+            read_version,
+            restore_version,
+            outgoing_links,
+            unlinked_mentions,
+            link_mentions,
+            related_notes,
             remote_connect,
             remote_put,
             remote_delete,

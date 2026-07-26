@@ -6,7 +6,7 @@ use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct NoteMeta {
     /// Path relative to the vault root, using forward slashes.
@@ -197,6 +197,47 @@ pub fn create_note_in(
     }
     write_note(vault, &rel, content)?;
     Ok(rel)
+}
+
+/// Open the note at `folder/<title>.md` or create it with `content`.
+///
+/// Unlike `create_note_in`, this never appends " 2" — a daily note for today
+/// must be *the* note for today, not a second one every time the button is
+/// pressed. Returns the path and whether it had to be created.
+pub fn open_or_create(
+    vault: &Path,
+    folder: &str,
+    title: &str,
+    content: &str,
+) -> std::io::Result<(String, bool)> {
+    let stem = slugify(title);
+    let dir = sanitize_folder(folder);
+    let rel = if dir.is_empty() {
+        format!("{stem}.md")
+    } else {
+        format!("{dir}/{stem}.md")
+    };
+    if vault.join(&rel).exists() {
+        return Ok((rel, false));
+    }
+    write_note(vault, &rel, content)?;
+    Ok((rel, true))
+}
+
+/// Add text to the end of a note, starting a new paragraph.
+///
+/// This is what quick capture writes into: a thought lands at the bottom of
+/// today's note without opening it, so nothing already in the note can be lost
+/// by a stale editor buffer overwriting the file.
+pub fn append_note(vault: &Path, rel: &str, text: &str) -> std::io::Result<()> {
+    let existing = fs::read_to_string(vault.join(rel)).unwrap_or_default();
+    let mut out = existing.trim_end().to_string();
+    if !out.is_empty() {
+        out.push_str("\n\n");
+    }
+    out.push_str(text.trim());
+    out.push('\n');
+    write_note(vault, rel, &out)
 }
 
 /// Clean a folder path: slugify each segment, drop empty/`..` segments.
