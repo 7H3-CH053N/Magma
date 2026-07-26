@@ -7,6 +7,7 @@ import {
   FolderIcon,
   NewFolderIcon,
   PencilIcon,
+  CalendarIcon,
   PlusIcon,
   ReplaceIcon,
   SearchIcon,
@@ -37,6 +38,10 @@ interface SidebarProps {
   searchHits: SearchHit[];
   onReplace: () => void;
   onOpenSettings: () => void;
+  /** Open (or create) today's daily note. */
+  onToday: () => void;
+  /** The month calendar, passed in so the sidebar stays free of date logic. */
+  calendar?: React.ReactNode;
 }
 
 export default function Sidebar({
@@ -58,6 +63,8 @@ export default function Sidebar({
   searchHits,
   onReplace,
   onOpenSettings,
+  onToday,
+  calendar,
 }: SidebarProps) {
   const { t } = useI18n();
   const [hovered, setHovered] = useState<string | null>(null);
@@ -261,6 +268,13 @@ export default function Sidebar({
             </>
           )}
           <button
+            onClick={onToday}
+            title={t("sidebar.today")}
+            className="grid h-7 w-7 place-items-center rounded-md text-magma-muted transition hover:bg-black/10 hover:text-magma-text dark:hover:bg-white/10"
+          >
+            <CalendarIcon size={16} />
+          </button>
+          <button
             onClick={onOpenSettings}
             title={t("sidebar.settings")}
             className="grid h-7 w-7 place-items-center rounded-md text-magma-muted transition hover:bg-black/10 hover:text-magma-text dark:hover:bg-white/10"
@@ -351,6 +365,9 @@ export default function Sidebar({
           {tree.map((node) => renderFolder(node, 0))}
         </nav>
       )}
+
+      {/* Pinned to the bottom: the calendar is a way in, not part of the list. */}
+      {vault && calendar}
     </aside>
   );
 }

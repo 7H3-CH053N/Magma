@@ -220,6 +220,35 @@ impl Server {
                 let cands = core::find_link_candidates(v, &text, limit).map_err(io)?;
                 Ok(json!(cands))
             }
+            // Connections the vault already implies but nobody drew yet. This
+            // is what turns an agent from a writer into an editor: it can see
+            // where a note belongs and where its name is already being used.
+            "list_outgoing_links" => {
+                let path = str_arg(args, "path")?;
+                core::safe_join(v, &path).ok_or("invalid path")?;
+                Ok(json!(core::outgoing_links(v, &path).map_err(io)?))
+            }
+            "related_notes" => {
+                let path = str_arg(args, "path")?;
+                core::safe_join(v, &path).ok_or("invalid path")?;
+                let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(8) as usize;
+                Ok(json!(core::related_notes(v, &path, limit).map_err(io)?))
+            }
+            "unlinked_mentions" => {
+                let path = str_arg(args, "path")?;
+                core::safe_join(v, &path).ok_or("invalid path")?;
+                Ok(json!(core::unlinked_mentions(v, &path).map_err(io)?))
+            }
+            "link_mentions" => {
+                self.ensure_write()?;
+                let path = str_arg(args, "path")?;
+                core::safe_join(v, &path).ok_or("invalid path")?;
+                let name = str_arg(args, "name")?;
+                // Keep a copy first: this rewrites a note the user owns.
+                let _ = core::snapshot(v, &path);
+                let linked = core::link_mentions(v, &path, &name).map_err(io)?;
+                Ok(json!({ "linked": linked }))
+            }
             "create_note" => {
                 self.ensure_write()?;
                 let title = str_arg(args, "title")?;
@@ -357,6 +386,48 @@ fn tools_spec() -> Value {
                     "limit": { "type": "integer", "description": "Max candidates (default 8)." }
                 },
                 "required": ["text"]
+            }
+        },
+        {
+            "name": "list_outgoing_links",
+            "description": "List the [[wikilinks]] a note points at, marking the ones whose target note does not exist yet.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "path": { "type": "string" } },
+                "required": ["path"]
+            }
+        },
+        {
+            "name": "related_notes",
+            "description": "Notes that share vocabulary with an existing note but may not be linked to it. Use this to find where a note belongs in the graph, or to suggest links the user has not drawn yet. Each result says whether a link already exists.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Vault-relative path of the note to compare against." },
+                    "limit": { "type": "integer", "description": "Max results (default 8)." }
+                },
+                "required": ["path"]
+            }
+        },
+        {
+            "name": "unlinked_mentions",
+            "description": "Notes that write this note's name in plain text without linking it. Pair with link_mentions to close those gaps.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "path": { "type": "string" } },
+                "required": ["path"]
+            }
+        },
+        {
+            "name": "link_mentions",
+            "description": "Turn plain-text mentions of `name` inside one note into [[name]] links. Only whole-word matches outside existing links are touched. Returns how many were linked.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "The note to edit (from unlinked_mentions)." },
+                    "name": { "type": "string", "description": "The link name to insert, i.e. the target note's filename without .md." }
+                },
+                "required": ["path", "name"]
             }
         },
         {

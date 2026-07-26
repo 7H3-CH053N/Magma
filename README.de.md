@@ -88,6 +88,44 @@ mit Korrekturvorschlägen zurück statt als tote Enden. KI-Notizen werden mit
 `author: ai` gekennzeichnet und im Graph violett dargestellt. Mit
 `MAGMA_MCP_ALLOW_WRITE=0` läuft der Server schreibgeschützt.
 
+## Jeden Tag, und jede Verbindung
+
+- **Befehlspalette** — `Cmd/Strg+P` öffnet alles: Notiz springen, Befehl
+  ausführen, aus einer Vorlage starten. Gesucht wird als Teilfolge, `grph`
+  findet also „Graph anzeigen". (`Cmd/Strg+K` bleibt im Editor die Link-Taste.)
+- **Schnellnotiz** — `Cmd/Strg+Umschalt+N` hält einen Gedanken in der Notiz von
+  heute fest, ohne dass du wegmusst.
+- **Tagesnotizen und Kalender** — eine Notiz pro Tag, benannt `2026-07-26`. Der
+  Kalender in der Seitenleiste füllt die Tage, die es gibt, und legt die an, die
+  fehlen.
+- **Vorlagen** — jede Notiz im Vorlagen-Ordner erscheint in der Palette als
+  „Neue Notiz aus: …". `{{date}}`, `{{time}}`, `{{title}}`, `{{weekday}}`,
+  `{{month}}` und `{{year}}` werden eingesetzt.
+- **Versionsverlauf** — Magma legt vor jeder größeren Änderung eine Kopie an,
+  vor einem vault-weiten Ersetzen immer. Diff-Ansicht, Wiederherstellen mit
+  einem Klick, und das Wiederherstellen ist selbst rückgängig zu machen.
+  Umbenennen oder Verschieben nimmt den Verlauf mit.
+- **Verbindungen unter dem Editor** — Backlinks, ausgehende Links (auch solche,
+  deren Ziel es noch nicht gibt), *unverlinkte Erwähnungen* (Notizen, die den
+  Namen schreiben, ohne zu verlinken — einzeln oder alle auf einmal verlinkbar)
+  und ähnliche Notizen.
+- **Ähnliche Notizen** — TF-IDF über den Vault, Vergleich per Kosinus. Ehrlich
+  benannt: das ist lexikalische Ähnlichkeit, keine semantische. Es findet
+  Notizen mit denselben Wörtern, nicht Notizen mit derselben Bedeutung — dafür
+  ohne Modell-Download, ohne Runtime und ohne Netz.
+- **Was Claude geschrieben hat** — eine Seite mit allen Notizen, die
+  `author: ai` tragen, neueste zuerst. Eine KI in den eigenen Vault zu lassen
+  ist nur dann angenehm, wenn man genau sieht, was sie angefasst hat.
+
+## Suchen & ersetzen im ganzen Vault
+
+Eine Formulierung in 500 Notizen zu ändern ist ein Dialog. Geschrieben wird
+nichts, bevor du die Vorschau gesehen hast: jede betroffene Notiz mit ihrer
+Trefferzahl. Wikilinks lösen über den *Dateinamen* auf — würde nur der Text
+ersetzt, zeigte jedes `[[…]]` ins Leere. Magma benennt deshalb zuerst die Notiz
+um, die den Begriff im Namen trägt, biegt ihre Links mit (samt Alias und Anker)
+und schreibt erst danach den Text.
+
 ## Anpassen
 
 Alles Visuelle ist unter **Einstellungen → Darstellung** anpassbar: Hell-/Dunkel-/

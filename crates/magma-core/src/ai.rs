@@ -179,6 +179,7 @@ pub fn candidates_as_notes(candidates: &[LinkCandidate]) -> Vec<NoteMeta> {
             path: c.path.clone(),
             title: c.title.clone(),
             ai_authored: false,
+            modified: 0,
         })
         .collect()
 }

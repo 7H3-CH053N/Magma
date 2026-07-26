@@ -1,8 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Sidebar from "./components/Sidebar";
 import Editor from "./components/Editor";
 import GraphView from "./components/GraphView";
-import BacklinksPanel from "./components/BacklinksPanel";
+import ConnectionsPanel from "./components/ConnectionsPanel";
+import CommandPalette, { type Command } from "./components/CommandPalette";
+import CalendarPanel from "./components/CalendarPanel";
+import QuickCapture from "./components/QuickCapture";
+import HistoryDialog from "./components/HistoryDialog";
+import Onboarding, { onboardingSeen } from "./components/Onboarding";
+import AiReview from "./components/AiReview";
 import Splash from "./components/Splash";
 import Settings from "./components/Settings";
 import FlameIcon from "./components/FlameIcon";
@@ -11,8 +17,10 @@ import ConfirmDialog from "./components/ConfirmDialog";
 import NodePreview from "./components/NodePreview";
 import ReplaceDialog from "./components/ReplaceDialog";
 import { useI18n } from "./lib/i18n";
+import { applyTemplate, dayKey, usePrefs } from "./lib/prefs";
 import { splitFrontmatter, joinFrontmatter } from "./lib/markdown";
 import {
+  appendNote,
   backlinks as fetchBacklinks,
   buildGraph,
   createFolder,
@@ -25,6 +33,7 @@ import {
   listNotes,
   moveNote,
   openExternal,
+  openOrCreate,
   pickVault,
   readNote,
   remoteConnect,
@@ -42,10 +51,11 @@ import {
 } from "./lib/api";
 
 const AUTOSAVE_MS = 600;
-type View = "editor" | "graph";
+type View = "editor" | "graph" | "ai";
 
 export default function App() {
   const { t } = useI18n();
+  const { prefs } = usePrefs();
   const [vault, setVault] = useState<string | null>(null);
   const [notes, setNotes] = useState<NoteMeta[]>([]);
   const [folders, setFolders] = useState<string[]>([]);
@@ -58,6 +68,10 @@ export default function App() {
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [showReplace, setShowReplace] = useState(false);
+  const [showPalette, setShowPalette] = useState(false);
+  const [showCapture, setShowCapture] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(() => !onboardingSeen());
   // Graph node being previewed (path + title); null closes the panel.
   const [preview, setPreview] = useState<{ path: string; title: string } | null>(null);
   const [remote, setRemote] = useState<RemoteConfig | null>(null);
@@ -237,6 +251,82 @@ export default function App() {
     }
   }, [vault, flushSave, refreshNotes, selectNote, remote, pushRemote]);
 
+  /** Read a template note's body (frontmatter stripped), or "" if there is none. */
+  const templateBody = useCallback(
+    async (path: string): Promise<string> => {
+      if (!vault || !path) return "";
+      try {
+        const note = await readNote(vault, path);
+        return splitFrontmatter(note.content).body;
+      } catch {
+        return "";
+      }
+    },
+    [vault]
+  );
+
+  /** Open (or create) the note for a day — the calendar and the palette both land here. */
+  const openDay = useCallback(
+    async (date: Date) => {
+      if (!vault) return;
+      flushSave();
+      const title = dayKey(date);
+      const raw = await templateBody(prefs.dailyTemplate);
+      const seed = raw ? applyTemplate(raw, title, date) : `# ${title}\n\n`;
+      const { path } = await openOrCreate(vault, prefs.dailyFolder, title, seed);
+      await refreshNotes(vault);
+      await selectNote(path);
+    },
+    [vault, prefs.dailyFolder, prefs.dailyTemplate, flushSave, refreshNotes, selectNote, templateBody]
+  );
+
+  /** New note seeded from a template note, asking for the title first. */
+  const newFromTemplate = useCallback(
+    (templatePath: string, templateName: string) => {
+      if (!vault) return;
+      setDialog({
+        title: t("template.prompt", { name: templateName }),
+        initial: "",
+        onSubmit: async (title) => {
+          if (!title.trim()) return;
+          flushSave();
+          const raw = await templateBody(templatePath);
+          const seed = applyTemplate(raw, title.trim());
+          const path = await createNote(vault, title.trim());
+          await writeNote(vault, path, seed || `# ${title.trim()}\n\n`);
+          await refreshNotes(vault);
+          await selectNote(path);
+        },
+      });
+    },
+    [vault, flushSave, refreshNotes, selectNote, templateBody, t]
+  );
+
+  /** Quick capture: append to today's note, without opening it. */
+  const captureText = useCallback(
+    async (text: string) => {
+      if (!vault) return;
+      const stamp = new Date();
+      const line = prefs.captureToDaily
+        ? `- ${String(stamp.getHours()).padStart(2, "0")}:${String(
+            stamp.getMinutes()
+          ).padStart(2, "0")} ${text.trim()}`
+        : text.trim();
+      const title = dayKey(stamp);
+      const { path } = await openOrCreate(
+        vault,
+        prefs.dailyFolder,
+        title,
+        `# ${title}\n\n`
+      );
+      await appendNote(vault, path, line);
+      await refreshNotes(vault);
+      // If that note happens to be open, pull the appended text in.
+      if (activePath === path) await selectNote(path);
+    },
+    [vault, prefs.dailyFolder, prefs.captureToDaily, activePath, refreshNotes, selectNote]
+  );
+
   const handleRename = useCallback(
     (path: string, currentTitle: string) => {
       if (!vault) return;
@@ -398,12 +488,105 @@ export default function App() {
     return () => window.clearTimeout(t);
   }, [vault, query]);
 
-  // Cmd/Ctrl+N → new note.
+  /** Notes inside the template folder, offered as their own palette entries. */
+  const templates = useMemo(() => {
+    const folder = prefs.templateFolder.trim();
+    if (!folder) return [];
+    const prefix = `${folder}/`;
+    return notes.filter((n) => n.path.startsWith(prefix));
+  }, [notes, prefs.templateFolder]);
+
+  /** Everything the palette can do, besides jumping to a note. */
+  const commands = useMemo<Command[]>(() => {
+    const list: Command[] = [
+      { id: "new", label: t("cmd.newNote"), hint: "⌘N", run: () => void createNewNote() },
+      { id: "today", label: t("cmd.today"), run: () => void openDay(new Date()) },
+      {
+        id: "yesterday",
+        label: t("cmd.yesterday"),
+        run: () => {
+          const d = new Date();
+          d.setDate(d.getDate() - 1);
+          void openDay(d);
+        },
+      },
+      {
+        id: "capture",
+        label: t("cmd.capture"),
+        hint: "⌘⇧N",
+        run: () => setShowCapture(true),
+      },
+      { id: "graph", label: t("cmd.graph"), run: () => void showGraph() },
+      { id: "editor", label: t("cmd.editor"), run: () => setView("editor") },
+      { id: "ai", label: t("cmd.aiReview"), run: () => setView("ai") },
+      { id: "replace", label: t("cmd.replace"), run: () => setShowReplace(true) },
+      { id: "settings", label: t("cmd.settings"), run: () => setShowSettings(true) },
+      { id: "folder", label: t("cmd.newFolder"), run: handleCreateFolder },
+      { id: "openVault", label: t("cmd.openVault"), run: () => void openVault() },
+    ];
+    if (activePath) {
+      list.push(
+        { id: "history", label: t("cmd.history"), run: () => setShowHistory(true) },
+        {
+          id: "rename",
+          label: t("cmd.rename"),
+          run: () => {
+            const note = notes.find((n) => n.path === activePath);
+            if (note) handleRename(note.path, note.title);
+          },
+        },
+        {
+          id: "move",
+          label: t("cmd.move"),
+          run: () => handleMove(activePath),
+        }
+      );
+    }
+    for (const tpl of templates) {
+      // A template's first heading is usually "{{title}}" — a placeholder, not
+      // a name. Its filename is what the user actually called it.
+      const name = (tpl.path.split("/").pop() ?? tpl.path).replace(/\.md$/i, "");
+      list.push({
+        id: `tpl:${tpl.path}`,
+        label: t("cmd.fromTemplate", { name }),
+        hint: t("cmd.templateHint"),
+        run: () => newFromTemplate(tpl.path, name),
+      });
+    }
+    return list;
+  }, [
+    t,
+    createNewNote,
+    openDay,
+    showGraph,
+    handleCreateFolder,
+    openVault,
+    activePath,
+    notes,
+    handleRename,
+    handleMove,
+    templates,
+    newFromTemplate,
+  ]);
+
+  // Keyboard: new note, command palette, quick capture.
+  //
+  // The palette is on Cmd/Ctrl+P, not Cmd+K as originally planned — inside the
+  // editor Cmd+K already inserts a link, the way it does in every other editor,
+  // and taking that away to gain a palette would be a bad trade.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "n") {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const key = e.key.toLowerCase();
+      if (key === "n" && e.shiftKey) {
+        e.preventDefault();
+        setShowCapture(true);
+      } else if (key === "n") {
         e.preventDefault();
         void createNewNote();
+      } else if (key === "p" || key === "o") {
+        e.preventDefault();
+        setShowPalette(true);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -491,6 +674,41 @@ export default function App() {
           onApplied={handleReplaced}
         />
       )}
+      {showPalette && (
+        <CommandPalette
+          notes={notes}
+          commands={commands}
+          onOpenNote={(p) => void selectNote(p)}
+          onClose={() => setShowPalette(false)}
+        />
+      )}
+      {showCapture && vault && (
+        <QuickCapture
+          target={`${prefs.dailyFolder ? `${prefs.dailyFolder}/` : ""}${dayKey(new Date())}`}
+          onSubmit={captureText}
+          onClose={() => setShowCapture(false)}
+        />
+      )}
+      {showHistory && vault && activePath && (
+        <HistoryDialog
+          vault={vault}
+          path={activePath}
+          title={notes.find((n) => n.path === activePath)?.title ?? activePath}
+          current={joinFrontmatter(frontmatter.current, content)}
+          onClose={() => setShowHistory(false)}
+          onRestored={() => {
+            flushSave();
+            void selectNote(activePath);
+          }}
+        />
+      )}
+      {showOnboarding && (
+        <Onboarding
+          onOpenVault={openVault}
+          onOpenSettings={() => setShowSettings(true)}
+          onClose={() => setShowOnboarding(false)}
+        />
+      )}
       <Sidebar
         vault={vault}
         notes={notes}
@@ -510,6 +728,14 @@ export default function App() {
         searchHits={hits}
         onReplace={() => setShowReplace(true)}
         onOpenSettings={() => setShowSettings(true)}
+        onToday={() => void openDay(new Date())}
+        calendar={
+          <CalendarPanel
+            notes={notes}
+            folder={prefs.dailyFolder}
+            onOpenDay={(d) => void openDay(d)}
+          />
+        }
       />
 
       <main className="flex flex-1 flex-col overflow-hidden">
@@ -517,11 +743,24 @@ export default function App() {
           <div className="flex items-center gap-1 border-b border-black/5 px-3 py-1.5 dark:border-white/10">
             <ViewTab label={t("view.editor")} active={view === "editor"} onClick={() => setView("editor")} />
             <ViewTab label={t("view.graph")} active={view === "graph"} onClick={showGraph} />
+            <ViewTab label={t("view.ai")} active={view === "ai"} onClick={() => setView("ai")} />
+            <div className="flex-1" />
+            {activePath && (
+              <button
+                onClick={() => setShowHistory(true)}
+                title={t("cmd.history")}
+                className="rounded-md px-2 py-1 text-xs text-magma-muted transition hover:bg-black/5 dark:hover:bg-white/10"
+              >
+                {t("view.history")}
+              </button>
+            )}
           </div>
         )}
 
         <div className="flex flex-1 flex-col overflow-hidden">
-          {view === "graph" ? (
+          {view === "ai" ? (
+            <AiReview notes={notes} onSelect={selectNote} />
+          ) : view === "graph" ? (
             <GraphView
               graph={graph}
               activePath={activePath}
@@ -544,7 +783,18 @@ export default function App() {
                   notes={notes}
                 />
               </div>
-              <BacklinksPanel backlinks={links} onSelect={selectNote} />
+              <ConnectionsPanel
+                vault={vault}
+                path={activePath}
+                name={(activePath.split("/").pop() ?? "").replace(/\.md$/i, "")}
+                backlinks={links}
+                onSelect={selectNote}
+                onOpenByName={openByName}
+                onChanged={() => {
+                  if (vault) void refreshNotes(vault);
+                  void selectNote(activePath);
+                }}
+              />
             </>
           ) : (
             <EmptyState

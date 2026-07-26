@@ -126,9 +126,41 @@ statt Waisen-Notizen abzuladen:
 | M1 | Vault + Editor | Ordner öffnen, Notizen anlegen/umbenennen/löschen, Live-Markdown mit versteckter Syntax, Bild-Paste, Autosave | ✅ |
 | M2 | Links + Suche + Graph | `[[Wikilinks]]` mit Autocomplete + Cmd/Ctrl-Klick, Backlinks-Panel, Volltextsuche, Graph-View (Canvas-Force-Layout, KI-Notizen markiert) | ✅ |
 | M3 | MCP-Server + KI-Mitautor | Eingebauter stdio-MCP-Server (`crates/magma-mcp`), `find_link_candidates`, Link-Validierung mit Vorschlägen, `author: ai`-Stempel, „Mit Claude verbinden"-Config in Settings | ✅ |
-| M4 | Polish | Anpassbare Themes (Farben/Schriften/Größe) ✅, System-Dark-Mode ✅, i18n (DE/EN) ✅, Ein-Klick-MCP-Setup ✅; noch offen: Command Palette, Quick Capture, Onboarding | 🟡 |
+| M4 | Polish | Anpassbare Themes ✅, System-Dark-Mode ✅, i18n (DE/EN) ✅, Ein-Klick-MCP-Setup ✅, Bild-Paste ✅, Command Palette (Cmd/Ctrl+P) ✅, Quick Capture (Cmd/Ctrl+Shift+N) ✅, Onboarding ✅, KI-Review-Ansicht ✅ | ✅ |
+| M7 | Zweites Gehirn im Alltag | Tagesnotizen + Kalender ✅, Vorlagen mit Platzhaltern ✅, Versionsverlauf mit Diff und Wiederherstellen ✅, ausgehende Links + unverlinkte Erwähnungen ✅, ähnliche Notizen (TF-IDF) ✅ | ✅ |
 | M5 | Packaging | Installer (DMG/MSI), CI-Download-Artefakte ✅, Auto-Update, Code Signing | 🟡 |
 | M6 | Online-/Remote-Vault | Vault auf Webserver (WebDAV): Sync in lokalen Cache, Write-Through beim Speichern, Settings-UI, https-Pflicht | 🟡 erste Version |
+
+## M7 — Notizen, die sich selbst vernetzen
+
+Fünf Bausteine, jeweils an dem Obsidian-Plugin orientiert, das die Lücke dort
+füllt — aber eingebaut statt installiert:
+
+- **Tagesnotizen + Kalender** (*Calendar / Periodic Notes*): eine Notiz pro Tag,
+  benannt `2026-07-26`. Der Kalender in der Seitenleiste füllt Tage, die schon
+  existieren, und legt fehlende beim Klick an. Ordner und Vorlage frei wählbar.
+- **Vorlagen** (*Templater*): jede Notiz im Vorlagen-Ordner erscheint in der
+  Befehlspalette als „Neue Notiz aus: …". Platzhalter `{{date}}`, `{{time}}`,
+  `{{title}}`, `{{weekday}}`, `{{month}}`, `{{year}}`.
+- **Versionsverlauf** (*File Recovery*): Snapshots unter `.magma/history`,
+  höchstens einer alle zwei Minuten beim Tippen, aber garantiert vor jedem
+  vault-weiten Ersetzen. Diff-Ansicht, Wiederherstellen ist selbst rückgängig
+  zu machen. Umbenennen und Verschieben nehmen den Verlauf mit.
+- **Ausgehende Links + unverlinkte Erwähnungen** (*Backlinks, zweite Hälfte*):
+  „Links raus" zeigt auch Ziele, die es noch nicht gibt. „Erwähnungen" findet
+  Notizen, die den Namen im Text nennen, ohne zu verlinken — einzeln oder alle
+  auf einmal verlinkbar. So wächst der Graph von selbst.
+- **Ähnliche Notizen** (*Smart Connections*): TF-IDF über den Vault, Vergleich
+  per Kosinus. Ehrlich benannt: das ist lexikalische Ähnlichkeit, keine
+  semantische — es findet Notizen mit denselben Wörtern, nicht Notizen mit
+  derselben Bedeutung. Dafür ohne Modell-Download, ohne ONNX-Runtime und ohne
+  Netz. `RelatedNote` ist die Nahtstelle, an der später echte Embeddings
+  einsteigen können, ohne dass ein Aufrufer sich ändert.
+
+Der MCP-Server bekommt dieselben vier Werkzeuge (`related_notes`,
+`unlinked_mentions`, `link_mentions`, `list_outgoing_links`) — damit Claude
+nicht nur schreibt, sondern auch aufräumt. Ein Snapshot wird vor jeder
+KI-Änderung angelegt.
 
 ## M6 — Online-/Remote-Vault (Design)
 

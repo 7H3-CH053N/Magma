@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import FlameIcon from "./FlameIcon";
 import { useI18n, type Lang } from "../lib/i18n";
 import { useTheme, FONT_PRESETS, type ThemeMode } from "../lib/theme";
+import { usePrefs } from "../lib/prefs";
 import {
   hasTauri,
   importWordpress,
@@ -22,7 +23,7 @@ interface SettingsProps {
   onOpenVault: () => void;
 }
 
-type Tab = "vault" | "appearance" | "import" | "claude" | "about";
+type Tab = "vault" | "notes" | "appearance" | "import" | "claude" | "about";
 
 function savedRemote(): { url: string; username: string } {
   try {
@@ -50,7 +51,15 @@ export default function Settings({
   const [tab, setTab] = useState<Tab>("vault");
   const { t, lang, setLang, saveLang, revertLang, langDirty } = useI18n();
   const { theme, setTheme, save, revert, resetDefaults, dirty: themeDirty } = useTheme();
-  const dirty = themeDirty || langDirty;
+  const {
+    prefs,
+    setPrefs,
+    save: savePrefs,
+    revert: revertPrefs,
+    resetDefaults: resetPrefs,
+    dirty: prefsDirty,
+  } = usePrefs();
+  const dirty = themeDirty || langDirty || prefsDirty;
   const [savedNote, setSavedNote] = useState(false);
   const initial = savedRemote();
   const [url, setUrl] = useState(initial.url);
@@ -143,6 +152,7 @@ export default function Settings({
   const saveAll = () => {
     save();
     saveLang();
+    savePrefs();
     setSavedNote(true);
     window.setTimeout(() => setSavedNote(false), 1800);
   };
@@ -152,6 +162,7 @@ export default function Settings({
   const close = () => {
     revert();
     revertLang();
+    revertPrefs();
     onClose();
   };
 
@@ -188,6 +199,7 @@ export default function Settings({
           {(
             [
               ["vault", t("settings.tabVault")],
+              ["notes", t("settings.tabNotes")],
               ["appearance", t("settings.tabAppearance")],
               ["import", t("settings.tabImport")],
               ["claude", t("settings.tabClaude")],
@@ -210,6 +222,85 @@ export default function Settings({
 
         <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex-1 overflow-auto p-6">
+
+        {tab === "notes" && (<>
+        {/* Daily notes */}
+        <section className="mb-5">
+          <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-magma-muted">
+            {t("settings.dailyTitle")}
+          </label>
+          <p className="mb-2 text-xs leading-relaxed text-magma-muted">
+            {t("settings.dailyBody")}
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block text-sm">
+              <span className="mb-1 block text-magma-muted">{t("settings.dailyFolder")}</span>
+              <input
+                value={prefs.dailyFolder}
+                onChange={(e) => setPrefs({ dailyFolder: e.target.value })}
+                list="magma-folder-list"
+                className="w-full rounded-lg border border-black/10 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-magma-accent dark:border-white/10"
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1 block text-magma-muted">{t("settings.dailyTemplate")}</span>
+              <select
+                value={prefs.dailyTemplate}
+                onChange={(e) => setPrefs({ dailyTemplate: e.target.value })}
+                className="w-full rounded-lg border border-black/10 bg-transparent px-2 py-1.5 text-sm outline-none focus:border-magma-accent dark:border-white/10"
+              >
+                <option value="">{t("settings.templateNone")}</option>
+                {notes.map((n) => (
+                  <option key={n.path} value={n.path}>
+                    {n.title} — {n.path}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <datalist id="magma-folder-list">
+            {folders.map((f) => (
+              <option key={f} value={f} />
+            ))}
+          </datalist>
+        </section>
+
+        {/* Templates */}
+        <section className="mb-5">
+          <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-magma-muted">
+            {t("settings.templatesTitle")}
+          </label>
+          <p className="mb-2 text-xs leading-relaxed text-magma-muted">
+            {t("settings.templatesBody")}
+          </p>
+          <input
+            value={prefs.templateFolder}
+            onChange={(e) => setPrefs({ templateFolder: e.target.value })}
+            list="magma-folder-list"
+            placeholder={t("settings.templateFolder")}
+            className="w-full max-w-sm rounded-lg border border-black/10 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-magma-accent dark:border-white/10"
+          />
+        </section>
+
+        {/* Quick capture */}
+        <section className="mb-5">
+          <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-magma-muted">
+            {t("settings.captureTitle")}
+          </label>
+          <p className="mb-2 text-xs leading-relaxed text-magma-muted">
+            {t("settings.captureBody")}
+          </p>
+          <label className="flex cursor-pointer items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={prefs.captureToDaily}
+              onChange={(e) => setPrefs({ captureToDaily: e.target.checked })}
+              className="accent-magma-accent"
+            />
+            <span>{t("settings.captureToDaily")}</span>
+          </label>
+        </section>
+        </>)}
 
         {tab === "appearance" && (<>
         {/* Appearance */}
@@ -517,7 +608,10 @@ export default function Settings({
             live, so "save" is what actually commits them. */}
         <footer className="flex items-center gap-2 border-t border-black/5 px-6 py-3.5 dark:border-white/5">
           <button
-            onClick={resetDefaults}
+            onClick={() => {
+              resetDefaults();
+              resetPrefs();
+            }}
             title={t("settings.resetHint")}
             className="whitespace-nowrap rounded-lg border border-black/10 px-3 py-1.5 text-sm text-magma-muted transition hover:border-black/20 hover:text-magma-ink dark:border-white/15 dark:hover:border-white/30"
           >

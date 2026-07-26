@@ -14,6 +14,9 @@ pub struct NoteMeta {
     pub title: String,
     /// True when frontmatter declares `author: ai` — a note an LLM wrote.
     pub ai_authored: bool,
+    /// Last modified, in milliseconds since the epoch. 0 when unknown.
+    /// Lets the UI answer "what changed lately?" without reading every file.
+    pub modified: u64,
 }
 
 #[derive(Serialize)]
@@ -50,6 +53,7 @@ fn collect(root: &Path, dir: &Path, out: &mut Vec<NoteMeta>) -> std::io::Result<
                 path: rel_path(root, &path),
                 title: title_of(&path, &content),
                 ai_authored: is_ai_authored(&content),
+                modified: modified_ms(&entry),
             });
         }
     }
@@ -75,6 +79,16 @@ pub fn write_note(vault: &Path, rel: &str, content: &str) -> std::io::Result<()>
     fs::write(full, content)
 }
 
+fn modified_ms(entry: &fs::DirEntry) -> u64 {
+    entry
+        .metadata()
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 fn rel_path(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
@@ -87,7 +101,13 @@ fn rel_path(root: &Path, path: &Path) -> String {
 /// why typing a title inside the note names it in the sidebar.
 fn title_of(path: &Path, content: &str) -> String {
     if let Some(t) = title_from_content(content) {
-        return t;
+        // A template's heading is often nothing but a placeholder ("{{title}}").
+        // Showing that in the sidebar names the note after a hole in itself —
+        // its filename is the real name.
+        let bare_placeholder = t.starts_with("{{") && t.ends_with("}}");
+        if !bare_placeholder {
+            return t;
+        }
     }
     path.file_stem()
         .map(|s| s.to_string_lossy().to_string())
@@ -417,6 +437,15 @@ mod tests {
     fn plain_note_is_not_ai() {
         assert!(!is_ai_authored("# Just a heading\n\ntext"));
         assert!(!is_ai_authored("---\nauthor: human\n---\ntext"));
+    }
+
+    #[test]
+    fn placeholder_heading_falls_back_to_the_filename() {
+        let v = tmp_vault();
+        write_note(&v, "Kunde.md", "# {{title}}\n\nAngelegt am {{date}}.").unwrap();
+        let notes = list_notes(&v).unwrap();
+        assert_eq!(notes[0].title, "Kunde");
+        fs::remove_dir_all(&v).ok();
     }
 
     #[test]

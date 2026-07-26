@@ -9,6 +9,8 @@ export interface NoteMeta {
   title: string;
   /** true when the note was created or last edited by an LLM via MCP. */
   aiAuthored: boolean;
+  /** Last modified, in milliseconds since the epoch; 0 when unknown. */
+  modified: number;
 }
 
 export interface Note extends NoteMeta {
@@ -197,6 +199,123 @@ export async function replaceAll(
     dryRun,
     renameNotes,
   });
+}
+
+// --- Connections: outgoing links, unlinked mentions, related notes ---------
+
+export interface OutgoingLink {
+  name: string;
+  /** Empty when no note of that name exists yet. */
+  path: string;
+  title: string;
+  missing: boolean;
+}
+
+export interface Mention {
+  path: string;
+  title: string;
+  snippet: string;
+  count: number;
+}
+
+export interface RelatedNote {
+  path: string;
+  title: string;
+  /** 0..1 share of vocabulary with the note asked about. */
+  score: number;
+  linked: boolean;
+}
+
+export async function outgoingLinks(
+  vault: string,
+  path: string
+): Promise<OutgoingLink[]> {
+  if (!hasTauri) return [];
+  return invoke<OutgoingLink[]>("outgoing_links", { vault, path });
+}
+
+/** Notes naming this one in plain text without linking it. */
+export async function unlinkedMentions(
+  vault: string,
+  path: string
+): Promise<Mention[]> {
+  if (!hasTauri) return [];
+  return invoke<Mention[]>("unlinked_mentions", { vault, path });
+}
+
+/** Turn plain mentions of `name` inside `path` into wikilinks; returns how many. */
+export async function linkMentions(
+  vault: string,
+  path: string,
+  name: string
+): Promise<number> {
+  return invoke<number>("link_mentions", { vault, path, name });
+}
+
+export async function relatedNotes(
+  vault: string,
+  path: string,
+  limit = 8
+): Promise<RelatedNote[]> {
+  if (!hasTauri) return [];
+  return invoke<RelatedNote[]>("related_notes", { vault, path, limit });
+}
+
+// --- Version history -------------------------------------------------------
+
+export interface Version {
+  id: string;
+  /** Milliseconds since the epoch. */
+  takenAt: number;
+  bytes: number;
+}
+
+export async function listVersions(vault: string, path: string): Promise<Version[]> {
+  if (!hasTauri) return [];
+  return invoke<Version[]>("list_versions", { vault, path });
+}
+
+export async function readVersion(
+  vault: string,
+  path: string,
+  id: string
+): Promise<string> {
+  return invoke<string>("read_version", { vault, path, id });
+}
+
+export async function restoreVersion(
+  vault: string,
+  path: string,
+  id: string
+): Promise<void> {
+  return invoke("restore_version", { vault, path, id });
+}
+
+// --- Daily notes, templates, quick capture ---------------------------------
+
+/** Open the note named `title` in `folder`, creating it from `content` if new. */
+export async function openOrCreate(
+  vault: string,
+  folder: string,
+  title: string,
+  content: string
+): Promise<{ path: string; created: boolean }> {
+  const [path, created] = await invoke<[string, boolean]>("open_or_create", {
+    vault,
+    folder,
+    title,
+    content,
+  });
+  return { path, created };
+}
+
+/** Append text to the end of a note without opening it. */
+export async function appendNote(
+  vault: string,
+  path: string,
+  text: string
+): Promise<void> {
+  return invoke("append_note", { vault, path, text });
 }
 
 export interface RemoteConfig {

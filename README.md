@@ -94,6 +94,42 @@ crates/magma-webdav/ Optional remote vault: sync a WebDAV folder to a local cach
 docs/PLAN.md         Product plan, research, and roadmap
 ```
 
+## Every day, and every connection
+
+- **Command palette** — `Cmd/Ctrl+P` opens everything: jump to a note, run a
+  command, start from a template. Matching is subsequence-based, so `grph` finds
+  "Show graph". (`Cmd/Ctrl+K` stays the link key inside the editor.)
+- **Quick capture** — `Cmd/Ctrl+Shift+N` catches a thought into today's note
+  without leaving what you were doing.
+- **Daily notes and a calendar** — one note per day, named `2026-07-26`. The
+  calendar in the sidebar fills the days that exist and creates the ones that
+  don't.
+- **Templates** — every note in your template folder shows up in the palette as
+  "New note from: …". `{{date}}`, `{{time}}`, `{{title}}`, `{{weekday}}`,
+  `{{month}}` and `{{year}}` are filled in.
+- **Version history** — Magma keeps a copy before every larger change, and
+  always before a vault-wide replace. Diff view, one-click restore, and the
+  restore is itself undoable. Renaming or moving a note takes its history along.
+- **Connections under the editor** — backlinks, outgoing links (including
+  targets that don't exist yet), *unlinked mentions* (notes that write this
+  note's name without linking it — link them one by one or all at once), and
+  similar notes.
+- **Similar notes** — TF-IDF over your vault, compared by cosine. Named
+  honestly: this is lexical similarity, not semantic. It finds notes using the
+  same words, not notes meaning the same thing — and it needs no model
+  download, no runtime and no network.
+- **What Claude wrote** — a page listing every note carrying `author: ai`,
+  newest first. Letting an LLM into your vault is only comfortable if you can
+  see exactly what it touched.
+
+## Find & replace across the vault
+
+Renaming a phrase in 500 notes is one dialog. Nothing is written before you have
+seen the preview: every affected note with its hit count. Wikilinks resolve on a
+note's *filename*, so replacing only the text would leave every `[[…]]` pointing
+at nothing — Magma renames the note that carries the term first, repointing its
+links (aliases and anchors included), and only then rewrites the text.
+
 ## Make it yours
 
 Everything visual is adjustable in **Settings → Appearance**: light/dark/system

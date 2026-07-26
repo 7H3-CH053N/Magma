@@ -228,6 +228,7 @@ pub fn backlinks(vault: &Path, target_path: &str) -> std::io::Result<Vec<NoteMet
                 path: note.path.clone(),
                 title: note.title.clone(),
                 ai_authored: note.ai_authored,
+                modified: note.modified,
             });
         }
     }
