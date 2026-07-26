@@ -59,10 +59,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # macOS runners are Apple Silicon, so a default build produces an
+          # arm64-only DMG that simply will not launch on an Intel Mac. The
+          # universal target covers both at the cost of compiling twice.
           - os: macos-latest
             bundles: dmg
+            target: universal-apple-darwin
           - os: windows-latest
             bundles: msi
+            target: ""
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -72,16 +77,22 @@ jobs:
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Add the macOS architectures
+        if: matrix.target != ''
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - run: npm ci
       - name: Build desktop app
-        run: npm run tauri build -- --bundles ${{ matrix.bundles }}
+        run: >
+          npm run tauri build --
+          --bundles ${{ matrix.bundles }}
+          ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
       - name: Upload desktop bundle
         uses: actions/upload-artifact@v4
         with:
           name: magma-${{ matrix.os }}
           path: |
-            target/release/bundle/dmg/*.dmg
             target/release/bundle/msi/*.msi
+            target/universal-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: ignore
 
       # On a version tag the installers go to a Release as well: artifacts
@@ -96,8 +107,8 @@ jobs:
           tag_name: ${{ inputs.release_tag || github.ref_name }}
           target_commitish: ${{ github.sha }}
           files: |
-            target/release/bundle/dmg/*.dmg
             target/release/bundle/msi/*.msi
+            target/universal-apple-darwin/release/bundle/dmg/*.dmg
           fail_on_unmatched_files: false
           generate_release_notes: true
           body: |
