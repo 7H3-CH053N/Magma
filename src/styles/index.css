@@ -208,8 +208,11 @@ body {
    handle for editing the link itself. Quiet until you reach for it. */
 .magma-prose .wikilink-edit {
   display: inline-block;
-  /* Enough air that it reads as a separate handle, not part of the word. */
-  margin-left: 0.42em;
+  /* Enough air that it reads as a separate handle, not part of the word. The
+     padding grows the click target past the thin strokes; the margin is
+     reduced by the same amount so the icon does not visually move. */
+  margin-left: 0.22em;
+  padding: 0.14em 0.2em;
   font-size: 0.95em;
   /* The SVG sits on the text baseline; nudge it up to the x-height centre. */
   vertical-align: -0.12em;
@@ -220,6 +223,12 @@ body {
   cursor: pointer;
   user-select: none;
   transition: opacity 120ms, color 120ms;
+}
+/* The icon must not be the click target: a thin stroke is a hard thing to
+   hit, and the span around it is the element carrying the handler. */
+.magma-prose .wikilink-edit svg {
+  pointer-events: none;
+  display: block;
 }
 .magma-prose .wikilink-edit:hover {
   opacity: 1;

@@ -94,11 +94,16 @@ export const WikiLink = Extension.create<WikiLinkOptions>({
             return DecorationSet.create(state.doc, decos);
           },
           handleClick(view, _pos, event) {
-            const el = event.target as HTMLElement | null;
+            const el = event.target as Element | null;
             // The pencil: drop the caret inside the link, which also unmasks
             // the raw [[…]] so it can be edited.
-            if (el && el.classList.contains("wikilink-edit")) {
-              const at = Number(el.getAttribute("data-edit-pos"));
+            //
+            // `closest`, not `classList`: the pencil is an inline SVG, so a
+            // click lands on the <path> inside it, not on the span carrying
+            // the class — which is exactly why the first version did nothing.
+            const pencil = el?.closest?.(".wikilink-edit");
+            if (pencil) {
+              const at = Number(pencil.getAttribute("data-edit-pos"));
               if (Number.isFinite(at)) {
                 const tr = view.state.tr.setSelection(
                   TextSelection.create(view.state.doc, at)
@@ -110,8 +115,9 @@ export const WikiLink = Extension.create<WikiLinkOptions>({
             }
             // Never swallow a selection: dragging across a link must select it.
             if (!view.state.selection.empty) return false;
-            if (el && el.classList.contains("wikilink")) {
-              const name = el.getAttribute("data-name");
+            const link = el?.closest?.(".wikilink");
+            if (link) {
+              const name = link.getAttribute("data-name");
               if (name) {
                 onOpen(name);
                 return true;
