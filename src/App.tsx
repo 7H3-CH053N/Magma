@@ -444,6 +444,23 @@ export default function App() {
     [vault, activePath, flushSave, refreshNotes, t]
   );
 
+  /** Ask which folder to move a folder into — drag & drop without the drag. */
+  const handleMoveFolder = useCallback(
+    (folder: string) => {
+      if (!vault) return;
+      setDialog({
+        title: t("sidebar.moveFolderPrompt", { folder }),
+        initial: "",
+        // Its own subtree would be a paradox, so those are not offered.
+        suggestions: folders.filter(
+          (f) => f !== folder && !f.startsWith(`${folder}/`)
+        ),
+        onSubmit: (into) => void moveFolderTo(folder, into.trim()),
+      });
+    },
+    [vault, folders, moveFolderTo, t]
+  );
+
   // Move a note into a folder ("" = root). Used by both the dialog and drag-drop.
   const moveTo = useCallback(
     async (path: string, folder: string) => {
@@ -768,6 +785,7 @@ export default function App() {
         onCreate={createNewNote}
         onCreateFolder={handleCreateFolder}
         onMoveFolder={(folder, into) => void moveFolderTo(folder, into)}
+        onMoveFolderPrompt={handleMoveFolder}
         onRename={handleRename}
         onDelete={handleDelete}
         onMove={handleMove}

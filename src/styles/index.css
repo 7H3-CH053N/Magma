@@ -210,10 +210,13 @@ body {
   display: inline-block;
   /* Enough air that it reads as a separate handle, not part of the word. */
   margin-left: 0.42em;
-  font-size: 0.88em;
-  vertical-align: 0.06em;
-  color: var(--magma-muted);
-  opacity: 0.32;
+  font-size: 0.95em;
+  /* The SVG sits on the text baseline; nudge it up to the x-height centre. */
+  vertical-align: -0.12em;
+  /* Three quarters of the text colour: present enough to find without
+     hunting, quiet enough not to compete with the link itself. */
+  color: var(--magma-ink);
+  opacity: 0.75;
   cursor: pointer;
   user-select: none;
   transition: opacity 120ms, color 120ms;

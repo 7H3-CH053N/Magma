@@ -18,6 +18,15 @@ import {
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 520;
 const WIDTH_KEY = "magma.sidebarWidth";
+/** One nesting level, in px. */
+const INDENT = 14;
+/**
+ * Notes have no chevron, so without a matching gutter they would sit left of
+ * the folder names around them and the tree would read as a flat stack. This
+ * is the width of that gutter: a note at nesting level L lines up exactly with
+ * a subfolder name at the same level.
+ */
+const NOTE_GUTTER = 16;
 
 interface SidebarProps {
   vault: string | null;
@@ -31,6 +40,8 @@ interface SidebarProps {
   onCreateFolder: (parent: string) => void;
   /** Move a folder (with everything in it) into another ("" = root). */
   onMoveFolder: (folder: string, into: string) => void;
+  /** Ask where to move a folder — the path that does not need dragging. */
+  onMoveFolderPrompt: (folder: string) => void;
   onRename: (path: string, currentTitle: string) => void;
   onDelete: (path: string, title: string) => void;
   onMove: (path: string) => void;
@@ -57,6 +68,7 @@ export default function Sidebar({
   onCreate,
   onCreateFolder,
   onMoveFolder,
+  onMoveFolderPrompt,
   onRename,
   onDelete,
   onMove,
@@ -166,14 +178,18 @@ export default function Sidebar({
           }}
           onDragLeave={() => setDropTarget((d) => (d === node.path ? null : d))}
           onDrop={onDropInto(node.path)}
-          style={{ paddingLeft: depth * 12 }}
+          style={{ paddingLeft: depth * INDENT }}
           className={`group flex w-full select-none items-center rounded-md pr-1 transition ${
             isDrop ? "bg-magma-accent/15" : "hover:bg-black/5 dark:hover:bg-white/10"
           }`}
         >
           <button
             onClick={() => toggleFolder(node.path)}
-            className="flex min-w-0 flex-1 items-center gap-1 px-1.5 py-1 text-left text-[13px] text-magma-muted"
+            // An open folder is the one you are working in — it carries the
+            // accent, the same way the open note does.
+            className={`flex min-w-0 flex-1 items-center gap-1 px-1.5 py-1 text-left text-[13px] transition-colors ${
+              isOpen ? "text-magma-accent" : "text-magma-muted"
+            }`}
           >
             <ChevronIcon size={12} open={isOpen} className="shrink-0 opacity-70" />
             <span className="truncate">{node.name}</span>
@@ -190,6 +206,14 @@ export default function Sidebar({
             <NewFolderIcon size={14} />
           </button>
           <button
+            onClick={() => onMoveFolderPrompt(node.path)}
+            title={t("sidebar.moveFolder")}
+            aria-label={`${t("sidebar.moveFolder")}: ${node.name}`}
+            className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-magma-muted opacity-0 transition hover:bg-black/10 hover:text-magma-ink group-hover:opacity-100 dark:hover:bg-white/20"
+          >
+            <FolderIcon size={14} />
+          </button>
+          <button
             onClick={() => onDeleteFolder(node.path)}
             title={t("sidebar.deleteFolder")}
             className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-magma-muted opacity-0 transition hover:bg-red-500/15 hover:text-red-500 group-hover:opacity-100 dark:hover:bg-red-500/20"
@@ -200,7 +224,9 @@ export default function Sidebar({
         {isOpen && (
           <div>
             {node.children.map((c) => renderFolder(c, depth + 1))}
-            <div style={{ paddingLeft: (depth + 1) * 12 }}>
+            {/* Notes line up under their folder's *name*, past the chevron, so
+                the tree reads as a tree instead of a stack of rows. */}
+            <div style={{ paddingLeft: (depth + 1) * INDENT + NOTE_GUTTER }}>
               {node.notes.map(renderNote)}
             </div>
           </div>
@@ -223,7 +249,7 @@ export default function Sidebar({
     >
       <button
         onClick={() => onSelect(n.path)}
-        className={`flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm ${
+        className={`flex min-w-0 flex-1 items-center gap-2 px-1.5 py-1.5 text-left text-sm ${
           activePath === n.path ? "text-magma-accent" : ""
         }`}
       >
@@ -386,6 +412,7 @@ export default function Sidebar({
               setDropTarget("");
             }}
             onDrop={onDropInto("")}
+            style={{ paddingLeft: NOTE_GUTTER }}
             className={`rounded-md ${dropTarget === "" ? "bg-magma-accent/10" : ""}`}
           >
             {rootNotes.map(renderNote)}

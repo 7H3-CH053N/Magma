@@ -64,7 +64,16 @@ export const WikiLink = Extension.create<WikiLinkOptions>({
                         el.className = "wikilink-edit";
                         el.setAttribute("data-edit-pos", String(from + 2));
                         el.title = "Link bearbeiten";
-                        el.textContent = "✎";
+                        // An inline SVG rather than the "✎" glyph: emoji-style
+                        // glyphs ignore `color`, so the pencil could not follow
+                        // the text colour or turn accent on hover — and they
+                        // look nothing like the rest of the icon set.
+                        el.innerHTML =
+                          '<svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" ' +
+                          'stroke="currentColor" stroke-width="1.9" stroke-linecap="round" ' +
+                          'stroke-linejoin="round" aria-hidden="true">' +
+                          '<path d="M4 20h4L20 8a2.8 2.8 0 0 0-4-4L4 16v4Z"/>' +
+                          '<path d="M14 6l4 4"/></svg>';
                         return el;
                       },
                       { side: 1 }
