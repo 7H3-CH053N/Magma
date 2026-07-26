@@ -2,77 +2,163 @@
 
 [English](README.md) · **Deutsch**
 
-**Dein zweites Gehirn – ohne Einrichtungsaufwand.** Eine schöne, lokal-zuerst
-arbeitende Notiz-App mit der Grundidee von Obsidian – einfache Markdown-Dateien,
-`[[Wikilinks]]`, Backlinks und ein Graph – aber einfacher zu bedienen und von
-Anfang an LLM-nativ.
+**Dein zweites Gehirn – ohne Einrichtungsaufwand.** Eine Notiz-App, die zuerst
+auf deiner Festplatte lebt, mit der Grundidee von Obsidian – einfache
+Markdown-Dateien, `[[Wikilinks]]`, Backlinks und ein Graph – aber einfacher zu
+bedienen und von Anfang an für KI gebaut.
 
-Magma ist für zwei Autoren gebaut: **dich** und **deine KI**. Es bringt einen
-eingebauten MCP-Server mit, damit Claude (und andere Agenten) deinen Vault lesen
-*und* neue Notizen schreiben können, die korrekt und logisch mit dem Bestehenden
-verlinkt sind – keine verwaisten Fragmente.
+Magma ist für zwei Autoren gemacht: **dich** und **deine KI**. Ein MCP-Server
+ist eingebaut, damit Claude deinen Vault lesen *und* neue Notizen schreiben
+kann, die richtig mit dem verlinkt sind, was schon da ist – keine
+Waisen-Notizen.
 
-> Status: früh, aber nutzbar. Meilensteine **M0–M3** sind drin: Notizen anlegen/
-> bearbeiten/löschen, Live-Markdown-Editor, `[[Wikilinks]]` mit Autovervollstän-
-> digung, Backlinks, Volltextsuche, Graph-Ansicht und ein eingebauter MCP-Server
-> für Claude. Dazu Flammen-Icon, Startbildschirm, ein Info-/Einstellungen-Panel
-> und Deutsch/Englisch. Siehe [`docs/PLAN.md`](docs/PLAN.md) für Recherche,
-> Roadmap und das Remote-Vault-Design (M6).
+---
+
+## Installation
+
+Magma läuft auf **macOS** und **Windows**. Lade das Installationsprogramm für
+dein System aus dem
+[neuesten Release](https://github.com/7H3-CH053N/Magma/releases/latest):
+
+| System | Datei | Was zu tun ist |
+| --- | --- | --- |
+| macOS (Apple Silicon & Intel) | `Magma_x.y.z_*.dmg` | DMG öffnen, Magma nach *Programme* ziehen |
+| Windows 10/11 (64-Bit) | `Magma_x.y.z_x64_en-US.msi` | Installer ausführen |
+
+**Die Builds sind noch nicht signiert**, deshalb warnen beide Systeme beim
+ersten Start. Das ist bei einer App ohne Zertifikat normal – kein Zeichen
+dafür, dass etwas nicht stimmt, aber vertrauen solltest du dem nur aus einer
+Quelle, der du vertraust:
+
+- **macOS** – beim ersten Start heißt es, Magma stamme „von einem nicht
+  verifizierten Entwickler". Rechtsklick auf die App in *Programme* →
+  **Öffnen** → **Öffnen**. Danach startet sie für immer normal. Wenn macOS die
+  App stattdessen als „beschädigt" bezeichnet, muss die Quarantäne-Markierung
+  weg: `xattr -dr com.apple.quarantine /Applications/Magma.app`
+- **Windows** – SmartScreen zeigt „Der Computer wurde durch Windows
+  geschützt". Auf **Weitere Informationen** → **Trotzdem ausführen**.
+
+Lieber selbst bauen? Siehe [Aus dem Quellcode bauen](#aus-dem-quellcode-bauen) –
+zwei Befehle, und es kommen genau diese Installationsprogramme heraus.
+
+### Der erste Start
+
+1. **Ordner wählen**, in dem deine Notizen liegen. Jeder Ordner geht, auch ein
+   bestehender Obsidian-Vault – Magma liest dieselben `[[Wikilinks]]`, dasselbe
+   YAML-Frontmatter und dieselbe Ordnerstruktur und schreibt nichts Eigenes
+   hinein. Die Wahl wird gemerkt.
+2. **`Cmd/Strg+P`** öffnet alles: Notiz springen, Befehl ausführen, aus einer
+   Vorlage starten.
+3. Optional: **Einstellungen → Claude → Claude Desktop einrichten**, um Claude
+   dazuzuholen.
+
+Deine Notizen bleiben `.md`-Dateien auf deiner Platte. Magma legt nur seine
+eigene Buchhaltung (den Versionsverlauf) in einem versteckten `.magma`-Ordner im
+Vault ab, sonst nichts.
+
+---
 
 ## Warum Magma
 
-Menschen lieben Obsidian dafür, ihre Notizen als lokale Markdown-Dateien zu
-besitzen, und für die Art, wie Ideen sich verbinden (Links + Graph). Sie scheitern
-an der steilen Lernkurve, der rohen Standard-UI und der Plugin-Sucherei für
-Grundfunktionen. Magma behält, was geliebt wird, und behebt, was nicht:
+Menschen lieben an Obsidian, dass ihre Notizen ihnen gehören, und wie sich Ideen
+verbinden. Sie scheitern an der Lernkurve, der rohen Standard-Oberfläche und
+daran, dass man für Grundfunktionen erst Plugins suchen muss. Magma behält, was
+geliebt wird, und repariert, was nervt:
 
-- **Hält dich frei** – ein Vault ist nur ein Ordner mit `.md`-Dateien.
-  Obsidian-Vaults öffnen sich unverändert (`[[Wikilinks]]`, YAML-Frontmatter, Tags).
-- **Kein Einrichtungsritual** – eine saubere, durchdachte Standard-UI. Live-Markdown,
-  bei dem sich die Syntax beim Tippen versteckt. Kein Edit/Vorschau-Umschalten,
-  keine Theme-Sucherei.
-- **Der Graph ist ein Hauptfeature** – sieh, wie sich dein Wissen verbindet, inklusive
-  dessen, was deine KI beigetragen hat.
-- **LLM als Mitautor** – eingebauter MCP-Server. Die KI schlägt Links gegen deine
-  echten Notizen vor, und der Server validiert jeden `[[Link]]`, bevor er
-  geschrieben wird.
+- **Kein Lock-in** – ein Vault ist ein Ordner mit `.md`-Dateien.
+  Obsidian-Vaults öffnen sich so, wie sie sind.
+- **Kein Einrichtungsritual** – eine durchdachte Standard-Oberfläche.
+  Live-Markdown, bei dem die Syntax beim Tippen verschwindet. Kein Umschalten
+  zwischen Bearbeiten und Vorschau, keine Theme-Suche.
+- **Der Graph ist ein Hauptfeature** – sieh, wie sich dein Wissen verbindet,
+  inklusive dem, was deine KI beigetragen hat.
+- **KI als Mitautor** – der eingebaute MCP-Server prüft jeden `[[Link]]`, bevor
+  er geschrieben wird. Eine KI kann also keine stillen Sackgassen anlegen.
 
-## Technik
+## Was drin ist
 
-- **Tauri 2** (Rust) – klein, schnell, nativ auf macOS + Windows.
-- **React + TypeScript + Tailwind** – die Oberfläche.
-- **CodeMirror 6** – der Live-Markdown-Editor.
-- **`crates/magma-core`** – plattformunabhängige Vault-Logik, geteilt von
-  Desktop-Shell und MCP-Server. Vollständig unit-getestet.
+**Schreiben**
 
-## Entwickeln
+- Live-Markdown-Editor: Formatierung erscheint beim Tippen, die Syntax versteckt
+  sich selbst.
+- `[[Wikilinks]]` mit Autovervollständigung, dazu ein dezenter Stift, um einen
+  Link zu bearbeiten, statt ihm zu folgen. Ein Link auf eine noch nicht
+  existierende Notiz wird gestrichelt dargestellt und legt sie beim Klick an –
+  wie in der Wikipedia.
+- Bilder direkt einfügen; sie landen im Vault.
+- Tabellen, Aufgabenlisten, Zitate, Code – ohne Plugin.
 
-Voraussetzungen: Node 20+, Rust (stable) und die
-[Tauri-Systemabhängigkeiten](https://tauri.app/start/prerequisites/) für dein
-Betriebssystem.
+**Sich zurechtfinden**
 
-```bash
-npm install          # Frontend-Abhängigkeiten
-npm run tauri dev    # Desktop-App starten
-```
+- **Befehlspalette** (`Cmd/Strg+P`) – Notizen, Befehle und Vorlagen in einem
+  Feld. Gesucht wird als Teilfolge, `grph` findet also „Graph anzeigen".
+  (`Cmd/Strg+K` bleibt im Editor die Link-Taste.)
+- **Suche**, die in den Notiztexten sucht und nicht nur in Titeln – und den
+  Begriff dort hervorhebt, wo er wirklich steht.
+- **Suchen & Ersetzen im ganzen Vault** – siehe unten.
+- **Graph-Ansicht** – kräftebasiert, verschieben/zoomen/ziehen, eine Farbe pro
+  Hauptordner mit Abstufungen für Unterordner, KI-Notizen mit Ring.
 
-Weitere nützliche Befehle:
+**Im Alltag**
 
-```bash
-npm run build              # Frontend typprüfen + bauen
-cargo test -p magma-core   # Vault-/Core-Unit-Tests
-npm run tauri build        # Desktop-Bundle erzeugen (DMG / MSI)
-```
+- **Schnellnotiz** (`Cmd/Strg+Umschalt+N`) – hält einen Gedanken in der Notiz
+  von heute fest, ohne dass du wegmusst.
+- **Tagesnotizen und Kalender** – eine Notiz pro Tag, benannt `2026-07-26`. Der
+  Kalender in der Seitenleiste füllt die Tage, die es gibt, und legt die an, die
+  fehlen.
+- **Vorlagen** – jede Notiz im Vorlagen-Ordner erscheint in der Palette als
+  „Neue Notiz aus: …". `{{date}}`, `{{time}}`, `{{title}}`, `{{weekday}}`,
+  `{{month}}` und `{{year}}` werden eingesetzt.
+- **Ordner und Unterordner** – einen Unterordner direkt im Ordner anlegen,
+  Ordner per Drag & Drop oder mit einem Knopf verschieben. Notizen lassen sich
+  ebenfalls ziehen.
+
+**Verbindungen, unter dem Editor**
+
+- **Backlinks** – was hierher verlinkt.
+- **Links raus** – worauf diese Notiz zeigt, auch auf Ziele, die es noch nicht
+  gibt.
+- **Erwähnungen** – Notizen, die den Namen dieser Notiz schreiben, ohne sie zu
+  verlinken. Einzeln oder alle auf einmal verlinkbar. So füllt sich der Graph
+  von selbst.
+- **Ähnliche Notizen** – TF-IDF über den Vault, Vergleich per Kosinus. Ehrlich
+  benannt: das ist *lexikalische* Ähnlichkeit, keine semantische. Es findet
+  Notizen mit denselben Wörtern, nicht Notizen mit derselben Bedeutung – dafür
+  ohne Modell-Download, ohne Runtime und ohne Netz.
+
+**Sicherheitsnetz**
+
+- **Versionsverlauf** – Magma legt vor jeder größeren Änderung eine Kopie an,
+  vor einem vault-weiten Ersetzen immer. Diff-Ansicht, Wiederherstellen mit
+  einem Klick, und das Wiederherstellen ist selbst rückgängig zu machen.
+  Umbenennen oder Verschieben nimmt den Verlauf mit.
+- **Was Claude geschrieben hat** – eine Seite mit allen Notizen, die
+  `author: ai` tragen, neueste zuerst. Eine KI in den eigenen Vault zu lassen
+  ist nur dann angenehm, wenn man genau sieht, was sie angefasst hat.
+
+**Import**
+
+- Einen ganzen WordPress-Blog als verlinkte Notizen in einen Ordner holen,
+  gruppiert nach Kategorie, mit erkanntem Autor, der auf deine bestehende Notiz
+  verlinkt wird.
+
+## Suchen & Ersetzen im ganzen Vault
+
+Eine Formulierung in 500 Notizen zu ändern ist ein Dialog. Geschrieben wird
+nichts, bevor du die Vorschau gesehen hast: jede betroffene Notiz mit ihrer
+Trefferzahl. Wikilinks lösen über den *Dateinamen* auf – würde nur der Text
+ersetzt, zeigte jedes `[[…]]` ins Leere. Magma benennt deshalb zuerst die Notiz
+um, die den Begriff im Namen trägt, biegt ihre Links mit (samt Alias und Anker)
+und schreibt erst danach den Text.
 
 ## Mit Claude verbinden
 
-Magma ist sein eigener MCP-Server – keine separate Installation. Öffne in der App
-**Einstellungen → Mit Claude verbinden → Claude Desktop einrichten**. Ein Klick
-schreibt die Konfiguration (mit Backup einer bestehenden); starte Claude Desktop
-neu, fertig.
+Magma ist sein eigener MCP-Server – es muss nichts extra installiert werden.
+**Einstellungen → Claude → Claude Desktop einrichten**. Ein Klick schreibt die
+Konfiguration (mit Sicherung einer vorhandenen) und ersetzt jeden älteren
+Magma-Eintrag; Claude Desktop neu starten, fertig.
 
-Für andere MCP-Clients kopiere das JSON unter *Manuelle Einrichtung* – es startet
-die Magma-Anwendung als Server:
+Für andere MCP-Clients: das JSON unter *Manuelle Einrichtung* kopieren:
 
 ```json
 {
@@ -82,81 +168,84 @@ die Magma-Anwendung als Server:
 }
 ```
 
-Die Schreib-Tools leiten das Modell an, zuerst `find_link_candidates` aufzurufen
-und dann jeden geschriebenen `[[Wikilink]]` zu validieren – kaputte Links kommen
-mit Korrekturvorschlägen zurück statt als tote Enden. KI-Notizen werden mit
-`author: ai` gekennzeichnet und im Graph violett dargestellt. Mit
-`MAGMA_MCP_ALLOW_WRITE=0` läuft der Server schreibgeschützt.
-
-## Jeden Tag, und jede Verbindung
-
-- **Befehlspalette** — `Cmd/Strg+P` öffnet alles: Notiz springen, Befehl
-  ausführen, aus einer Vorlage starten. Gesucht wird als Teilfolge, `grph`
-  findet also „Graph anzeigen". (`Cmd/Strg+K` bleibt im Editor die Link-Taste.)
-- **Schnellnotiz** — `Cmd/Strg+Umschalt+N` hält einen Gedanken in der Notiz von
-  heute fest, ohne dass du wegmusst.
-- **Tagesnotizen und Kalender** — eine Notiz pro Tag, benannt `2026-07-26`. Der
-  Kalender in der Seitenleiste füllt die Tage, die es gibt, und legt die an, die
-  fehlen.
-- **Vorlagen** — jede Notiz im Vorlagen-Ordner erscheint in der Palette als
-  „Neue Notiz aus: …". `{{date}}`, `{{time}}`, `{{title}}`, `{{weekday}}`,
-  `{{month}}` und `{{year}}` werden eingesetzt.
-- **Versionsverlauf** — Magma legt vor jeder größeren Änderung eine Kopie an,
-  vor einem vault-weiten Ersetzen immer. Diff-Ansicht, Wiederherstellen mit
-  einem Klick, und das Wiederherstellen ist selbst rückgängig zu machen.
-  Umbenennen oder Verschieben nimmt den Verlauf mit.
-- **Verbindungen unter dem Editor** — Backlinks, ausgehende Links (auch solche,
-  deren Ziel es noch nicht gibt), *unverlinkte Erwähnungen* (Notizen, die den
-  Namen schreiben, ohne zu verlinken — einzeln oder alle auf einmal verlinkbar)
-  und ähnliche Notizen.
-- **Ähnliche Notizen** — TF-IDF über den Vault, Vergleich per Kosinus. Ehrlich
-  benannt: das ist lexikalische Ähnlichkeit, keine semantische. Es findet
-  Notizen mit denselben Wörtern, nicht Notizen mit derselben Bedeutung — dafür
-  ohne Modell-Download, ohne Runtime und ohne Netz.
-- **Was Claude geschrieben hat** — eine Seite mit allen Notizen, die
-  `author: ai` tragen, neueste zuerst. Eine KI in den eigenen Vault zu lassen
-  ist nur dann angenehm, wenn man genau sieht, was sie angefasst hat.
-
-## Suchen & ersetzen im ganzen Vault
-
-Eine Formulierung in 500 Notizen zu ändern ist ein Dialog. Geschrieben wird
-nichts, bevor du die Vorschau gesehen hast: jede betroffene Notiz mit ihrer
-Trefferzahl. Wikilinks lösen über den *Dateinamen* auf — würde nur der Text
-ersetzt, zeigte jedes `[[…]]` ins Leere. Magma benennt deshalb zuerst die Notiz
-um, die den Begriff im Namen trägt, biegt ihre Links mit (samt Alias und Anker)
-und schreibt erst danach den Text.
+Claude bekommt Werkzeuge zum Suchen, Lesen, Anlegen und Ändern von Notizen, zum
+Durchlaufen des Ordnerbaums, zum Umbenennen, Verschieben und Löschen – und, das
+ist der Punkt, um die Verbindungen im Vault zu sehen: `find_link_candidates`,
+`related_notes`, `unlinked_mentions`, `link_mentions` und
+`list_outgoing_links`. Jeder `[[Wikilink]]`, den Claude schreibt, wird gegen den
+echten Vault geprüft; kaputte kommen mit Korrekturvorschlägen zurück, statt als
+Sackgasse geschrieben zu werden. Von der KI geschriebene Notizen bekommen
+`author: ai`, erscheinen im Graph violett und stehen unter *KI*. Vor jeder
+KI-Änderung wird ein Snapshot angelegt. `MAGMA_MCP_ALLOW_WRITE=0` schaltet auf
+Nur-Lesen.
 
 ## Anpassen
 
-Alles Visuelle ist unter **Einstellungen → Darstellung** anpassbar: Hell-/Dunkel-/
-System-Modus, Akzent- und KI-Notiz-Farben, Oberflächen- und Editor-Schrift,
-Schriftgröße und Lesebreite. Änderungen wirken sofort in der Vorschau und
-werden beim Speichern übernommen. Auch die native Menüleiste folgt der
-gewählten Sprache — nur die Einträge, die macOS selbst einhängt (Writing Tools,
-AutoFill, Diktat, Emoji & Symbole), bleiben in der Systemsprache, weil sie zu
-macOS gehören und nicht zu Magma.
-Schriften nutzen nur, was bereits auf deinem System vorhanden ist – nichts wird
-heruntergeladen.
+**Einstellungen → Darstellung & Sprache**: Hell/Dunkel/System, Akzent- und
+KI-Notiz-Farbe, Oberflächen- und Editor-Schrift, Schriftgröße, Lesebreite.
+Änderungen erscheinen sofort in der Vorschau und werden mit **Speichern**
+übernommen; Schließen ohne Speichern nimmt sie zurück. Schriften nutzen nur,
+was ohnehin auf deinem System liegt – nichts wird heruntergeladen.
+
+Die native Menüleiste folgt der gewählten Sprache. Nur die Einträge, die macOS
+selbst einhängt (Writing Tools, AutoFill, Diktat, Emoji & Symbole), bleiben in
+der Systemsprache – die gehören zu macOS, nicht zu Magma.
 
 ## Remote-Vault (optional)
 
-Richte Magma auf eine WebDAV-URL aus (Einstellungen → Remote-Vault), um einen
-Vault auf einem Webserver zu halten und von jedem Rechner zu bearbeiten. Magma
-synchronisiert ihn in einen lokalen Cache und überträgt deine Änderungen beim
-Speichern zurück. HTTPS ist Pflicht; das Passwort wird nur für die Sitzung
-behalten (Speicherung im OS-Schlüsselbund ist als Folgeschritt geplant).
+Richte Magma auf eine WebDAV-URL aus (**Einstellungen → Vault & Sync**), um
+einen Vault auf einem Webserver zu halten und von jedem Rechner zu bearbeiten.
+Magma synchronisiert ihn in einen lokalen Cache und schickt deine Änderungen
+beim Speichern zurück. HTTPS ist Pflicht; das Passwort bleibt nur für die
+Sitzung gespeichert (Ablage im Schlüsselbund ist geplant).
+
+---
+
+## Aus dem Quellcode bauen
+
+Voraussetzungen: Node 20+, Rust (stable) und die
+[Tauri-Systemabhängigkeiten](https://tauri.app/start/prerequisites/) für dein
+Betriebssystem.
+
+```bash
+npm install
+npm run tauri build      # erzeugt das DMG (macOS) / MSI (Windows)
+```
+
+Das Installationsprogramm liegt danach in `src-tauri/target/release/bundle/`.
+
+Zum Entwickeln:
+
+```bash
+npm run tauri dev        # App mit Hot Reload starten
+npm run build            # Typprüfung + Frontend bauen
+cargo test -p magma-core -p magma-mcp -p magma-webdav -p magma-import
+```
 
 ## Aufbau
 
 ```
-src/                 React-UI (Sidebar, Live-Markdown-Editor, Graph, Einstellungen)
-src-tauri/           Tauri-Desktop-Shell – dünne Command-Schicht über magma-core
-crates/magma-core/   Reine Rust-Vault-Logik: Notizen, Links, Graph, Suche und die
-                     KI-Mitautor-Regeln – auf jeder Plattform testbar
+src/                 React-Oberfläche (Seitenleiste, Editor, Graph, Panels)
+src-tauri/           Tauri-Desktop-Shell – dünne Befehlsschicht über magma-core
+crates/magma-core/   Reine Rust-Vault-Logik: Notizen, Links, Graph, Suche,
+                     Verlauf, Ähnlichkeit und die Regeln für die KI als Mitautor
 crates/magma-mcp/    Eingebauter MCP-Server (stdio JSON-RPC) über magma-core
-crates/magma-webdav/ Optionaler Remote-Vault: WebDAV-Ordner in lokalen Cache syncen
+crates/magma-webdav/ Optionaler Remote-Vault über WebDAV
+crates/magma-import/ WordPress-Importer
 docs/PLAN.md         Produktplan, Recherche und Roadmap
 ```
+
+Gebaut mit **Tauri 2** (Rust-Kern, ~10 MB Binaries), **React + TypeScript +
+Tailwind** und einem **TipTap/ProseMirror**-Editor. Die Vault-Logik steckt in
+`magma-core` und ist auf jeder Plattform unit-getestet – Desktop-App und
+MCP-Server arbeiten damit immer auf demselben Modell deiner Notizen.
+
+## Stand
+
+Die Meilensteine **M0–M4** und **M7** sind fertig; **M5** (Packaging) liefert
+unsignierte Installationsprogramme, Signierung und Auto-Update stehen noch aus;
+**M6** (Remote-Vault) hat eine funktionierende erste Version. Die Roadmap steht
+in [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Lizenz
 

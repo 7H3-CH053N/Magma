@@ -3,6 +3,10 @@ name: CI
 on:
   push:
     branches: [main]
+    # Version tags build the installers and publish them to a Release. Without
+    # this the bundle job's tag condition could never fire — a tag push does
+    # not match a branch filter.
+    tags: ["v*"]
   pull_request:
   # Installer builds are opt-in: run them from the Actions tab when you want a
   # .dmg/.msi to install.
@@ -42,6 +46,9 @@ jobs:
   # above still guards every push and PR.
   bundle:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    # Needed to attach the installers to a GitHub Release on a version tag.
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -70,3 +77,29 @@ jobs:
             target/release/bundle/dmg/*.dmg
             target/release/bundle/msi/*.msi
           if-no-files-found: ignore
+
+      # On a version tag the installers go to a Release as well: artifacts
+      # expire after 90 days and need a GitHub login to download, which is no
+      # way to hand an app to someone. Each OS appends to the same release.
+      - name: Publish installers to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/release/bundle/dmg/*.dmg
+            target/release/bundle/msi/*.msi
+          fail_on_unmatched_files: false
+          generate_release_notes: true
+          body: |
+            Desktop builds of Magma for macOS and Windows.
+
+            **These installers are not code-signed**, so the first launch is
+            blocked by the OS. That is expected for an app without a
+            certificate — the README explains the two clicks it takes:
+
+            - macOS: right-click Magma in *Applications* → **Open** → **Open**
+            - Windows: SmartScreen → **More info** → **Run anyway**
+
+            Installation, first steps and how to connect Claude:
+            [English](https://github.com/7H3-CH053N/Magma#install) ·
+            [Deutsch](https://github.com/7H3-CH053N/Magma/blob/main/README.de.md#installation)
