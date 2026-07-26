@@ -9,8 +9,14 @@ on:
     tags: ["v*"]
   pull_request:
   # Installer builds are opt-in: run them from the Actions tab when you want a
-  # .dmg/.msi to install.
+  # .dmg/.msi to install. Give a tag to cut a release in the same run — handy
+  # when a tag cannot be pushed from where you are working.
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Publish a release under this tag (e.g. v0.1.0). Empty = build artifacts only."
+        required: false
+        default: ""
 
 # Cancel superseded runs on the same ref so pushes don't pile up duplicate runs.
 concurrency:
@@ -82,9 +88,13 @@ jobs:
       # expire after 90 days and need a GitHub login to download, which is no
       # way to hand an app to someone. Each OS appends to the same release.
       - name: Publish installers to the release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
         uses: softprops/action-gh-release@v2
         with:
+          # A tag push releases under that tag; a dispatch releases under the
+          # tag typed into the form, creating it at this commit.
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
           files: |
             target/release/bundle/dmg/*.dmg
             target/release/bundle/msi/*.msi
