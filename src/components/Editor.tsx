@@ -64,6 +64,21 @@ export default function Editor({
   stemsRef.current = new Set(notes.map((n) => stemOf(n.path).toLowerCase()));
   const [picker, setPicker] = useState<{ text: string } | null>(null);
 
+  /**
+   * The markdown this editor itself last handed upwards.
+   *
+   * Without it, every keystroke came back as a changed `value` and the effect
+   * below rebuilt the document — which puts the caret at the end. It looked
+   * like a comparison against the editor's own text, but the two sides were
+   * never the same string: what goes up is unescaped by `toMarkdown`, while
+   * `getMarkdown()` returns `\[\[Note\]\]`. So in any note containing a
+   * wikilink the two differed permanently, and the only thing standing between
+   * the user and a jumping caret was the `isFocused` guard — which loses the
+   * moment focus is anywhere else, exactly what happens when a link is
+   * inserted from the picker.
+   */
+  const emitted = useRef(value);
+
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
@@ -108,19 +123,26 @@ export default function Editor({
       },
     },
     onUpdate: ({ editor }) => {
-      onChange(toMarkdown(editor));
+      const markdown = toMarkdown(editor);
+      emitted.current = markdown;
+      onChange(markdown);
     },
   });
 
-  // When the note switches, the parent remounts via `key`, so this mainly
-  // guards programmatic content changes (e.g. remote sync) without clobbering
-  // what the user is typing.
+  // Apply changes that came from outside the editor — a restored version, a
+  // vault-wide replace, a remote sync — and nothing else.
   useEffect(() => {
     if (!editor) return;
-    const current = editor.storage.markdown.getMarkdown();
-    if (value !== current && !editor.isFocused) {
-      editor.commands.setContent(value, false);
-    }
+    if (value === emitted.current || value === toMarkdown(editor)) return;
+    // Keep the caret where it was; an external edit should not move the user.
+    const { from, to } = editor.state.selection;
+    editor.commands.setContent(value, false);
+    const max = Math.max(0, editor.state.doc.content.size - 1);
+    editor.commands.setTextSelection({
+      from: Math.min(from, max),
+      to: Math.min(to, max),
+    });
+    emitted.current = value;
   }, [value, editor]);
 
   // Selected text -> open the picker so it can become a link.
@@ -314,6 +336,15 @@ function Toolbar({ editor, onLink }: { editor: TiptapEditor; onLink: () => void 
         title="Heading 2"
       >
         H2
+      </button>
+      {/* H3 was configured in the editor and styled in the stylesheet, but had
+          no button — reachable only by typing "### ". */}
+      <button
+        className={btn(editor.isActive("heading", { level: 3 }))}
+        onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
+        title="Heading 3"
+      >
+        H3
       </button>
       <button
         className={btn(editor.isActive("bulletList"))}
