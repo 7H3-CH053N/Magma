@@ -22,14 +22,11 @@ dein System aus dem
 
 | System | Datei | Was zu tun ist |
 | --- | --- | --- |
-| macOS | `Magma_x.y.z_*.dmg` | DMG öffnen, Magma nach *Programme* ziehen |
+| macOS (Apple Silicon & Intel) | `Magma_x.y.z_universal.dmg` | DMG öffnen, Magma nach *Programme* ziehen |
 | Windows 10/11 (64-Bit) | `Magma_x.y.z_x64_en-US.msi` | Installer ausführen |
 
-> **Hinweis zu v0.1.0:** Das DMG dieses Releases (`Magma_0.1.0_aarch64.dmg`)
-> läuft **nur auf Apple Silicon** — GitHubs macOS-Runner sind ARM, und der Build
-> wurde nicht als Universal-Binary angefordert. Auf einem Intel-Mac startet es
-> nicht. Ab dem nächsten Release ist das DMG universal; auf einem Intel-Mac
-> heute: aus dem Quellcode bauen (zwei Befehle, siehe unten).
+> Das allererste Release (v0.1.0) hatte ein DMG nur für Apple Silicon; jedes
+> Release seither ist ein Universal-Binary und läuft auf beidem.
 
 **Die Builds sind noch nicht signiert**, deshalb warnen beide Systeme beim
 ersten Start. Das ist bei einer App ohne Zertifikat normal – kein Zeichen

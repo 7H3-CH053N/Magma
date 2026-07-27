@@ -19,14 +19,11 @@ from the [latest release](https://github.com/7H3-CH053N/Magma/releases/latest):
 
 | System | File | What to do |
 | --- | --- | --- |
-| macOS | `Magma_x.y.z_*.dmg` | Open the DMG, drag Magma into *Applications* |
+| macOS (Apple Silicon & Intel) | `Magma_x.y.z_universal.dmg` | Open the DMG, drag Magma into *Applications* |
 | Windows 10/11 (64-bit) | `Magma_x.y.z_x64_en-US.msi` | Run the installer |
 
-> **v0.1.0 note:** that release's DMG (`Magma_0.1.0_aarch64.dmg`) is
-> **Apple Silicon only** — GitHub's macOS runners are ARM, and the build was
-> not asked for a universal binary. It will not launch on an Intel Mac. From
-> the next release the DMG is universal; on an Intel Mac today, build from
-> source (two commands, see below).
+> The very first release (v0.1.0) shipped an Apple-Silicon-only DMG; every
+> release since is a universal binary that runs on both.
 
 **The builds are not code-signed yet**, so both systems will warn you the first
 time. This is expected for an app that has no certificate — not a sign that
