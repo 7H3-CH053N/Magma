@@ -168,6 +168,13 @@ fn search(vault: String, query: String) -> Result<Vec<vault::SearchHit>, String>
         .map_err(|e| e.to_string())
 }
 
+/// Evaluate a safe Dataview-style query against the vault. This deliberately
+/// supports DQL only; DataviewJS would execute arbitrary JavaScript from notes.
+#[tauri::command]
+fn query_dataview(vault: String, query: String) -> Result<vault::DataviewResult, String> {
+    vault::query_dataview(&PathBuf::from(vault), &query).map_err(|e| e.to_string())
+}
+
 /// Vault-wide find & replace. `dryRun` reports what would change without
 /// writing, so a bulk rewrite is never fired blind. With `renameNotes`, notes
 /// whose own name carries the term are renamed too, so `[[wikilinks]]` and the
@@ -715,6 +722,7 @@ pub fn run() {
             build_graph,
             backlinks,
             search,
+            query_dataview,
             replace_all,
             open_or_create,
             append_note,

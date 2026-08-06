@@ -155,6 +155,14 @@ export interface SearchHit {
   snippet: string;
 }
 
+export interface DataviewResult {
+  kind: "table" | "list" | "error";
+  columns: string[];
+  rows: string[][];
+  items: string[];
+  error?: string | null;
+}
+
 /** Build the link graph. `exclude` drops whole folders (templates, scaffolding). */
 export async function buildGraph(vault: string, exclude: string[] = []): Promise<Graph> {
   if (!hasTauri) return { nodes: [], edges: [] };
@@ -169,6 +177,16 @@ export async function backlinks(vault: string, path: string): Promise<NoteMeta[]
 export async function search(vault: string, query: string): Promise<SearchHit[]> {
   if (!hasTauri) return [];
   return invoke<SearchHit[]>("search", { vault, query });
+}
+
+export async function queryDataview(
+  vault: string,
+  query: string
+): Promise<DataviewResult> {
+  if (!hasTauri) {
+    return { kind: "error", columns: [], rows: [], items: [], error: "desktop_required" };
+  }
+  return invoke<DataviewResult>("query_dataview", { vault, query });
 }
 
 export interface ReplaceHit {

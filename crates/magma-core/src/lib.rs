@@ -4,6 +4,7 @@
 //! of the vault.
 
 pub mod ai;
+pub mod dataview;
 pub mod history;
 pub mod links;
 pub mod related;
@@ -13,6 +14,7 @@ pub use ai::{
     ai_create_note, ai_update_note, find_link_candidates, stamp_ai_author, validate_links,
     AiWriteResult, BrokenLink, LinkCandidate, LinkCheck,
 };
+pub use dataview::{query_dataview, DataviewResult};
 pub use history::{
     forget as forget_history, list_versions, read_version, relocate as relocate_history, restore,
     snapshot, snapshot_if_due, Version,

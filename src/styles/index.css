@@ -200,6 +200,50 @@ body {
 .magma-prose .tableWrapper {
   overflow-x: auto;
 }
+.dataview-result {
+  border: 1px solid rgba(125, 125, 125, 0.28);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--magma-panel) 72%, transparent);
+  padding: 0.9rem;
+  color: var(--magma-ink);
+}
+.dataview-result table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.dataview-result th,
+.dataview-result td {
+  border-bottom: 1px solid rgba(125, 125, 125, 0.25);
+  padding: 0.45rem 0.55rem;
+  text-align: left;
+  vertical-align: top;
+}
+.dataview-result th {
+  color: var(--magma-muted);
+  font-weight: 600;
+}
+.dataview-result tr:last-child td {
+  border-bottom: 0;
+}
+.dataview-result ul {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+.dataview-query {
+  margin-top: 0.75rem;
+  border-top: 1px solid rgba(125, 125, 125, 0.18);
+  padding-top: 0.6rem;
+}
+.dataview-query summary {
+  cursor: pointer;
+  font-size: 0.78rem;
+  color: var(--magma-muted);
+}
+.dataview-query-source {
+  margin-top: 0.5rem;
+  white-space: pre-wrap;
+}
 /* Placeholder for an empty document. */
 .magma-prose p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
