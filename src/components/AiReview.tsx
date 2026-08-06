@@ -8,7 +8,7 @@ interface AiReviewProps {
 }
 
 /**
- * What AI clients wrote, newest first.
+ * What Claude wrote, newest first.
  *
  * Letting an LLM write into your vault is only comfortable if you can see
  * exactly what it touched — this is that page. Notes carry `author: ai` in

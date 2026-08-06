@@ -563,7 +563,7 @@ export default function Settings({
         )}
 
         {tab === "claude" && (
-        /* Connect AI clients through MCP */
+        /* Connect Claude and Codex through MCP */
         <>
         <section className="mb-6">
           <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-magma-muted">
@@ -572,7 +572,7 @@ export default function Settings({
           <p className="mb-2 text-xs text-magma-muted">{t("settings.connectBody")}</p>
 
           {!vault ? (
-            <p className="text-xs text-magma-muted opacity-80">{t("settings.mcpNoVault")}</p>
+            <p className="text-xs text-magma-muted opacity-80">{t("settings.codexMcpNoVault")}</p>
           ) : (
             <>
               <button

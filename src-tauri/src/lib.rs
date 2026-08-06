@@ -6,7 +6,6 @@ use magma_core as vault;
 use magma_webdav as webdav;
 use serde_json::json;
 use std::path::PathBuf;
-use std::process::Command;
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 
@@ -449,11 +448,7 @@ fn mcp_config(vault: String) -> String {
 /// The equivalent Codex CLI MCP config block for display / manual copy.
 #[tauri::command]
 fn codex_mcp_config(vault: String) -> String {
-    format!(
-        "[mcp_servers.magma]\nenabled = true\ncommand = {command:?}\nargs = [\"--mcp\", {vault:?}]\n\n[mcp_servers.magma.env]\nMAGMA_MCP_CLIENT = \"codex\"\n",
-        command = mcp_executable(),
-        vault = vault
-    )
+    codex_mcp_config_block(&mcp_executable(), &vault)
 }
 
 /// One-click install: merge the Magma server into Claude Desktop's config,
@@ -523,42 +518,22 @@ fn install_mcp(vault: String) -> Result<McpInstall, String> {
     })
 }
 
-/// One-click install for Codex: use the Codex CLI to add Magma as an MCP server.
+/// One-click install for Codex: write Codex's config file directly. A GUI app
+/// launched from Finder does not inherit the user's shell PATH, so invoking the
+/// `codex` binary would fail for many valid installs.
 #[tauri::command]
 fn install_codex_mcp(vault: String) -> Result<McpInstall, String> {
     let exe = mcp_executable();
-    // `codex mcp add` refuses an existing name; remove an older Magma entry
-    // first, but do not fail when there was nothing to remove.
-    let _ = Command::new("codex")
-        .args(["mcp", "remove", "magma"])
-        .output();
-    let out = Command::new("codex")
-        .args([
-            "mcp",
-            "add",
-            "--env",
-            "MAGMA_MCP_CLIENT=codex",
-            "magma",
-            "--",
-            &exe,
-            "--mcp",
-            &vault,
-        ])
-        .output()
-        .map_err(|e| format!("could not run the Codex CLI: {e}"))?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        return Err(if err.is_empty() {
-            "Codex CLI failed to add the MCP server".to_string()
-        } else {
-            err
-        });
+    let config_path = codex_config_path().ok_or("could not locate the Codex config folder")?;
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let config_path = std::env::var_os("CODEX_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".codex")))
-        .unwrap_or_else(|| PathBuf::from("~/.codex"))
-        .join("config.toml");
+    let existing = std::fs::read_to_string(&config_path).unwrap_or_default();
+    if config_path.exists() {
+        let _ = std::fs::write(config_path.with_extension("toml.bak"), &existing);
+    }
+    let updated = merge_codex_mcp_config(&existing, &exe, &vault);
+    std::fs::write(&config_path, updated).map_err(|e| e.to_string())?;
     let dev_build = exe.contains("/target/debug/")
         || exe.contains("/target/release/")
         || exe.contains("\\target\\debug\\")
@@ -568,6 +543,73 @@ fn install_codex_mcp(vault: String) -> Result<McpInstall, String> {
         executable: exe,
         dev_build,
     })
+}
+
+fn codex_config_path() -> Option<PathBuf> {
+    std::env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".codex")))
+        .map(|dir| dir.join("config.toml"))
+}
+
+fn codex_mcp_config_block(command: &str, vault: &str) -> String {
+    format!(
+        "[mcp_servers.magma]\nenabled = true\ncommand = {command:?}\nargs = [\"--mcp\", {vault:?}]\n\n[mcp_servers.magma.env]\nMAGMA_MCP_CLIENT = \"codex\"\n",
+    )
+}
+
+fn merge_codex_mcp_config(existing: &str, command: &str, vault: &str) -> String {
+    let mut out = String::new();
+    let mut skipping = false;
+    for line in existing.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            skipping = trimmed == "[mcp_servers.magma]" || trimmed == "[mcp_servers.magma.env]";
+        }
+        if !skipping {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    let mut out = out.trim_end().to_string();
+    if !out.is_empty() {
+        out.push_str("\n\n");
+    }
+    out.push_str(&codex_mcp_config_block(command, vault));
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_config_merge_replaces_only_magma_server() {
+        let existing = r#"
+model = "gpt-5"
+
+[mcp_servers.other]
+command = "other"
+
+[mcp_servers.magma]
+enabled = true
+command = "old"
+args = ["--old"]
+
+[mcp_servers.magma.env]
+MAGMA_MCP_CLIENT = "old"
+
+[profiles.default]
+approval_policy = "never"
+"#;
+        let merged = merge_codex_mcp_config(existing, "/Applications/Magma.app/magma", "/vault");
+        assert!(merged.contains("[mcp_servers.other]"));
+        assert!(merged.contains("[profiles.default]"));
+        assert!(!merged.contains("command = \"old\""));
+        assert!(merged.contains("command = \"/Applications/Magma.app/magma\""));
+        assert!(merged.contains("args = [\"--mcp\", \"/vault\"]"));
+        assert!(merged.contains("MAGMA_MCP_CLIENT = \"codex\""));
+    }
 }
 
 /// What the one-click setup wrote, so the UI can be specific about it.
