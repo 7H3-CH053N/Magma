@@ -150,6 +150,7 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "settings.title": "Settings",
     "settings.tabVault": "Vault & sync",
     "settings.tabAppearance": "Appearance & language",
+    "settings.tabPlugins": "Plugins",
     "settings.tabImport": "Import",
     "settings.tabClaude": "Claude",
     "settings.tabAbout": "About",
@@ -218,6 +219,24 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "settings.remoteConnecting": "Syncing…",
     "settings.remoteNote":
       "Requires an https:// WebDAV URL. Notes are cached locally and changes are pushed back on save. The password is kept only for this session.",
+    "settings.pluginsTitle": "Plugins",
+    "settings.pluginsBody":
+      "Turn Magma features on and off like Obsidian plugins. Enabled plugins can add commands and, later, their own views or settings.",
+    "settings.pluginsDeveloperNote":
+      "This is the internal plugin layer: manifests, activation state, and command contributions are wired in. A third-party plugin folder can be added on top of this.",
+    "plugins.commandHint": "Plugin",
+    "plugins.randomNote.name": "Random note",
+    "plugins.randomNote.description": "Adds a command that opens one note from your vault at random.",
+    "plugins.randomNote.command": "Open random note",
+    "plugins.randomNote.emptyTitle": "No notes yet.",
+    "plugins.randomNote.emptyBody": "Create or import notes first, then this plugin can pick one.",
+    "plugins.wordCount.name": "Word count",
+    "plugins.wordCount.description": "Adds a command that counts words and characters in the active note.",
+    "plugins.wordCount.command": "Count words in this note",
+    "plugins.wordCount.emptyTitle": "No note open.",
+    "plugins.wordCount.emptyBody": "Open a note first, then run the word count command again.",
+    "plugins.wordCount.resultTitle": "Word count",
+    "plugins.wordCount.resultBody": "{words} words · {chars} characters",
   },
   de: {
     "app.tagline": "Dein zweites Gehirn – ohne Einrichtungsaufwand.",
@@ -365,6 +384,7 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "settings.title": "Einstellungen",
     "settings.tabVault": "Vault & Sync",
     "settings.tabAppearance": "Darstellung & Sprache",
+    "settings.tabPlugins": "Plugins",
     "settings.tabImport": "Import",
     "settings.tabClaude": "Claude",
     "settings.tabAbout": "Info",
@@ -433,6 +453,24 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "settings.remoteConnecting": "Synchronisiere…",
     "settings.remoteNote":
       "Erfordert eine https://-WebDAV-URL. Notizen werden lokal zwischengespeichert und Änderungen beim Speichern zurück übertragen. Das Passwort wird nur für diese Sitzung behalten.",
+    "settings.pluginsTitle": "Plugins",
+    "settings.pluginsBody":
+      "Schalte Magma-Funktionen wie bei Obsidian-Plugins ein oder aus. Aktivierte Plugins können Befehle beitragen und später eigene Ansichten oder Einstellungen bekommen.",
+    "settings.pluginsDeveloperNote":
+      "Das ist die interne Plugin-Schicht: Manifest, Aktivierung und Command-Beiträge sind verdrahtet. Ein Ordner für Drittanbieter-Plugins kann darauf aufsetzen.",
+    "plugins.commandHint": "Plugin",
+    "plugins.randomNote.name": "Zufällige Notiz",
+    "plugins.randomNote.description": "Fügt einen Befehl hinzu, der eine zufällige Notiz aus deinem Vault öffnet.",
+    "plugins.randomNote.command": "Zufällige Notiz öffnen",
+    "plugins.randomNote.emptyTitle": "Noch keine Notizen.",
+    "plugins.randomNote.emptyBody": "Erstelle oder importiere zuerst Notizen, dann kann dieses Plugin eine auswählen.",
+    "plugins.wordCount.name": "Wortzählung",
+    "plugins.wordCount.description": "Fügt einen Befehl hinzu, der Wörter und Zeichen der aktiven Notiz zählt.",
+    "plugins.wordCount.command": "Wörter in dieser Notiz zählen",
+    "plugins.wordCount.emptyTitle": "Keine Notiz geöffnet.",
+    "plugins.wordCount.emptyBody": "Öffne zuerst eine Notiz und starte den Wortzählungs-Befehl dann erneut.",
+    "plugins.wordCount.resultTitle": "Wortzählung",
+    "plugins.wordCount.resultBody": "{words} Wörter · {chars} Zeichen",
   },
 };
 

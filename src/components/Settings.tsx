@@ -3,6 +3,7 @@ import FlameIcon from "./FlameIcon";
 import { useI18n, type Lang } from "../lib/i18n";
 import { useTheme, FONT_PRESETS, type ThemeMode } from "../lib/theme";
 import { usePrefs } from "../lib/prefs";
+import { CORE_PLUGINS } from "../lib/plugins";
 import {
   hasTauri,
   importWordpress,
@@ -23,7 +24,7 @@ interface SettingsProps {
   onOpenVault: () => void;
 }
 
-type Tab = "vault" | "notes" | "appearance" | "import" | "claude" | "about";
+type Tab = "vault" | "notes" | "appearance" | "plugins" | "import" | "claude" | "about";
 
 function savedRemote(): { url: string; username: string } {
   try {
@@ -187,6 +188,13 @@ export default function Settings({
     }
   };
 
+  const togglePlugin = (id: string, enabled: boolean) => {
+    const next = new Set(prefs.enabledPluginIds);
+    if (enabled) next.add(id);
+    else next.delete(id);
+    setPrefs({ enabledPluginIds: [...next] });
+  };
+
   return (
     <div className="fixed inset-0 z-40 grid place-items-center bg-black/40 p-4" onClick={close}>
       <div
@@ -201,6 +209,7 @@ export default function Settings({
               ["vault", t("settings.tabVault")],
               ["notes", t("settings.tabNotes")],
               ["appearance", t("settings.tabAppearance")],
+              ["plugins", t("settings.tabPlugins")],
               ["import", t("settings.tabImport")],
               ["claude", t("settings.tabClaude")],
               ["about", t("settings.tabAbout")],
@@ -397,6 +406,49 @@ export default function Settings({
         </section>
 
         </>)}
+
+        {tab === "plugins" && (
+        <section className="mb-5">
+          <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-magma-muted">
+            {t("settings.pluginsTitle")}
+          </label>
+          <p className="mb-3 text-xs leading-relaxed text-magma-muted">
+            {t("settings.pluginsBody")}
+          </p>
+          <div className="space-y-2">
+            {CORE_PLUGINS.map((plugin) => {
+              const enabled = prefs.enabledPluginIds.includes(plugin.manifest.id);
+              return (
+                <label
+                  key={plugin.manifest.id}
+                  className="flex cursor-pointer items-start gap-3 rounded-lg border border-black/10 p-3 text-sm transition hover:border-magma-accent/40 dark:border-white/10"
+                >
+                  <input
+                    type="checkbox"
+                    checked={enabled}
+                    onChange={(e) => togglePlugin(plugin.manifest.id, e.target.checked)}
+                    className="mt-0.5 accent-magma-accent"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2">
+                      <span className="font-medium">{t(plugin.manifest.nameKey)}</span>
+                      <span className="rounded-md bg-black/5 px-1.5 py-0.5 text-[11px] text-magma-muted dark:bg-white/10">
+                        {plugin.manifest.author}
+                      </span>
+                    </span>
+                    <span className="mt-1 block text-xs leading-relaxed text-magma-muted">
+                      {t(plugin.manifest.descriptionKey)}
+                    </span>
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+          <p className="mt-3 text-[11px] leading-relaxed text-magma-muted opacity-80">
+            {t("settings.pluginsDeveloperNote")}
+          </p>
+        </section>
+        )}
 
         {tab === "vault" && (<>
         {/* Where the notes live */}

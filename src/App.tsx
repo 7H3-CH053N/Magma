@@ -18,6 +18,7 @@ import NodePreview from "./components/NodePreview";
 import ReplaceDialog from "./components/ReplaceDialog";
 import { useI18n } from "./lib/i18n";
 import { applyTemplate, dayKey, usePrefs } from "./lib/prefs";
+import { pluginCommands } from "./lib/plugins";
 import { splitFrontmatter, joinFrontmatter } from "./lib/markdown";
 import {
   appendNote,
@@ -558,6 +559,20 @@ export default function App() {
 
   /** Everything the palette can do, besides jumping to a note. */
   const commands = useMemo<Command[]>(() => {
+    const pluginItems = pluginCommands(prefs.enabledPluginIds, {
+      notes,
+      activePath,
+      content,
+      t,
+      openNote: (path) => void selectNote(path),
+      notice: (title, detail) =>
+        setConfirm({
+          title,
+          detail,
+          notice: true,
+          onConfirm: () => {},
+        }),
+    });
     const list: Command[] = [
       { id: "new", label: t("cmd.newNote"), hint: "⌘N", run: () => void createNewNote() },
       { id: "today", label: t("cmd.today"), run: () => void openDay(new Date()) },
@@ -583,6 +598,7 @@ export default function App() {
       { id: "settings", label: t("cmd.settings"), run: () => setShowSettings(true) },
       { id: "folder", label: t("cmd.newFolder"), run: () => handleCreateFolder("") },
       { id: "openVault", label: t("cmd.openVault"), run: () => void openVault() },
+      ...pluginItems,
     ];
     if (activePath) {
       list.push(
@@ -627,6 +643,9 @@ export default function App() {
     handleMove,
     templates,
     newFromTemplate,
+    prefs.enabledPluginIds,
+    content,
+    selectNote,
   ]);
 
   // Keyboard: new note, command palette, quick capture.

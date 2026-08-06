@@ -25,6 +25,8 @@ export interface Prefs {
   templateFolder: string;
   /** Quick capture appends to today's note instead of making a new one. */
   captureToDaily: boolean;
+  /** Enabled plugin ids. Unknown ids are ignored by the plugin registry. */
+  enabledPluginIds: string[];
 }
 
 export const DEFAULT_PREFS: Prefs = {
@@ -32,6 +34,7 @@ export const DEFAULT_PREFS: Prefs = {
   dailyTemplate: "",
   templateFolder: "Templates",
   captureToDaily: true,
+  enabledPluginIds: ["random-note", "word-count"],
 };
 
 const STORAGE_KEY = "magma.prefs";
