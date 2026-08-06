@@ -128,7 +128,17 @@ pub fn ai_create_note(
     title: &str,
     content: &str,
 ) -> std::io::Result<AiWriteResult> {
-    let stamped = stamp_ai_author(content);
+    ai_create_note_for_client(vault, folder, title, content, None)
+}
+
+pub fn ai_create_note_for_client(
+    vault: &Path,
+    folder: Option<&str>,
+    title: &str,
+    content: &str,
+    client: Option<&str>,
+) -> std::io::Result<AiWriteResult> {
+    let stamped = stamp_ai_author_for_client(content, client);
     let path = vault::create_note_in(vault, folder.unwrap_or(""), title, &stamped)?;
     let link_check = validate_links(vault, &stamped)?;
     Ok(AiWriteResult { path, link_check })
@@ -140,7 +150,16 @@ pub fn ai_update_note(
     rel: &str,
     content: &str,
 ) -> std::io::Result<AiWriteResult> {
-    let stamped = stamp_ai_author(content);
+    ai_update_note_for_client(vault, rel, content, None)
+}
+
+pub fn ai_update_note_for_client(
+    vault: &Path,
+    rel: &str,
+    content: &str,
+    client: Option<&str>,
+) -> std::io::Result<AiWriteResult> {
+    let stamped = stamp_ai_author_for_client(content, client);
     vault::write_note(vault, rel, &stamped)?;
     let link_check = validate_links(vault, &stamped)?;
     Ok(AiWriteResult {
@@ -152,6 +171,11 @@ pub fn ai_update_note(
 /// Ensure the note's YAML frontmatter carries `author: ai`. Adds a frontmatter
 /// block if none exists; replaces an existing `author:` line otherwise.
 pub fn stamp_ai_author(content: &str) -> String {
+    stamp_ai_author_for_client(content, None)
+}
+
+pub fn stamp_ai_author_for_client(content: &str, client: Option<&str>) -> String {
+    let client = client.and_then(normalize_client);
     let trimmed_start = content.trim_start_matches('\u{feff}');
     if let Some(rest) = trimmed_start.strip_prefix("---") {
         // Existing frontmatter: find its closing `---`.
@@ -160,15 +184,33 @@ pub fn stamp_ai_author(content: &str) -> String {
             let body = &rest[end..]; // starts at "\n---"
             let mut lines: Vec<String> = front
                 .lines()
-                .filter(|l| !l.trim_start().to_lowercase().starts_with("author:"))
+                .filter(|l| {
+                    let key = l.trim_start().to_lowercase();
+                    !key.starts_with("author:") && !key.starts_with("ai_client:")
+                })
                 .map(|l| l.to_string())
                 .collect();
             lines.push("author: ai".to_string());
+            if let Some(client) = client {
+                lines.push(format!("ai_client: {client}"));
+            }
             let new_front = lines.join("\n");
             return format!("---{new_front}{body}");
         }
     }
-    format!("---\nauthor: ai\n---\n\n{content}")
+    match client {
+        Some(client) => format!("---\nauthor: ai\nai_client: {client}\n---\n\n{content}"),
+        None => format!("---\nauthor: ai\n---\n\n{content}"),
+    }
+}
+
+fn normalize_client(client: &str) -> Option<&str> {
+    let client = client.trim();
+    if client.is_empty() || !client.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        None
+    } else {
+        Some(client)
+    }
 }
 
 /// Notes the model should probably link, as ready-to-use `NoteMeta`.
@@ -179,6 +221,7 @@ pub fn candidates_as_notes(candidates: &[LinkCandidate]) -> Vec<NoteMeta> {
             path: c.path.clone(),
             title: c.title.clone(),
             ai_authored: false,
+            ai_client: None,
             modified: 0,
         })
         .collect()
@@ -289,6 +332,15 @@ mod tests {
     }
 
     #[test]
+    fn stamp_records_ai_client_when_known() {
+        let out = stamp_ai_author_for_client("---\ntitle: X\nauthor: human\nai_client: old\n---\n\nbody", Some("codex"));
+        assert_eq!(out.matches("author:").count(), 1);
+        assert_eq!(out.matches("ai_client:").count(), 1);
+        assert!(out.contains("author: ai"));
+        assert!(out.contains("ai_client: codex"));
+    }
+
+    #[test]
     fn candidates_rank_by_shared_terms() {
         let v = tmp_vault();
         vault::write_note(&v, "Sourdough.md", "# Sourdough\n\nbaking bread with wild yeast starter").unwrap();
@@ -316,15 +368,24 @@ mod tests {
     fn ai_create_stamps_and_checks() {
         let v = tmp_vault();
         vault::write_note(&v, "Bread.md", "about bread").unwrap();
-        let res = ai_create_note(&v, None, "Sourdough", "A [[Bread]] variant. See [[Missing]].").unwrap();
+        let res = ai_create_note_for_client(
+            &v,
+            None,
+            "Sourdough",
+            "A [[Bread]] variant. See [[Missing]].",
+            Some("codex"),
+        ).unwrap();
         assert_eq!(res.path, "Sourdough.md");
         let content = vault::read_note(&v, &res.path).unwrap().content;
         assert!(content.contains("author: ai"));
+        assert!(content.contains("ai_client: codex"));
         assert_eq!(res.link_check.resolved, vec!["Bread"]);
         assert_eq!(res.link_check.broken.len(), 1);
         assert_eq!(res.link_check.broken[0].target, "Missing");
         // The freshly created note is detected as AI-authored by the vault.
-        assert!(vault::read_note(&v, &res.path).unwrap().ai_authored);
+        let note = vault::read_note(&v, &res.path).unwrap();
+        assert!(note.ai_authored);
+        assert_eq!(note.ai_client, Some("codex".to_string()));
         fs::remove_dir_all(&v).ok();
     }
 

@@ -9,6 +9,8 @@ export interface NoteMeta {
   title: string;
   /** true when the note was created or last edited by an LLM via MCP. */
   aiAuthored: boolean;
+  /** MCP client that wrote the note, e.g. "codex" or "claude". */
+  aiClient?: string | null;
   /** Last modified, in milliseconds since the epoch; 0 when unknown. */
   modified: number;
 }
@@ -134,6 +136,7 @@ export interface GraphNode {
   path: string;
   title: string;
   aiAuthored: boolean;
+  aiClient?: string | null;
   degree: number;
   /** A link target with no note behind it yet (shown as a ghost node). */
   missing?: boolean;

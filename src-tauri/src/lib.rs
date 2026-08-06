@@ -412,7 +412,11 @@ fn mcp_executable() -> String {
 }
 
 fn mcp_server_entry(vault: &str) -> serde_json::Value {
-    json!({ "command": mcp_executable(), "args": ["--mcp", vault] })
+    json!({
+        "command": mcp_executable(),
+        "args": ["--mcp", vault],
+        "env": { "MAGMA_MCP_CLIENT": "claude" }
+    })
 }
 
 /// Claude Desktop's config file location for this OS.
@@ -446,7 +450,7 @@ fn mcp_config(vault: String) -> String {
 #[tauri::command]
 fn codex_mcp_config(vault: String) -> String {
     format!(
-        "[mcp_servers.magma]\nenabled = true\ncommand = {command:?}\nargs = [\"--mcp\", {vault:?}]\n",
+        "[mcp_servers.magma]\nenabled = true\ncommand = {command:?}\nargs = [\"--mcp\", {vault:?}]\n\n[mcp_servers.magma.env]\nMAGMA_MCP_CLIENT = \"codex\"\n",
         command = mcp_executable(),
         vault = vault
     )
@@ -529,7 +533,17 @@ fn install_codex_mcp(vault: String) -> Result<McpInstall, String> {
         .args(["mcp", "remove", "magma"])
         .output();
     let out = Command::new("codex")
-        .args(["mcp", "add", "magma", "--", &exe, "--mcp", &vault])
+        .args([
+            "mcp",
+            "add",
+            "--env",
+            "MAGMA_MCP_CLIENT=codex",
+            "magma",
+            "--",
+            &exe,
+            "--mcp",
+            &vault,
+        ])
         .output()
         .map_err(|e| format!("could not run the Codex CLI: {e}"))?;
     if !out.status.success() {

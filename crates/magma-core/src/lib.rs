@@ -10,8 +10,9 @@ pub mod related;
 pub mod vault;
 
 pub use ai::{
-    ai_create_note, ai_update_note, find_link_candidates, stamp_ai_author, validate_links,
-    AiWriteResult, BrokenLink, LinkCandidate, LinkCheck,
+    ai_create_note, ai_create_note_for_client, ai_update_note, ai_update_note_for_client,
+    find_link_candidates, stamp_ai_author, stamp_ai_author_for_client, validate_links, AiWriteResult,
+    BrokenLink, LinkCandidate, LinkCheck,
 };
 pub use history::{
     forget as forget_history, list_versions, read_version, relocate as relocate_history, restore,
