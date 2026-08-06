@@ -14,6 +14,7 @@ export default {
           muted: "var(--magma-muted)",
           accent: "var(--magma-accent)",
           ai: "var(--magma-ai)",
+          highlight: "var(--magma-highlight)",
         },
       },
       fontFamily: {
