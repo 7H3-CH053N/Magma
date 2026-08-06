@@ -6,4 +6,5 @@ rust-version = "1.77"
 description = "Vault indexing and note operations for Magma — shared by the desktop app and the MCP server."
 
 [dependencies]
+regex = "1"
 serde = { version = "1", features = ["derive"] }

@@ -4,6 +4,7 @@
 //! `[[Note|alias]]` link resolves on the part before the pipe.
 
 use crate::vault::{self, NoteMeta};
+use regex::{Regex, RegexBuilder};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
@@ -267,8 +268,10 @@ pub fn outgoing_links(vault: &Path, rel: &str) -> std::io::Result<Vec<OutgoingLi
     let content = std::fs::read_to_string(vault.join(rel)).unwrap_or_default();
     let notes = vault::list_notes(vault)?;
     let by_name = name_index(&notes);
-    let titles: HashMap<&str, &str> =
-        notes.iter().map(|n| (n.path.as_str(), n.title.as_str())).collect();
+    let titles: HashMap<&str, &str> = notes
+        .iter()
+        .map(|n| (n.path.as_str(), n.title.as_str()))
+        .collect();
 
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
@@ -327,7 +330,10 @@ pub fn unlinked_mentions(vault: &Path, rel: &str) -> std::io::Result<Vec<Mention
         }
         let content = std::fs::read_to_string(vault.join(&note.path)).unwrap_or_default();
         // Already linked? Then it is a backlink, not a missed mention.
-        if extract_links(&content).iter().any(|l| l.to_lowercase() == lower_name) {
+        if extract_links(&content)
+            .iter()
+            .any(|l| l.to_lowercase() == lower_name)
+        {
             continue;
         }
         let stripped = strip_links(&content);
@@ -378,8 +384,11 @@ fn count_words(haystack: &str, needle: &[char]) -> usize {
         if let Some(len) = match_ci(&haystack[i..], needle) {
             let end = i + len;
             let before_ok = prev.map(|c| !is_word_char(c)).unwrap_or(true);
-            let after_ok =
-                haystack[end..].chars().next().map(|c| !is_word_char(c)).unwrap_or(true);
+            let after_ok = haystack[end..]
+                .chars()
+                .next()
+                .map(|c| !is_word_char(c))
+                .unwrap_or(true);
             if before_ok && after_ok {
                 count += 1;
                 prev = haystack[i..end].chars().last();
@@ -438,7 +447,11 @@ pub fn link_mentions_in(content: &str, name: &str) -> (String, usize) {
         if let Some(len) = match_ci(&content[i..], &needle) {
             let end = i + len;
             let before_ok = prev.map(|c| !is_word_char(c)).unwrap_or(true);
-            let after_ok = content[end..].chars().next().map(|c| !is_word_char(c)).unwrap_or(true);
+            let after_ok = content[end..]
+                .chars()
+                .next()
+                .map(|c| !is_word_char(c))
+                .unwrap_or(true);
             if before_ok && after_ok {
                 // Keep the note's own spelling inside the link.
                 out.push_str("[[");
@@ -491,19 +504,19 @@ pub struct SearchHit {
 /// synchronous — fine at personal-vault scale; SQLite FTS5 is the planned
 /// upgrade for very large vaults.
 pub fn search(vault: &Path, query: &str) -> std::io::Result<Vec<SearchHit>> {
-    let q = query.trim().to_lowercase();
-    if q.is_empty() {
-        return Ok(Vec::new());
-    }
+    let matcher = match SearchMatcher::new(query) {
+        Ok(Some(matcher)) => matcher,
+        Ok(None) => return Ok(Vec::new()),
+        Err(_) => return Ok(Vec::new()),
+    };
     let notes = vault::list_notes(vault)?;
     let mut hits = Vec::new();
     for note in notes {
         let content = std::fs::read_to_string(vault.join(&note.path)).unwrap_or_default();
-        let title_match = note.title.to_lowercase().contains(&q);
-        let body_lower = content.to_lowercase();
-        if title_match || body_lower.contains(&q) {
+        let title_match = matcher.is_match(&note.title);
+        if title_match || matcher.is_match(&content) {
             hits.push(SearchHit {
-                snippet: snippet_around(&content, &body_lower, &q),
+                snippet: matcher.snippet(&content),
                 path: note.path,
                 title: note.title,
             });
@@ -512,25 +525,121 @@ pub fn search(vault: &Path, query: &str) -> std::io::Result<Vec<SearchHit>> {
     Ok(hits)
 }
 
-fn snippet_around(content: &str, body_lower: &str, q: &str) -> String {
-    // Everything here is char-based on purpose. The old version sliced by byte
-    // offsets taken from the *lowercased* copy, and `to_lowercase` can change a
-    // string's byte length (\u{130} becomes two chars, \u{1E9E} shrinks), so those
-    // offsets could land inside a multi-byte character — and slicing a char in
-    // half panics, which takes the whole app down mid-search.
+enum SearchMatcher {
+    Literal { raw: String, lower: String },
+    Regex(Regex),
+}
+
+impl SearchMatcher {
+    fn new(query: &str) -> Result<Option<Self>, regex::Error> {
+        let raw = query.trim();
+        if raw.is_empty() {
+            return Ok(None);
+        }
+        if let Some((pattern, flags)) = regex_query(raw) {
+            return RegexBuilder::new(pattern)
+                .case_insensitive(flags.contains('i'))
+                .multi_line(flags.contains('m'))
+                .dot_matches_new_line(flags.contains('s'))
+                .build()
+                .map(|re| Some(Self::Regex(re)));
+        }
+        Ok(Some(Self::Literal {
+            raw: raw.to_string(),
+            lower: raw.to_lowercase(),
+        }))
+    }
+
+    fn is_match(&self, text: &str) -> bool {
+        match self {
+            Self::Literal { lower, .. } => text.to_lowercase().contains(lower),
+            Self::Regex(re) => re.is_match(text),
+        }
+    }
+
+    fn snippet(&self, content: &str) -> String {
+        match self {
+            Self::Literal { raw, lower } => snippet_around_literal(content, lower, raw),
+            Self::Regex(re) => snippet_around_regex(content, re),
+        }
+    }
+}
+
+fn regex_query(raw: &str) -> Option<(&str, &str)> {
+    if let Some(pattern) = raw.strip_prefix("re:") {
+        if pattern.is_empty() {
+            return None;
+        }
+        return Some((pattern, ""));
+    }
+    if !raw.starts_with('/') {
+        return None;
+    }
+    let close = closing_regex_slash(raw)?;
+    let pattern = &raw[1..close];
+    let flags = &raw[close + 1..];
+    if pattern.is_empty() || !flags.chars().all(|c| matches!(c, 'i' | 'm' | 's')) {
+        return None;
+    }
+    Some((pattern, flags))
+}
+
+fn closing_regex_slash(raw: &str) -> Option<usize> {
+    let mut escaped = false;
+    for (i, ch) in raw.char_indices().skip(1) {
+        if escaped {
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == '/' {
+            return Some(i);
+        }
+    }
+    None
+}
+
+fn snippet_around_literal(content: &str, q_lower: &str, q_raw: &str) -> String {
+    let body_lower = content.to_lowercase();
+    match body_lower.find(q_lower) {
+        Some(idx) => snippet_window(
+            content,
+            body_lower[..idx].chars().count(),
+            q_raw.chars().count(),
+        ),
+        None => content.lines().next().unwrap_or("").to_string(),
+    }
+}
+
+fn snippet_around_regex(content: &str, re: &Regex) -> String {
+    match re.find(content) {
+        Some(m) => {
+            let hit_char = content[..m.start()].chars().count();
+            let hit_len = content[m.start()..m.end()].chars().count().max(1);
+            snippet_window(content, hit_char, hit_len)
+        }
+        None => content.lines().next().unwrap_or("").to_string(),
+    }
+}
+
+fn snippet_window(content: &str, hit_char: usize, hit_len: usize) -> String {
     const BEFORE: usize = 30;
     const AFTER: usize = 40;
+    let from = hit_char.saturating_sub(BEFORE);
+    let raw: String = content
+        .chars()
+        .skip(from)
+        .take(BEFORE + hit_len + AFTER)
+        .collect();
+    format!("\u{2026}{}\u{2026}", raw.replace('\n', " ").trim())
+}
+
+fn snippet_around(content: &str, body_lower: &str, q: &str) -> String {
     match body_lower.find(q) {
-        Some(idx) => {
-            let hit_char = body_lower[..idx].chars().count();
-            let from = hit_char.saturating_sub(BEFORE);
-            let raw: String = content
-                .chars()
-                .skip(from)
-                .take(BEFORE + q.chars().count() + AFTER)
-                .collect();
-            format!("\u{2026}{}\u{2026}", raw.replace('\n', " ").trim())
-        }
+        Some(idx) => snippet_window(
+            content,
+            body_lower[..idx].chars().count(),
+            q.chars().count(),
+        ),
         None => content.lines().next().unwrap_or("").to_string(),
     }
 }
@@ -656,8 +765,14 @@ mod tests {
 
         let body = std::fs::read_to_string(v.join("Notiz.md")).unwrap();
         assert!(body.contains("[[Michael Klotz GmbH]]"));
-        assert!(body.contains("[[Michael Klotz GmbH|den Kunden]]"), "alias kept: {body}");
-        assert!(body.contains("[[Michael Klotz GmbH#Termine]]"), "anchor kept: {body}");
+        assert!(
+            body.contains("[[Michael Klotz GmbH|den Kunden]]"),
+            "alias kept: {body}"
+        );
+        assert!(
+            body.contains("[[Michael Klotz GmbH#Termine]]"),
+            "anchor kept: {body}"
+        );
         assert!(body.contains("[[Andere]]"), "unrelated links untouched");
         fs::remove_dir_all(&v).ok();
     }
@@ -690,9 +805,15 @@ mod tests {
 
         let g = build_graph(&v, &["Templates".to_string()]).unwrap();
         let paths: Vec<&str> = g.nodes.iter().map(|n| n.path.as_str()).collect();
-        assert!(!paths.iter().any(|p| p.starts_with("Templates")), "got: {paths:?}");
+        assert!(
+            !paths.iter().any(|p| p.starts_with("Templates")),
+            "got: {paths:?}"
+        );
         // ...and the placeholder link inside the template makes no ghost node.
-        assert!(!paths.iter().any(|p| p.contains("platzhalter")), "got: {paths:?}");
+        assert!(
+            !paths.iter().any(|p| p.contains("platzhalter")),
+            "got: {paths:?}"
+        );
         assert_eq!(g.nodes.len(), 2);
         fs::remove_dir_all(&v).ok();
     }
@@ -709,7 +830,11 @@ mod tests {
         let paths: Vec<&str> = hits.iter().map(|h| h.path.as_str()).collect();
         assert_eq!(paths, vec!["Meeting.md"], "got: {paths:?}");
         assert_eq!(hits[0].count, 1);
-        assert!(hits[0].snippet.contains("Montag"), "snippet: {}", hits[0].snippet);
+        assert!(
+            hits[0].snippet.contains("Montag"),
+            "snippet: {}",
+            hits[0].snippet
+        );
         fs::remove_dir_all(&v).ok();
     }
 
@@ -733,15 +858,22 @@ mod tests {
         let text = "Größe und Qualität: MÜLLER GMBH liefert. Straße 5.";
         let (out, n) = link_mentions_in(text, "Müller GmbH");
         assert_eq!(n, 1, "got: {out}");
-        assert!(out.contains("[[MÜLLER GMBH]]"), "keeps the note's spelling: {out}");
+        assert!(
+            out.contains("[[MÜLLER GMBH]]"),
+            "keeps the note's spelling: {out}"
+        );
     }
 
     #[test]
     fn outgoing_links_separate_real_targets_from_missing_ones() {
         let v = tmp_vault();
         vault::write_note(&v, "Ziel.md", "# Das Ziel").unwrap();
-        vault::write_note(&v, "Quelle.md", "[[Ziel]], nochmal [[Ziel]] und [[Nirgendwo]].")
-            .unwrap();
+        vault::write_note(
+            &v,
+            "Quelle.md",
+            "[[Ziel]], nochmal [[Ziel]] und [[Nirgendwo]].",
+        )
+        .unwrap();
         let out = outgoing_links(&v, "Quelle.md").unwrap();
         assert_eq!(out.len(), 2, "duplicates collapse");
         assert_eq!(out[0].path, "Ziel.md");
@@ -754,30 +886,53 @@ mod tests {
     #[test]
     fn replace_previews_before_it_writes() {
         let v = tmp_vault();
-        vault::write_note(&v, "A.md", "Von [[Profil Alex Januschewsky]] und Profil Alex Januschewsky.").unwrap();
+        vault::write_note(
+            &v,
+            "A.md",
+            "Von [[Profil Alex Januschewsky]] und Profil Alex Januschewsky.",
+        )
+        .unwrap();
         vault::write_note(&v, "B.md", "Nur Profil Alex Januschewsky hier.").unwrap();
         vault::write_note(&v, "C.md", "Nichts davon.").unwrap();
 
-        let preview =
-            replace_in_vault(&v, "Profil Alex Januschewsky", "Alex Januschewsky", true, false)
-                .unwrap();
+        let preview = replace_in_vault(
+            &v,
+            "Profil Alex Januschewsky",
+            "Alex Januschewsky",
+            true,
+            false,
+        )
+        .unwrap();
         assert_eq!(preview.total, 3);
         assert_eq!(preview.hits.len(), 2, "C.md is untouched");
         assert!(!preview.applied);
         assert!(
-            std::fs::read_to_string(v.join("A.md")).unwrap().contains("Profil Alex"),
+            std::fs::read_to_string(v.join("A.md"))
+                .unwrap()
+                .contains("Profil Alex"),
             "a preview must not write"
         );
 
-        let done =
-            replace_in_vault(&v, "Profil Alex Januschewsky", "Alex Januschewsky", false, false)
-                .unwrap();
+        let done = replace_in_vault(
+            &v,
+            "Profil Alex Januschewsky",
+            "Alex Januschewsky",
+            false,
+            false,
+        )
+        .unwrap();
         assert_eq!(done.total, 3);
         assert!(done.applied);
         let a = std::fs::read_to_string(v.join("A.md")).unwrap();
         assert!(!a.contains("Profil"), "got: {a}");
-        assert!(a.contains("[[Alex Januschewsky]]"), "links rewritten too: {a}");
-        assert_eq!(std::fs::read_to_string(v.join("C.md")).unwrap(), "Nichts davon.");
+        assert!(
+            a.contains("[[Alex Januschewsky]]"),
+            "links rewritten too: {a}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(v.join("C.md")).unwrap(),
+            "Nichts davon."
+        );
         fs::remove_dir_all(&v).ok();
     }
 
@@ -799,22 +954,46 @@ mod tests {
         )
         .unwrap();
 
-        let preview =
-            replace_in_vault(&v, "Profil Alex Januschewsky", "Alex Januschewsky", true, true)
-                .unwrap();
+        let preview = replace_in_vault(
+            &v,
+            "Profil Alex Januschewsky",
+            "Alex Januschewsky",
+            true,
+            true,
+        )
+        .unwrap();
         assert_eq!(preview.renames.len(), 1);
         assert_eq!(preview.renames[0].to, "Alex Januschewsky");
-        assert!(v.join("Profil Alex Januschewsky.md").exists(), "preview writes nothing");
+        assert!(
+            v.join("Profil Alex Januschewsky.md").exists(),
+            "preview writes nothing"
+        );
 
-        replace_in_vault(&v, "Profil Alex Januschewsky", "Alex Januschewsky", false, true).unwrap();
+        replace_in_vault(
+            &v,
+            "Profil Alex Januschewsky",
+            "Alex Januschewsky",
+            false,
+            true,
+        )
+        .unwrap();
 
-        assert!(!v.join("Profil Alex Januschewsky.md").exists(), "note renamed");
+        assert!(
+            !v.join("Profil Alex Januschewsky.md").exists(),
+            "note renamed"
+        );
         let target = std::fs::read_to_string(v.join("Alex Januschewsky.md")).unwrap();
-        assert_eq!(target, "# Alex Januschewsky\n\nÜber mich.", "heading rewritten too");
+        assert_eq!(
+            target, "# Alex Januschewsky\n\nÜber mich.",
+            "heading rewritten too"
+        );
 
         let blog = std::fs::read_to_string(v.join("Blog.md")).unwrap();
         assert!(blog.contains("[[Alex Januschewsky]]"), "got: {blog}");
-        assert!(blog.contains("[[Alex Januschewsky|den Autor]]"), "alias kept: {blog}");
+        assert!(
+            blog.contains("[[Alex Januschewsky|den Autor]]"),
+            "alias kept: {blog}"
+        );
         // The whole point: every link still resolves to a note that exists.
         for link in extract_links(&blog) {
             assert!(
@@ -834,6 +1013,40 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].title, "Recipes");
         assert!(hits[0].snippet.to_lowercase().contains("sourdough"));
+        fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn search_supports_slash_regex() {
+        let v = tmp_vault();
+        vault::write_note(&v, "Work.md", "# Work\n\nInvoice AB-1234 is ready").unwrap();
+        vault::write_note(&v, "Other.md", "# Other\n\nInvoice without a code").unwrap();
+
+        let hits = search(&v, r"/[A-Z]{2}-\d{4}/").unwrap();
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].title, "Work");
+        assert!(hits[0].snippet.contains("AB-1234"));
+        fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn search_supports_regex_prefix_and_flags() {
+        let v = tmp_vault();
+        vault::write_note(&v, "Meeting.md", "# Meeting\n\nFollow up tomorrow").unwrap();
+
+        assert_eq!(search(&v, "re:Follow\\s+up").unwrap().len(), 1);
+        assert_eq!(search(&v, "/follow\\s+up/i").unwrap().len(), 1);
+        assert_eq!(search(&v, "/follow\\s+up/").unwrap().len(), 0);
+        fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn invalid_regex_search_returns_no_hits() {
+        let v = tmp_vault();
+        vault::write_note(&v, "Note.md", "# Note\n\nanything").unwrap();
+
+        assert!(search(&v, "/[/").unwrap().is_empty());
         fs::remove_dir_all(&v).ok();
     }
 }
@@ -925,11 +1138,20 @@ pub fn replace_in_vault(
             continue;
         }
         total += count;
-        hits.push(ReplaceHit { path: note.path.clone(), title: note.title.clone(), count });
+        hits.push(ReplaceHit {
+            path: note.path.clone(),
+            title: note.title.clone(),
+            count,
+        });
     }
 
     if dry_run {
-        return Ok(ReplaceReport { hits, renames, total, applied: false });
+        return Ok(ReplaceReport {
+            hits,
+            renames,
+            total,
+            applied: false,
+        });
     }
 
     for rename in &renames {
@@ -946,5 +1168,10 @@ pub fn replace_in_vault(
             std::fs::write(&path, content.replace(find, replace))?;
         }
     }
-    Ok(ReplaceReport { hits, renames, total, applied: true })
+    Ok(ReplaceReport {
+        hits,
+        renames,
+        total,
+        applied: true,
+    })
 }

@@ -437,7 +437,25 @@ export default function Sidebar({
 function Highlight({ text, term }: { text: string; term: string }) {
   const needle = term.trim();
   if (!needle) return <>{text}</>;
+  const regex = searchRegex(needle);
   const parts: (string | { hit: string })[] = [];
+  if (regex) {
+    let at = 0;
+    for (;;) {
+      const match = regex.exec(text);
+      if (!match) {
+        parts.push(text.slice(at));
+        break;
+      }
+      const hit = match[0];
+      const i = match.index;
+      if (i > at) parts.push(text.slice(at, i));
+      parts.push({ hit });
+      at = i + hit.length;
+      if (hit.length === 0) regex.lastIndex += 1;
+    }
+    return <HighlightedParts parts={parts} />;
+  }
   const hay = text.toLowerCase();
   const nee = needle.toLowerCase();
   let at = 0;
@@ -451,6 +469,10 @@ function Highlight({ text, term }: { text: string; term: string }) {
     parts.push({ hit: text.slice(i, i + needle.length) });
     at = i + needle.length;
   }
+  return <HighlightedParts parts={parts} />;
+}
+
+function HighlightedParts({ parts }: { parts: (string | { hit: string })[] }) {
   return (
     <>
       {parts.map((p, i) =>
@@ -467,6 +489,37 @@ function Highlight({ text, term }: { text: string; term: string }) {
       )}
     </>
   );
+}
+
+function searchRegex(term: string): RegExp | null {
+  const parsed = parseRegexQuery(term);
+  if (!parsed) return null;
+  try {
+    const flags = parsed.flags.includes("g") ? parsed.flags : `${parsed.flags}g`;
+    return new RegExp(parsed.pattern, flags);
+  } catch {
+    return null;
+  }
+}
+
+function parseRegexQuery(term: string): { pattern: string; flags: string } | null {
+  if (term.startsWith("re:")) return { pattern: term.slice(3), flags: "" };
+  if (!term.startsWith("/")) return null;
+  let escaped = false;
+  for (let i = 1; i < term.length; i += 1) {
+    const ch = term[i];
+    if (escaped) {
+      escaped = false;
+    } else if (ch === "\\") {
+      escaped = true;
+    } else if (ch === "/") {
+      const pattern = term.slice(1, i);
+      const flags = term.slice(i + 1);
+      if (!pattern || !/^[ims]*$/.test(flags)) return null;
+      return { pattern, flags };
+    }
+  }
+  return null;
 }
 
 function folderOf(path: string): string {
