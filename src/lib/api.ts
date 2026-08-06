@@ -358,6 +358,12 @@ export async function mcpConfig(vault: string): Promise<string> {
   return invoke<string>("mcp_config", { vault });
 }
 
+/** The exact Codex CLI MCP config block for this machine. */
+export async function codexMcpConfig(vault: string): Promise<string> {
+  if (!hasTauri) return "";
+  return invoke<string>("codex_mcp_config", { vault });
+}
+
 export interface McpInstall {
   configPath: string;
   executable: string;
@@ -368,6 +374,11 @@ export interface McpInstall {
 /** One-click: write the Magma server into Claude Desktop's config. */
 export async function installMcp(vault: string): Promise<McpInstall> {
   return invoke<McpInstall>("install_mcp", { vault });
+}
+
+/** One-click: register the Magma server with Codex. */
+export async function installCodexMcp(vault: string): Promise<McpInstall> {
+  return invoke<McpInstall>("install_codex_mcp", { vault });
 }
 
 /** The vault that was open last time, if that folder still exists. */

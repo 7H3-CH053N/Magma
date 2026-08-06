@@ -6,6 +6,7 @@ use magma_core as vault;
 use magma_webdav as webdav;
 use serde_json::json;
 use std::path::PathBuf;
+use std::process::Command;
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 
@@ -404,11 +405,14 @@ fn set_last_vault(vault: String) -> Result<(), String> {
 }
 
 /// The recommended MCP client entry: run *this* executable with `--mcp <vault>`.
-fn mcp_server_entry(vault: &str) -> serde_json::Value {
-    let exe = std::env::current_exe()
+fn mcp_executable() -> String {
+    std::env::current_exe()
         .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "magma".to_string());
-    json!({ "command": exe, "args": ["--mcp", vault] })
+        .unwrap_or_else(|_| "magma".to_string())
+}
+
+fn mcp_server_entry(vault: &str) -> serde_json::Value {
+    json!({ "command": mcp_executable(), "args": ["--mcp", vault] })
 }
 
 /// Claude Desktop's config file location for this OS.
@@ -436,6 +440,16 @@ fn claude_desktop_config_path() -> Option<PathBuf> {
 fn mcp_config(vault: String) -> String {
     let cfg = json!({ "mcpServers": { "magma": mcp_server_entry(&vault) } });
     serde_json::to_string_pretty(&cfg).unwrap_or_default()
+}
+
+/// The equivalent Codex CLI MCP config block for display / manual copy.
+#[tauri::command]
+fn codex_mcp_config(vault: String) -> String {
+    format!(
+        "[mcp_servers.magma]\nenabled = true\ncommand = {command:?}\nargs = [\"--mcp\", {vault:?}]\n",
+        command = mcp_executable(),
+        vault = vault
+    )
 }
 
 /// One-click install: merge the Magma server into Claude Desktop's config,
@@ -500,6 +514,43 @@ fn install_mcp(vault: String) -> Result<McpInstall, String> {
         || exe.contains("\\target\\release\\");
     Ok(McpInstall {
         config_path: path.to_string_lossy().to_string(),
+        executable: exe,
+        dev_build,
+    })
+}
+
+/// One-click install for Codex: use the Codex CLI to add Magma as an MCP server.
+#[tauri::command]
+fn install_codex_mcp(vault: String) -> Result<McpInstall, String> {
+    let exe = mcp_executable();
+    // `codex mcp add` refuses an existing name; remove an older Magma entry
+    // first, but do not fail when there was nothing to remove.
+    let _ = Command::new("codex")
+        .args(["mcp", "remove", "magma"])
+        .output();
+    let out = Command::new("codex")
+        .args(["mcp", "add", "magma", "--", &exe, "--mcp", &vault])
+        .output()
+        .map_err(|e| format!("could not run the Codex CLI: {e}"))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(if err.is_empty() {
+            "Codex CLI failed to add the MCP server".to_string()
+        } else {
+            err
+        });
+    }
+    let config_path = std::env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".codex")))
+        .unwrap_or_else(|| PathBuf::from("~/.codex"))
+        .join("config.toml");
+    let dev_build = exe.contains("/target/debug/")
+        || exe.contains("/target/release/")
+        || exe.contains("\\target\\debug\\")
+        || exe.contains("\\target\\release\\");
+    Ok(McpInstall {
+        config_path: config_path.to_string_lossy().to_string(),
         executable: exe,
         dev_build,
     })
@@ -729,7 +780,9 @@ pub fn run() {
             remote_put,
             remote_delete,
             mcp_config,
+            codex_mcp_config,
             install_mcp,
+            install_codex_mcp,
             last_vault,
             set_last_vault,
             set_language,

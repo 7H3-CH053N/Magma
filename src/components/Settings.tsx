@@ -4,8 +4,10 @@ import { useI18n, type Lang } from "../lib/i18n";
 import { useTheme, FONT_PRESETS, type ThemeMode } from "../lib/theme";
 import { usePrefs } from "../lib/prefs";
 import {
+  codexMcpConfig,
   hasTauri,
   importWordpress,
+  installCodexMcp,
   installMcp,
   mcpConfig,
   type NoteMeta,
@@ -75,9 +77,18 @@ export default function Settings({
   const [mcpErr, setMcpErr] = useState<string | null>(null);
   const [showManual, setShowManual] = useState(false);
   const [configText, setConfigText] = useState("");
+  const [codexBusy, setCodexBusy] = useState(false);
+  const [codexDone, setCodexDone] = useState<string | null>(null);
+  const [codexWarn, setCodexWarn] = useState<string | null>(null);
+  const [codexErr, setCodexErr] = useState<string | null>(null);
+  const [showCodexManual, setShowCodexManual] = useState(false);
+  const [codexConfigText, setCodexConfigText] = useState("");
 
   useEffect(() => {
-    if (hasTauri && vault) mcpConfig(vault).then(setConfigText).catch(() => {});
+    if (hasTauri && vault) {
+      mcpConfig(vault).then(setConfigText).catch(() => {});
+      codexMcpConfig(vault).then(setCodexConfigText).catch(() => {});
+    }
   }, [vault]);
 
   // WordPress import state.
@@ -144,6 +155,22 @@ export default function Settings({
       setMcpErr(String(e));
     } finally {
       setMcpBusy(false);
+    }
+  };
+
+  const installCodex = async () => {
+    if (!vault) return;
+    setCodexErr(null);
+    setCodexWarn(null);
+    setCodexBusy(true);
+    try {
+      const res = await installCodexMcp(vault);
+      setCodexDone(res.configPath);
+      setCodexWarn(res.devBuild ? t("settings.codexMcpDevBuild", { exe: res.executable }) : null);
+    } catch (e) {
+      setCodexErr(String(e));
+    } finally {
+      setCodexBusy(false);
     }
   };
 
@@ -536,8 +563,9 @@ export default function Settings({
         )}
 
         {tab === "claude" && (
-        /* Connect to Claude */
-        <section className="mb-5">
+        /* Connect AI clients through MCP */
+        <>
+        <section className="mb-6">
           <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-magma-muted">
             {t("settings.connectTitle")}
           </label>
@@ -578,6 +606,48 @@ export default function Settings({
             </>
           )}
         </section>
+        <section className="mb-5 border-t border-black/10 pt-5 dark:border-white/10">
+          <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-magma-muted">
+            {t("settings.codexConnectTitle")}
+          </label>
+          <p className="mb-2 text-xs text-magma-muted">{t("settings.codexConnectBody")}</p>
+
+          {!vault ? (
+            <p className="text-xs text-magma-muted opacity-80">{t("settings.mcpNoVault")}</p>
+          ) : (
+            <>
+              <button
+                onClick={installCodex}
+                disabled={codexBusy}
+                className="rounded-lg bg-magma-accent px-3 py-1.5 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+              >
+                {codexBusy ? t("settings.codexMcpInstalling") : t("settings.codexMcpInstall")}
+              </button>
+              {codexWarn && (
+                <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">{codexWarn}</p>
+              )}
+              {codexDone && (
+                <p className="mt-2 text-xs text-green-600 dark:text-green-400">
+                  {t("settings.codexMcpInstalled", { path: codexDone })}
+                </p>
+              )}
+              {codexErr && <p className="mt-2 text-xs text-red-500">{codexErr}</p>}
+
+              <button
+                onClick={() => setShowCodexManual((v) => !v)}
+                className="mt-2 block text-xs text-magma-muted underline-offset-2 hover:text-magma-accent hover:underline"
+              >
+                {t("settings.codexMcpManual")}
+              </button>
+              {showCodexManual && codexConfigText && (
+                <pre className="mt-2 overflow-auto rounded-lg bg-black/[0.05] p-3 text-xs leading-relaxed dark:bg-black/40">
+                  <code>{codexConfigText}</code>
+                </pre>
+              )}
+            </>
+          )}
+        </section>
+        </>
 
         )}
 
