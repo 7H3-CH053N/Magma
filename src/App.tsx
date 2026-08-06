@@ -18,7 +18,7 @@ import NodePreview from "./components/NodePreview";
 import ReplaceDialog from "./components/ReplaceDialog";
 import { useI18n } from "./lib/i18n";
 import { applyTemplate, dayKey, usePrefs } from "./lib/prefs";
-import { pluginCommands } from "./lib/plugins";
+import { pluginCommands, useExternalPluginCommands } from "./lib/plugins";
 import { splitFrontmatter, joinFrontmatter } from "./lib/markdown";
 import {
   appendNote,
@@ -32,6 +32,7 @@ import {
   lastVault,
   listFolders,
   listNotes,
+  listVaultPlugins,
   moveFolder,
   moveNote,
   openExternal,
@@ -51,6 +52,7 @@ import {
   type RemoteConfig,
   type ReplaceReport,
   type SearchHit,
+  type VaultPluginBundle,
 } from "./lib/api";
 
 const AUTOSAVE_MS = 600;
@@ -62,6 +64,7 @@ export default function App() {
   const [vault, setVault] = useState<string | null>(null);
   const [notes, setNotes] = useState<NoteMeta[]>([]);
   const [folders, setFolders] = useState<string[]>([]);
+  const [vaultPlugins, setVaultPlugins] = useState<VaultPluginBundle[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [content, setContent] = useState("");
   const [view, setView] = useState<View>("editor");
@@ -129,15 +132,28 @@ export default function App() {
     }
   }, []);
 
+  const refreshVaultPlugins = useCallback(async (v: string) => {
+    try {
+      const next = await listVaultPlugins(v);
+      setVaultPlugins((prev) =>
+        JSON.stringify(prev) === JSON.stringify(next) ? prev : next
+      );
+    } catch (e) {
+      console.error("plugin loading failed:", e);
+      setVaultPlugins([]);
+    }
+  }, []);
+
   const openVault = useCallback(async () => {
     const picked = await pickVault();
     if (picked) {
       setVault(picked);
       await refreshNotes(picked);
+      await refreshVaultPlugins(picked);
       // Remembered on the Rust side, so the next start opens it straight away.
       void setLastVault(picked).catch(() => {});
     }
-  }, [refreshNotes]);
+  }, [refreshNotes, refreshVaultPlugins]);
 
   // Reopen the vault from the last session on start.
   useEffect(() => {
@@ -146,9 +162,10 @@ export default function App() {
       if (last) {
         setVault(last);
         await refreshNotes(last);
+        await refreshVaultPlugins(last);
       }
     })();
-  }, [refreshNotes]);
+  }, [refreshNotes, refreshVaultPlugins]);
 
   const selectNote = useCallback(
     async (path: string) => {
@@ -522,6 +539,7 @@ export default function App() {
     setRemote(cfg);
     setVault(cacheDir);
     setNotes(await listNotes(cacheDir));
+    await refreshVaultPlugins(cacheDir);
     void setLastVault(cacheDir).catch(() => {});
     setActivePath(null);
     setContent("");
@@ -535,7 +553,7 @@ export default function App() {
     } catch {
       /* ignore */
     }
-  }, []);
+  }, [refreshVaultPlugins]);
 
   // Debounced search as the user types.
   useEffect(() => {
@@ -557,6 +575,26 @@ export default function App() {
     return notes.filter((n) => n.path.startsWith(prefix));
   }, [notes, prefs.templateFolder]);
 
+  const pluginNotice = useCallback(
+    (title: string, detail?: string) =>
+      setConfirm({
+        title,
+        detail,
+        notice: true,
+        onConfirm: () => {},
+      }),
+    []
+  );
+
+  const externalPluginCommands = useExternalPluginCommands({
+    bundles: vaultPlugins,
+    enabledIds: prefs.enabledPluginIds,
+    context: { notes, activePath, content },
+    t,
+    openNote: (path) => void selectNote(path),
+    notice: pluginNotice,
+  });
+
   /** Everything the palette can do, besides jumping to a note. */
   const commands = useMemo<Command[]>(() => {
     const pluginItems = pluginCommands(prefs.enabledPluginIds, {
@@ -565,13 +603,7 @@ export default function App() {
       content,
       t,
       openNote: (path) => void selectNote(path),
-      notice: (title, detail) =>
-        setConfirm({
-          title,
-          detail,
-          notice: true,
-          onConfirm: () => {},
-        }),
+      notice: pluginNotice,
     });
     const list: Command[] = [
       { id: "new", label: t("cmd.newNote"), hint: "⌘N", run: () => void createNewNote() },
@@ -599,6 +631,7 @@ export default function App() {
       { id: "folder", label: t("cmd.newFolder"), run: () => handleCreateFolder("") },
       { id: "openVault", label: t("cmd.openVault"), run: () => void openVault() },
       ...pluginItems,
+      ...externalPluginCommands,
     ];
     if (activePath) {
       list.push(
@@ -646,6 +679,8 @@ export default function App() {
     prefs.enabledPluginIds,
     content,
     selectNote,
+    pluginNotice,
+    externalPluginCommands,
   ]);
 
   // Keyboard: new note, command palette, quick capture.
@@ -694,14 +729,17 @@ export default function App() {
   // window regains focus and on a gentle interval while a vault is open.
   useEffect(() => {
     if (!vault) return;
-    const sync = () => void refreshNotes(vault);
+    const sync = () => {
+      void refreshNotes(vault);
+      void refreshVaultPlugins(vault);
+    };
     window.addEventListener("focus", sync);
     const id = window.setInterval(sync, 4000);
     return () => {
       window.removeEventListener("focus", sync);
       window.clearInterval(id);
     };
-  }, [vault, refreshNotes]);
+  }, [vault, refreshNotes, refreshVaultPlugins]);
 
   useEffect(() => {
     return () => {
@@ -746,6 +784,7 @@ export default function App() {
           vault={vault}
           folders={folders}
           notes={notes}
+          vaultPlugins={vaultPlugins}
           onConnectRemote={connectRemote}
           remoteActive={!!remote}
           onOpenVault={openVault}

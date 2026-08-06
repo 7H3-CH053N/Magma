@@ -3,7 +3,7 @@ import FlameIcon from "./FlameIcon";
 import { useI18n, type Lang } from "../lib/i18n";
 import { useTheme, FONT_PRESETS, type ThemeMode } from "../lib/theme";
 import { usePrefs } from "../lib/prefs";
-import { CORE_PLUGINS } from "../lib/plugins";
+import { corePluginList, parseExternalManifest } from "../lib/plugins";
 import {
   hasTauri,
   importWordpress,
@@ -11,6 +11,7 @@ import {
   mcpConfig,
   type NoteMeta,
   type RemoteConfig,
+  type VaultPluginBundle,
 } from "../lib/api";
 
 interface SettingsProps {
@@ -18,6 +19,7 @@ interface SettingsProps {
   vault: string | null;
   folders: string[];
   notes: NoteMeta[];
+  vaultPlugins: VaultPluginBundle[];
   onConnectRemote: (cfg: RemoteConfig) => Promise<void>;
   remoteActive: boolean;
   /** Pick a vault folder — the only place this lives now. */
@@ -45,6 +47,7 @@ export default function Settings({
   vault,
   folders,
   notes,
+  vaultPlugins,
   onConnectRemote,
   remoteActive,
   onOpenVault,
@@ -61,6 +64,10 @@ export default function Settings({
     dirty: prefsDirty,
   } = usePrefs();
   const dirty = themeDirty || langDirty || prefsDirty;
+  const pluginItems = [
+    ...corePluginList(t),
+    ...vaultPlugins.map(parseExternalManifest),
+  ];
   const [savedNote, setSavedNote] = useState(false);
   const initial = savedRemote();
   const [url, setUrl] = useState(initial.url);
@@ -416,33 +423,44 @@ export default function Settings({
             {t("settings.pluginsBody")}
           </p>
           <div className="space-y-2">
-            {CORE_PLUGINS.map((plugin) => {
-              const enabled = prefs.enabledPluginIds.includes(plugin.manifest.id);
+            {pluginItems.map((plugin) => {
+              const enabled = prefs.enabledPluginIds.includes(plugin.id);
               return (
                 <label
-                  key={plugin.manifest.id}
+                  key={`${plugin.source}:${plugin.id}`}
                   className="flex cursor-pointer items-start gap-3 rounded-lg border border-black/10 p-3 text-sm transition hover:border-magma-accent/40 dark:border-white/10"
                 >
                   <input
                     type="checkbox"
                     checked={enabled}
-                    onChange={(e) => togglePlugin(plugin.manifest.id, e.target.checked)}
+                    onChange={(e) => togglePlugin(plugin.id, e.target.checked)}
                     className="mt-0.5 accent-magma-accent"
                   />
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-2">
-                      <span className="font-medium">{t(plugin.manifest.nameKey)}</span>
+                      <span className="font-medium">{plugin.name}</span>
                       <span className="rounded-md bg-black/5 px-1.5 py-0.5 text-[11px] text-magma-muted dark:bg-white/10">
-                        {plugin.manifest.author}
+                        {plugin.source === "core" ? t("settings.pluginsSourceCore") : t("settings.pluginsSourceVault")}
+                      </span>
+                      {plugin.version && (
+                        <span className="text-[11px] text-magma-muted">{plugin.version}</span>
+                      )}
+                      <span className="text-[11px] text-magma-muted">
+                        {plugin.author}
                       </span>
                     </span>
                     <span className="mt-1 block text-xs leading-relaxed text-magma-muted">
-                      {t(plugin.manifest.descriptionKey)}
+                      {plugin.description}
                     </span>
                   </span>
                 </label>
               );
             })}
+            {pluginItems.length === 0 && (
+              <p className="rounded-lg border border-dashed border-black/10 p-4 text-sm text-magma-muted dark:border-white/10">
+                {t("settings.pluginsNone")}
+              </p>
+            )}
           </div>
           <p className="mt-3 text-[11px] leading-relaxed text-magma-muted opacity-80">
             {t("settings.pluginsDeveloperNote")}

@@ -112,6 +112,8 @@ geliebt wird, und repariert, was nervt:
 - **Vorlagen** – jede Notiz im Vorlagen-Ordner erscheint in der Palette als
   „Neue Notiz aus: …". `{{date}}`, `{{time}}`, `{{title}}`, `{{weekday}}`,
   `{{month}}` und `{{year}}` werden eingesetzt.
+- **Plugins** – Core-Plugins und vertrauenswürdige lokale Vault-Plugins können
+  Befehle zur Palette beitragen. Siehe [docs/PLUGINS.md](docs/PLUGINS.md).
 - **Ordner und Unterordner** – einen Unterordner direkt im Ordner anlegen,
   Ordner per Drag & Drop oder mit einem Knopf verschieben. Notizen lassen sich
   ebenfalls ziehen.

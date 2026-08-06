@@ -101,6 +101,8 @@ plugin-hunting needed for basics. Magma keeps what's loved and fixes what's not:
 - **Templates** — every note in your template folder appears in the palette as
   "New note from: …". `{{date}}`, `{{time}}`, `{{title}}`, `{{weekday}}`,
   `{{month}}` and `{{year}}` are filled in.
+- **Plugins** — core plugins and trusted local vault plugins can add commands
+  to the palette. See [docs/PLUGINS.md](docs/PLUGINS.md).
 - **Folders and subfolders** — create a subfolder from the folder itself, move
   folders by dragging or with one button. Notes move by dragging too.
 

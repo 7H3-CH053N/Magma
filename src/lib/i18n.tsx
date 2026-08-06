@@ -221,10 +221,14 @@ const STRINGS: Record<Lang, Record<string, string>> = {
       "Requires an https:// WebDAV URL. Notes are cached locally and changes are pushed back on save. The password is kept only for this session.",
     "settings.pluginsTitle": "Plugins",
     "settings.pluginsBody":
-      "Turn Magma features on and off like Obsidian plugins. Enabled plugins can add commands and, later, their own views or settings.",
+      "Turn Magma features on and off like Obsidian plugins. Local plugins live in .magma/plugins inside the open vault.",
     "settings.pluginsDeveloperNote":
-      "This is the internal plugin layer: manifests, activation state, and command contributions are wired in. A third-party plugin folder can be added on top of this.",
+      "Vault plugins are trusted local code. They run in a Web Worker and can only use the small Magma plugin API exposed by the app.",
+    "settings.pluginsSourceCore": "Core",
+    "settings.pluginsSourceVault": "Vault",
+    "settings.pluginsNone": "No plugins found.",
     "plugins.commandHint": "Plugin",
+    "plugins.externalLoadErrorTitle": "Plugin could not be loaded",
     "plugins.randomNote.name": "Random note",
     "plugins.randomNote.description": "Adds a command that opens one note from your vault at random.",
     "plugins.randomNote.command": "Open random note",
@@ -455,10 +459,14 @@ const STRINGS: Record<Lang, Record<string, string>> = {
       "Erfordert eine https://-WebDAV-URL. Notizen werden lokal zwischengespeichert und Änderungen beim Speichern zurück übertragen. Das Passwort wird nur für diese Sitzung behalten.",
     "settings.pluginsTitle": "Plugins",
     "settings.pluginsBody":
-      "Schalte Magma-Funktionen wie bei Obsidian-Plugins ein oder aus. Aktivierte Plugins können Befehle beitragen und später eigene Ansichten oder Einstellungen bekommen.",
+      "Schalte Magma-Funktionen wie bei Obsidian-Plugins ein oder aus. Lokale Plugins liegen im geöffneten Vault unter .magma/plugins.",
     "settings.pluginsDeveloperNote":
-      "Das ist die interne Plugin-Schicht: Manifest, Aktivierung und Command-Beiträge sind verdrahtet. Ein Ordner für Drittanbieter-Plugins kann darauf aufsetzen.",
+      "Vault-Plugins sind vertrauenswürdiger lokaler Code. Sie laufen in einem Web Worker und können nur die kleine Magma-Plugin-API nutzen, die die App freigibt.",
+    "settings.pluginsSourceCore": "Core",
+    "settings.pluginsSourceVault": "Vault",
+    "settings.pluginsNone": "Keine Plugins gefunden.",
     "plugins.commandHint": "Plugin",
+    "plugins.externalLoadErrorTitle": "Plugin konnte nicht geladen werden",
     "plugins.randomNote.name": "Zufällige Notiz",
     "plugins.randomNote.description": "Fügt einen Befehl hinzu, der eine zufällige Notiz aus deinem Vault öffnet.",
     "plugins.randomNote.command": "Zufällige Notiz öffnen",

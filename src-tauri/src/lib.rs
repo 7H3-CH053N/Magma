@@ -5,7 +5,7 @@
 use magma_core as vault;
 use magma_webdav as webdav;
 use serde_json::json;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 
@@ -113,6 +113,80 @@ fn move_folder(vault: String, folder: String, into: String) -> Result<String, St
 #[tauri::command]
 fn list_folders(vault: String) -> Result<Vec<String>, String> {
     vault::list_folders(&PathBuf::from(vault)).map_err(|e| e.to_string())
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VaultPluginBundle {
+    id: String,
+    manifest: serde_json::Value,
+    source: String,
+}
+
+fn valid_plugin_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+fn read_plugin(root: &Path, dir: &Path) -> Result<Option<VaultPluginBundle>, String> {
+    let id = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "invalid plugin folder name".to_string())?;
+    if !valid_plugin_id(id) {
+        return Ok(None);
+    }
+    let manifest_path = dir.join("manifest.json");
+    let main_path = dir.join("main.js");
+    if !manifest_path.is_file() || !main_path.is_file() {
+        return Ok(None);
+    }
+    let manifest_path = std::fs::canonicalize(&manifest_path).map_err(|e| e.to_string())?;
+    let main_path = std::fs::canonicalize(&main_path).map_err(|e| e.to_string())?;
+    if !manifest_path.starts_with(root) || !main_path.starts_with(root) {
+        return Err("plugin path escaped the vault".into());
+    }
+    let manifest_text = std::fs::read_to_string(&manifest_path).map_err(|e| e.to_string())?;
+    let manifest: serde_json::Value =
+        serde_json::from_str(&manifest_text).map_err(|e| e.to_string())?;
+    if manifest.get("id").and_then(|v| v.as_str()) != Some(id) {
+        return Err(format!(
+            "plugin {id} has a manifest id that does not match its folder"
+        ));
+    }
+    let source = std::fs::read_to_string(&main_path).map_err(|e| e.to_string())?;
+    Ok(Some(VaultPluginBundle {
+        id: id.to_string(),
+        manifest,
+        source,
+    }))
+}
+
+/// Load trusted local plugins from `<vault>/.magma/plugins/<id>/`.
+///
+/// The command only reads `manifest.json` and `main.js`; it never executes
+/// plugin code. Execution happens in a browser Worker with a tiny host API.
+#[tauri::command]
+fn list_vault_plugins(vault: String) -> Result<Vec<VaultPluginBundle>, String> {
+    let root = std::fs::canonicalize(PathBuf::from(vault)).map_err(|e| e.to_string())?;
+    let plugin_root = root.join(".magma").join("plugins");
+    if !plugin_root.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(plugin_root).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let dir = entry.path();
+        if dir.is_dir() {
+            if let Some(plugin) = read_plugin(&root, &dir)? {
+                out.push(plugin);
+            }
+        }
+    }
+    out.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(out)
 }
 
 /// Import a WordPress blog into a folder, returning how many notes were written.
@@ -710,6 +784,7 @@ pub fn run() {
             delete_folder,
             move_folder,
             list_folders,
+            list_vault_plugins,
             import_wordpress,
             save_asset,
             build_graph,

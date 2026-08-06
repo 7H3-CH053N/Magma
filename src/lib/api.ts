@@ -88,6 +88,18 @@ export async function listFolders(vault: string): Promise<string[]> {
   return invoke<string[]>("list_folders", { vault });
 }
 
+export interface VaultPluginBundle {
+  id: string;
+  manifest: unknown;
+  source: string;
+}
+
+/** Trusted local plugins in `<vault>/.magma/plugins/<id>/`. */
+export async function listVaultPlugins(vault: string): Promise<VaultPluginBundle[]> {
+  if (!hasTauri) return [];
+  return invoke<VaultPluginBundle[]>("list_vault_plugins", { vault });
+}
+
 /** Import a WordPress blog into a folder; returns the number of notes written. */
 export interface ImportSummary {
   notes: number;
