@@ -1,5 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useEditor, EditorContent, BubbleMenu, type Editor as TiptapEditor } from "@tiptap/react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import CodeBlock from "@tiptap/extension-code-block";
+import {
+  useEditor,
+  EditorContent,
+  BubbleMenu,
+  NodeViewContent,
+  NodeViewWrapper,
+  ReactNodeViewRenderer,
+  type Editor as TiptapEditor,
+  type NodeViewProps,
+} from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
 import TaskList from "@tiptap/extension-task-list";
@@ -11,6 +21,8 @@ import TableHeader from "@tiptap/extension-table-header";
 import TableCell from "@tiptap/extension-table-cell";
 import { Markdown } from "tiptap-markdown";
 import { WikiLink } from "../lib/wikilinkExtension";
+import { queryDataview, type DataviewResult } from "../lib/api";
+import { useI18n } from "../lib/i18n";
 
 interface EditorProps {
   value: string;
@@ -22,6 +34,10 @@ interface EditorProps {
   onOpenExternal?: (url: string) => void;
   /** Every note in the vault, for the link picker and missing-link styling. */
   notes?: { path: string; title: string }[];
+  /** Current vault path, used to evaluate Dataview blocks read-only. */
+  vault?: string | null;
+  /** Active note path; changes reset Dataview results for the new note. */
+  path?: string | null;
 }
 
 /**
@@ -57,12 +73,21 @@ export default function Editor({
   onOpenLink,
   onOpenExternal,
   notes = [],
+  vault,
+  path,
 }: EditorProps) {
+  const { t } = useI18n();
   // Read through a ref so the extension sees the current notes without the
   // editor having to be rebuilt every time the vault list changes.
   const stemsRef = useRef<Set<string>>(new Set());
   stemsRef.current = new Set(notes.map((n) => stemOf(n.path).toLowerCase()));
   const [picker, setPicker] = useState<{ text: string } | null>(null);
+  const dataviewContext = useRef<DataviewContext>({ vault, notePath: path, onOpenLink, t });
+  dataviewContext.current = { vault, notePath: path, onOpenLink, t };
+  const dataviewCodeBlock = useMemo(
+    () => createDataviewCodeBlock(dataviewContext),
+    [t]
+  );
 
   /**
    * The markdown this editor itself last handed upwards.
@@ -84,7 +109,9 @@ export default function Editor({
     extensions: [
       StarterKit.configure({
         heading: { levels: [1, 2, 3] },
+        codeBlock: false,
       }),
+      dataviewCodeBlock,
       Link.configure({ openOnClick: false, autolink: true }),
       TaskList,
       TaskItem.configure({ nested: true }),
@@ -127,7 +154,7 @@ export default function Editor({
       emitted.current = markdown;
       onChange(markdown);
     },
-  });
+  }, [dataviewCodeBlock]);
 
   // Apply changes that came from outside the editor — a restored version, a
   // vault-wide replace, a remote sync — and nothing else.
@@ -198,6 +225,192 @@ export default function Editor({
         />
       )}
     </div>
+  );
+}
+
+interface DataviewContext {
+  vault?: string | null;
+  notePath?: string | null;
+  onOpenLink?: (name: string) => void;
+  t: (key: string, vars?: Record<string, string>) => string;
+}
+
+function createDataviewCodeBlock(context: MutableRefObject<DataviewContext>) {
+  return CodeBlock.extend({
+    addNodeView() {
+      return ReactNodeViewRenderer((props) => (
+        <DataviewCodeBlockView
+          {...props}
+          context={context}
+        />
+      ));
+    },
+  });
+}
+
+function DataviewCodeBlockView({
+  node,
+  context,
+}: NodeViewProps & {
+  context: MutableRefObject<DataviewContext>;
+}) {
+  const { vault, notePath, onOpenLink, t } = context.current;
+  const language = String(node.attrs.language ?? "").toLowerCase();
+  const query = node.textContent.trim();
+  const [results, setResults] = useState<DataviewResult[]>([]);
+
+  useEffect(() => {
+    if (language !== "dataview" || !vault || !query) {
+      setResults([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void queryDataview(vault, query)
+        .then((next) => {
+          if (!cancelled) setResults([next]);
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            setResults([
+              {
+                kind: "error",
+                columns: [],
+                rows: [],
+                items: [],
+                error: String(error),
+              },
+            ]);
+          }
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [language, vault, notePath, query]);
+
+  if (language !== "dataview") {
+    return (
+      <NodeViewWrapper as="pre">
+        <NodeViewContent as="code" className={node.attrs.language ? `language-${node.attrs.language}` : ""} />
+      </NodeViewWrapper>
+    );
+  }
+
+  return (
+    <NodeViewWrapper as="section" className="dataview-result">
+      <DataviewResultView
+        query={query}
+        result={results[0]}
+        onOpenLink={onOpenLink}
+        t={t}
+      />
+      <details className="dataview-query">
+        <summary>{t("dataview.editQuery")}</summary>
+        <NodeViewContent as="pre" className="dataview-query-source" />
+      </details>
+    </NodeViewWrapper>
+  );
+}
+
+function DataviewResultView({
+  query,
+  result,
+  onOpenLink,
+  t,
+}: {
+  query: string;
+  result?: DataviewResult;
+  onOpenLink?: (name: string) => void;
+  t: (key: string, vars?: Record<string, string>) => string;
+}) {
+  const firstLine = query.split(/\n/).find(Boolean) ?? "dataview";
+  const error = result?.error;
+  const knownErrors = new Set([
+    "desktop_required",
+    "sort_field_required",
+    "table_columns_required",
+    "unsupported_query",
+    "where_comparison_required",
+  ]);
+  return (
+    <>
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <span className="font-mono text-[11px] uppercase tracking-wide text-magma-muted">
+          Dataview
+        </span>
+        <span className="truncate font-mono text-[11px] text-magma-muted">{firstLine}</span>
+      </div>
+      {!result ? (
+        <p className="text-sm text-magma-muted">{t("dataview.loading")}</p>
+      ) : result.error ? (
+        <p className="text-sm text-red-600 dark:text-red-300">
+          {error && knownErrors.has(error) ? t(`dataview.error.${error}`) : t("dataview.error.unknown")}
+        </p>
+      ) : result.kind === "table" ? (
+        <div className="overflow-x-auto">
+          <table>
+            <thead>
+              <tr>
+                {result.columns.map((column) => (
+                  <th key={column}>{column}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {result.rows.map((row, rowIndex) => (
+                <tr key={rowIndex}>
+                  {row.map((cell, cellIndex) => (
+                    <td key={cellIndex}>
+                      <DataviewCell value={cell} onOpenLink={onOpenLink} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+              {result.rows.length === 0 && (
+                <tr>
+                  <td colSpan={Math.max(1, result.columns.length)} className="text-magma-muted">
+                    {t("dataview.empty")}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <ul>
+          {result.items.map((item, index) => (
+            <li key={`${item}:${index}`}>
+              <DataviewCell value={item} onOpenLink={onOpenLink} />
+            </li>
+          ))}
+          {result.items.length === 0 && <li className="text-magma-muted">{t("dataview.empty")}</li>}
+        </ul>
+      )}
+    </>
+  );
+}
+
+function DataviewCell({
+  value,
+  onOpenLink,
+}: {
+  value: string;
+  onOpenLink?: (name: string) => void;
+}) {
+  const link = value.match(/^\[\[([^|\]]+)(?:\|([^\]]+))?\]\]$/);
+  if (!link) return <>{value}</>;
+  const target = link[1].trim();
+  const label = (link[2] ?? target).trim();
+  return (
+    <button
+      type="button"
+      onClick={() => onOpenLink?.(target)}
+      className="text-left text-magma-accent hover:underline"
+    >
+      {label}
+    </button>
   );
 }
 

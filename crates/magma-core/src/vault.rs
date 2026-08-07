@@ -104,7 +104,7 @@ fn rel_path(root: &Path, path: &Path) -> String {
 /// A note's display title: the first heading (or first line of text) in the
 /// content — like Bear/Obsidian — falling back to the filename stem. This is
 /// why typing a title inside the note names it in the sidebar.
-fn title_of(path: &Path, content: &str) -> String {
+pub(crate) fn title_of(path: &Path, content: &str) -> String {
     if let Some(t) = title_from_content(content) {
         // A template's heading is often nothing but a placeholder ("{{title}}").
         // Showing that in the sidebar names the note after a hole in itself —

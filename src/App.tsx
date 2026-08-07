@@ -849,6 +849,8 @@ export default function App() {
                     void openExternal(url);
                   }}
                   notes={notes}
+                  vault={vault}
+                  path={activePath}
                 />
               </div>
               <ConnectionsPanel
