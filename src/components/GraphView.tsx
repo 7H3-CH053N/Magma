@@ -15,6 +15,10 @@ interface Sim {
   ai: boolean;
   missing: boolean;
   degree: number;
+  /** Distinct notes that link *to* this one — what drives the size tier. */
+  inLinks: number;
+  /** Screen-space radius, from the size tier. */
+  r: number;
   x: number;
   y: number;
 }
@@ -41,8 +45,47 @@ const GRAVITY = 0.22;
  * one another, and skipping distant pairs keeps big vaults fast.
  */
 const REPULSION_CUTOFF = K * 25;
-/** Node radius in *screen* pixels — constant, so nodes stay visible when zoomed out. */
-const nodeRadius = (degree: number) => 2.5 + Math.min(7, degree * 1.2);
+/**
+ * Starting temperature: the furthest a node may move in a single step.
+ *
+ * This used to be `K * 2` — nearly four times the ideal edge length. Early
+ * frames threw nodes clean past each other and the whole picture thrashed
+ * before it found any shape.
+ *
+ * Measured on a 369-node vault with one 300-link hub, comparing straight-line
+ * travel against the path each node actually walks: the old settings scored
+ * 0.36 (a node wandered nearly three times further than it got), these score
+ * 0.58. The trade is that coming fully to rest takes a couple of seconds
+ * longer — it travels there instead of vibrating there.
+ */
+const TEMP_START = K * 0.65;
+const COOLING = 0.985;
+/** The sunflower angle — see the seeding comment in the effect below. */
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+
+/**
+ * Node size in *screen* pixels, by how many distinct notes link to one.
+ *
+ * A single continuous scale is useless on a real vault: one hub collects
+ * hundreds of links while most notes have none, so anything linear either
+ * makes the hub absurd or — as the previous `2.5 + min(7, degree * 1.2)` did —
+ * saturates at six links and renders every busier note identically. Five steps
+ * keep the reading instant, and the largest stays under three times the
+ * smallest so hubs are findable without swamping the map.
+ */
+const SIZE_TIERS: { from: number; r: number }[] = [
+  { from: 0, r: 3 },
+  { from: 1, r: 4 },
+  { from: 3, r: 5.25 },
+  { from: 8, r: 6.75 },
+  { from: 20, r: 8.5 },
+];
+
+const radiusFor = (inLinks: number) => {
+  let r = SIZE_TIERS[0].r;
+  for (const tier of SIZE_TIERS) if (inLinks >= tier.from) r = tier.r;
+  return r;
+};
 
 /** Distinct hues, one per top-level folder. */
 const HUES = [205, 145, 332, 40, 265, 190, 355, 95, 22, 240, 170, 300];
@@ -187,19 +230,44 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Seed on a circle sized to the vault (no RNG, so layouts are reproducible).
     const n = graph.nodes.length;
-    const seed = K * Math.sqrt(Math.max(1, n)) * 0.5;
+
+    // How many *distinct* notes link to each node. Counting raw edges would let
+    // one note that names another three times look like three connections —
+    // the Rust side reports every occurrence, because that is what the text
+    // says. For "how important is this note", distinct sources is the honest
+    // number, and it matches what the backlinks panel shows.
+    const inSources = new Map<string, Set<string>>();
+    for (const e of graph.edges) {
+      if (e.source === e.target) continue;
+      let set = inSources.get(e.target);
+      if (!set) inSources.set(e.target, (set = new Set()));
+      set.add(e.source);
+    }
+
+    // Seed on a phyllotaxis spiral — the pattern of sunflower seeds. Every node
+    // starts roughly one ideal edge length from its neighbours, so the first
+    // frames only tidy up.
+    //
+    // The old seed put all n nodes on a single circle: identical radius, minimum
+    // spacing, maximum repulsion. The layout had to explode outward before it
+    // could settle, and that explosion is what read as the graph shaking on
+    // build. Still no RNG, so layouts stay reproducible.
+    const spread = K * 0.6 * Math.sqrt(Math.max(1, n));
     const nodes: Sim[] = graph.nodes.map((node, i) => {
-      const a = (i / Math.max(1, n)) * Math.PI * 2;
+      const rad = spread * Math.sqrt((i + 0.5) / Math.max(1, n));
+      const a = i * GOLDEN_ANGLE;
+      const inLinks = inSources.get(node.path)?.size ?? 0;
       return {
         path: node.path,
         title: node.title,
         ai: node.aiAuthored,
         missing: !!node.missing,
         degree: node.degree,
-        x: Math.cos(a) * seed,
-        y: Math.sin(a) * seed,
+        inLinks,
+        r: radiusFor(inLinks),
+        x: Math.cos(a) * rad,
+        y: Math.sin(a) * rad,
       };
     });
     interactedRef.current = false; // a fresh graph starts in auto-fit mode
@@ -226,21 +294,31 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
     };
 
     const indexOf = new Map(nodes.map((s, i) => [s.path, i]));
+    // One spring per connected pair. The layout is undirected, so A→B and B→A
+    // are the same spring — and a link repeated inside one note must not pull
+    // three times as hard, or draw its line three times over.
     const links: [number, number][] = [];
+    const seenPair = new Set<number>();
     for (const e of graph.edges) {
       const a = indexOf.get(e.source);
       const b = indexOf.get(e.target);
-      if (a !== undefined && b !== undefined && a !== b) links.push([a, b]);
+      if (a === undefined || b === undefined || a === b) continue;
+      const key = a < b ? a * n + b : b * n + a;
+      if (seenPair.has(key)) continue;
+      seenPair.add(key);
+      links.push([a, b]);
     }
     // Links are grouped by colour (of their busier end) so a big vault still
     // draws in a handful of paths. Rebuilt whenever a colour changes.
     const linksByColor = new Map<string, [number, number][]>();
 
-    // Node indices, most-connected first: labels are placed in this order so the
-    // hubs that orient the map win the space.
+    // Node indices, most-linked-to first: labels are placed in this order so the
+    // hubs that orient the map win the space. Ordering by in-links rather than
+    // total degree keeps the labelled notes the same ones the size tiers single
+    // out, so the biggest dot is never the unnamed one.
     const labelOrder = nodes
       .map((_, i) => i)
-      .sort((a, b) => nodes[b].degree - nodes[a].degree);
+      .sort((a, b) => nodes[b].inLinks - nodes[a].inLinks || nodes[b].degree - nodes[a].degree);
     // Name the busiest hubs even when zoomed out.
     const hubs = new Set(
       labelOrder
@@ -248,12 +326,15 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
         .filter((i) => nodes[i].degree > 0)
         .map((i) => nodes[i].path)
     );
+    // Draw small dots first, so a hub sits on top of the crowd it attracts
+    // instead of being buried under it.
+    const drawOrder = nodes.map((_, i) => i).sort((a, b) => nodes[a].r - nodes[b].r);
 
     let raf = 0;
     let needsDraw = true;
     let dragIdx = -1;
     // Max displacement per step; cools until the layout settles.
-    let temp = K * 2;
+    let temp = TEMP_START;
     const disp = new Float64Array(n * 2);
 
     const resize = () => {
@@ -341,7 +422,7 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
         nodes[i].x -= cx;
         nodes[i].y -= cy;
       }
-      temp *= 0.98;
+      temp *= COOLING;
     };
 
     // World -> screen and back, for hit-testing and dragging.
@@ -359,7 +440,7 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
       for (let i = 0; i < n; i++) {
         const p = toScreen(nodes[i], rect);
         const d = Math.hypot(p.x - mx, p.y - my);
-        if (d < nodeRadius(nodes[i].degree) + 5 && d < bestD) {
+        if (d < nodes[i].r + 5 && d < bestD) {
           best = i;
           bestD = d;
         }
@@ -440,12 +521,12 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
       const onScreen = (p: { x: number; y: number }) =>
         p.x > -40 && p.y > -40 && p.x < rect.width + 40 && p.y < rect.height + 40;
 
-      for (let i = 0; i < n; i++) {
+      for (const i of drawOrder) {
         const s = nodes[i];
         const p = pts[i];
         if (!onScreen(p)) continue; // cheap win on large vaults
         const isActive = s.path === activeRef.current;
-        const r = nodeRadius(s.degree) + (isActive ? 2 : 0);
+        const r = s.r + (isActive ? 2 : 0);
         const color = nodeColor[i];
         if (s.missing) {
           // A link target with no note: hollow, so it reads as "not there yet".
@@ -507,7 +588,7 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
         if (!onScreen(p)) continue;
         const isActive = s.path === activeRef.current;
         if (!isActive && !hubs.has(s.path) && s.degree < 1) continue;
-        const x = p.x + nodeRadius(s.degree) + 4;
+        const x = p.x + s.r + 4;
         const w = ctx.measureText(s.title).width;
         const box = { x1: x - 2, y1: p.y - 8, x2: x + w + 2, y2: p.y + 8 };
         if (
@@ -723,6 +804,13 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
         <span className="flex items-center gap-1.5">
           <span className="h-2.5 w-2.5 rounded-full border border-dashed border-magma-muted" />
           {t("graph.legendMissing")}
+        </span>
+        {/* Why the dots differ in size — otherwise it reads as decoration. */}
+        <span className="flex items-center gap-1">
+          <span className="h-1 w-1 rounded-full bg-magma-muted" />
+          <span className="h-2 w-2 rounded-full bg-magma-muted" />
+          <span className="mr-0.5 h-3 w-3 rounded-full bg-magma-muted" />
+          {t("graph.legendSize")}
         </span>
       </div>
     </div>
