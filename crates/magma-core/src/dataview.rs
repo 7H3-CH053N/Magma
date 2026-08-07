@@ -4,6 +4,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
+use std::sync::OnceLock;
 
 const ERR_SORT_FIELD_REQUIRED: &str = "sort_field_required";
 const ERR_TABLE_COLUMNS_REQUIRED: &str = "table_columns_required";
@@ -432,9 +433,11 @@ fn parse_frontmatter(fm: &str, fields: &mut BTreeMap<String, String>, tags: &mut
 }
 
 fn parse_inline_fields(body: &str, fields: &mut BTreeMap<String, String>) {
-    let Ok(re) = Regex::new(r"(?m)(?:^|\[|\s)([A-Za-z][A-Za-z0-9 _-]{0,60})::\s*([^\]\n]+)") else {
-        return;
-    };
+    static INLINE_FIELD_RE: OnceLock<Regex> = OnceLock::new();
+    let re = INLINE_FIELD_RE.get_or_init(|| {
+        Regex::new(r"(?m)(?:^|\[|\s)([A-Za-z][A-Za-z0-9 _-]{0,60})::\s*([^\]\n]+)")
+            .expect("inline field regex is valid")
+    });
     for cap in re.captures_iter(body) {
         let key = cap[1].trim().to_ascii_lowercase();
         let value = clean_value(cap[2].trim());
@@ -445,9 +448,9 @@ fn parse_inline_fields(body: &str, fields: &mut BTreeMap<String, String>) {
 }
 
 fn parse_tags(body: &str, tags: &mut BTreeSet<String>) {
-    let Ok(re) = Regex::new(r"(?:^|\s)#([A-Za-z0-9_/-]+)") else {
-        return;
-    };
+    static TAG_RE: OnceLock<Regex> = OnceLock::new();
+    let re = TAG_RE
+        .get_or_init(|| Regex::new(r"(?:^|\s)#([A-Za-z0-9_/-]+)").expect("tag regex is valid"));
     for cap in re.captures_iter(body) {
         add_tag(tags, &cap[1]);
     }
