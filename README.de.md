@@ -97,10 +97,20 @@ geliebt wird, und repariert, was nervt:
   Feld. Gesucht wird als Teilfolge, `grph` findet also „Graph anzeigen".
   (`Cmd/Strg+K` bleibt im Editor die Link-Taste.)
 - **Suche**, die in den Notiztexten sucht und nicht nur in Titeln – und den
-  Begriff dort hervorhebt, wo er wirklich steht.
+  Begriff dort hervorhebt, wo er wirklich steht. `/muster/i` oder `re:muster`
+  wird als regulärer Ausdruck gelesen; alles andere bleibt eine normale Suche
+  ohne Rücksicht auf Groß- und Kleinschreibung.
 - **Suchen & Ersetzen im ganzen Vault** – siehe unten.
 - **Graph-Ansicht** – kräftebasiert, verschieben/zoomen/ziehen, eine Farbe pro
-  Hauptordner mit Abstufungen für Unterordner, KI-Notizen mit Ring.
+  Hauptordner mit Abstufungen für Unterordner, KI-Notizen mit Ring. Notizen
+  haben eine von fünf Größen, je nachdem wie viele andere auf sie verlinken –
+  der Knotenpunkt, um den sich dein Vault dreht, ist also der, den du zuerst
+  siehst.
+- **Dataview-Abfragen** – ein ` ```dataview `-Block wird an Ort und Stelle
+  beantwortet: `TABLE` und `LIST` über `FROM` einen Tag oder Ordner, mit
+  `WHERE`, `SORT` und `LIMIT`, gelesen aus YAML-Frontmatter und aus
+  `schlüssel:: wert` im Text. Nur DQL – DataviewJS würde beliebiges JavaScript
+  aus deinen Notizen ausführen.
 
 **Im Alltag**
 
@@ -154,12 +164,19 @@ ersetzt, zeigte jedes `[[…]]` ins Leere. Magma benennt deshalb zuerst die Noti
 um, die den Begriff im Namen trägt, biegt ihre Links mit (samt Alias und Anker)
 und schreibt erst danach den Text.
 
-## Mit Claude verbinden
+## Mit Claude oder Codex verbinden
 
 Magma ist sein eigener MCP-Server – es muss nichts extra installiert werden.
 **Einstellungen → Claude → Claude Desktop einrichten**. Ein Klick schreibt die
 Konfiguration (mit Sicherung einer vorhandenen) und ersetzt jeden älteren
 Magma-Eintrag; Claude Desktop neu starten, fertig.
+
+**Codex** ist ein Klick weiter unten auf derselben Seite. Eingerichtet wird über
+Codex' eigene `config.toml`, nicht über einen Aufruf des `codex`-Befehls – eine
+aus dem Dock gestartete App erbt den `PATH` deiner Shell nicht, der Aufruf würde
+also auch bei einer völlig intakten Installation scheitern. Deine bestehende
+Codex-Konfiguration wird als TOML gelesen, es wird nur Magmas eigener Eintrag
+ersetzt und alles andere behält seine Formatierung.
 
 Für andere MCP-Clients: das JSON unter *Manuelle Einrichtung* kopieren:
 
@@ -178,17 +195,19 @@ ist der Punkt, um die Verbindungen im Vault zu sehen: `find_link_candidates`,
 `list_outgoing_links`. Jeder `[[Wikilink]]`, den Claude schreibt, wird gegen den
 echten Vault geprüft; kaputte kommen mit Korrekturvorschlägen zurück, statt als
 Sackgasse geschrieben zu werden. Von der KI geschriebene Notizen bekommen
-`author: ai`, erscheinen im Graph violett und stehen unter *KI*. Vor jeder
-KI-Änderung wird ein Snapshot angelegt. `MAGMA_MCP_ALLOW_WRITE=0` schaltet auf
-Nur-Lesen.
+`author: ai`, erscheinen im Graph violett und stehen unter *KI* – mit einer
+Kennzeichnung, welcher Client sie geschrieben hat, damit die Arbeit von Claude
+und die von Codex auseinanderzuhalten sind. Vor jeder KI-Änderung wird ein
+Snapshot angelegt. `MAGMA_MCP_ALLOW_WRITE=0` schaltet auf Nur-Lesen.
 
 ## Anpassen
 
-**Einstellungen → Darstellung & Sprache**: Hell/Dunkel/System, Akzent- und
-KI-Notiz-Farbe, Oberflächen- und Editor-Schrift, Schriftgröße, Lesebreite.
-Änderungen erscheinen sofort in der Vorschau und werden mit **Speichern**
-übernommen; Schließen ohne Speichern nimmt sie zurück. Schriften nutzen nur,
-was ohnehin auf deinem System liegt – nichts wird heruntergeladen.
+**Einstellungen → Darstellung & Sprache**: Hell/Dunkel/System, Akzentfarbe,
+Farbe für KI-Notizen und für Textmarkierungen, Oberflächen- und Editor-Schrift,
+Schriftgröße, Lesebreite. Änderungen erscheinen sofort in der Vorschau und
+werden mit **Speichern** übernommen; Schließen ohne Speichern nimmt sie zurück.
+Schriften nutzen nur, was ohnehin auf deinem System liegt – nichts wird
+heruntergeladen.
 
 Die native Menüleiste folgt der gewählten Sprache. Nur die Einträge, die macOS
 selbst einhängt (Writing Tools, AutoFill, Diktat, Emoji & Symbole), bleiben in
@@ -249,6 +268,23 @@ Die Meilensteine **M0–M4** und **M7** sind fertig; **M5** (Packaging) liefert
 unsignierte Installationsprogramme, Signierung und Auto-Update stehen noch aus;
 **M6** (Remote-Vault) hat eine funktionierende erste Version. Die Roadmap steht
 in [`docs/PLAN.md`](docs/PLAN.md).
+
+## Danke
+
+[**Alexander Mut**](https://github.com/alexandermut) ist kurz nach der
+Veröffentlichung des Repos aufgetaucht und hat einen guten Teil dessen
+beigesteuert, was hier drin ist:
+
+- **Dataview-Abfragen (DQL)**, direkt an Ort und Stelle im Editor gerendert
+- **Codex-Unterstützung** neben Claude, samt der `ai_client`-Kennzeichnung, die
+  festhält, welches Modell eine Notiz geschrieben hat
+- **Reguläre Ausdrücke in der Suche**
+- **Eine einstellbare Farbe für Textmarkierungen**
+- **Gehärtete Vault-Pfade** – `safe_join` wies `..` ab, ließ aber absolute Pfade
+  durch. Ein LLM konnte damit eine Datei außerhalb des Vaults benennen und
+  bekam sie auch. Gefunden und behoben, bevor jemand darüber gestolpert ist.
+- Den **CI-Job `desktop-tests`**, der ein Crate prüft, das vorher kein Job
+  abgedeckt hat
 
 ## Lizenz
 
