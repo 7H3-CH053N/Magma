@@ -171,7 +171,8 @@ fn frontmatter_value(content: &str, key: &str) -> Option<String> {
     after[..end].lines().find_map(|line| {
         let l = line.trim().to_lowercase();
         let prefix = format!("{key}:");
-        l.strip_prefix(&prefix).map(|_| line.split_once(':').unwrap().1.trim().to_string())
+        l.strip_prefix(&prefix)
+            .map(|_| line.split_once(':').unwrap().1.trim().to_string())
     })
 }
 
@@ -544,17 +545,26 @@ mod tests {
 
     #[test]
     fn title_falls_back_to_stem() {
-        assert_eq!(title_of(Path::new("/v/ideas/second brain.md"), ""), "second brain");
+        assert_eq!(
+            title_of(Path::new("/v/ideas/second brain.md"), ""),
+            "second brain"
+        );
     }
 
     #[test]
     fn title_prefers_heading() {
-        assert_eq!(title_of(Path::new("/v/Untitled.md"), "# My Idea\n\nbody"), "My Idea");
+        assert_eq!(
+            title_of(Path::new("/v/Untitled.md"), "# My Idea\n\nbody"),
+            "My Idea"
+        );
     }
 
     #[test]
     fn title_uses_first_text_line() {
-        assert_eq!(title_of(Path::new("/v/Untitled.md"), "just some text\nmore"), "just some text");
+        assert_eq!(
+            title_of(Path::new("/v/Untitled.md"), "just some text\nmore"),
+            "just some text"
+        );
     }
 
     #[test]
@@ -657,7 +667,10 @@ mod tests {
 
         let moved = move_folder(&v, "Kunden", "Archiv").unwrap();
         assert_eq!(moved, "Archiv/Kunden");
-        assert!(v.join("Archiv/Kunden/Michael Klotz.md").is_file(), "notes came along");
+        assert!(
+            v.join("Archiv/Kunden/Michael Klotz.md").is_file(),
+            "notes came along"
+        );
         assert!(!v.join("Kunden").exists());
 
         // Into itself, into a child, and the vault root are all refused.
@@ -673,7 +686,10 @@ mod tests {
         create_folder(&v, "A/Notizen").unwrap();
         create_folder(&v, "Notizen").unwrap();
         write_note(&v, "Notizen/x.md", "x").unwrap();
-        assert!(move_folder(&v, "Notizen", "A").is_err(), "would have merged silently");
+        assert!(
+            move_folder(&v, "Notizen", "A").is_err(),
+            "would have merged silently"
+        );
         assert!(v.join("Notizen/x.md").is_file(), "nothing was moved");
         fs::remove_dir_all(&v).ok();
     }

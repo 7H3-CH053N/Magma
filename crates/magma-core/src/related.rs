@@ -39,8 +39,7 @@ const STOPWORDS: &[&str] = &[
     "wenn", "werden", "wie", "wir", "wird", "zu", "zum", "zur", "about", "all", "and", "any",
     "are", "been", "but", "can", "for", "from", "has", "have", "how", "if", "into", "its", "may",
     "more", "not", "our", "out", "she", "than", "that", "the", "their", "them", "then", "there",
-    "these", "they", "this", "were", "what", "when", "which", "who", "will", "with", "you",
-    "your",
+    "these", "they", "this", "were", "what", "when", "which", "who", "will", "with", "you", "your",
 ];
 
 /// Split text into comparable terms: lowercased words of 3+ characters, with
@@ -90,11 +89,7 @@ fn cosine(a: &HashMap<String, f32>, b: &HashMap<String, f32>) -> f32 {
 /// Notes already linked to this one are included and flagged rather than
 /// hidden: seeing that a strong match *is* linked is the reassurance that the
 /// list is working, and it costs one field.
-pub fn related_notes(
-    vault: &Path,
-    rel: &str,
-    limit: usize,
-) -> std::io::Result<Vec<RelatedNote>> {
+pub fn related_notes(vault: &Path, rel: &str, limit: usize) -> std::io::Result<Vec<RelatedNote>> {
     let notes = vault::list_notes(vault)?;
     let mut docs: Vec<(vault::NoteMeta, String)> = Vec::with_capacity(notes.len());
     for note in notes {
@@ -157,7 +152,11 @@ pub fn related_notes(
             linked,
         });
     }
-    out.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    out.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     out.truncate(limit);
     Ok(out)
 }

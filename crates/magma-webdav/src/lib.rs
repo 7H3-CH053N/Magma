@@ -126,7 +126,10 @@ impl WebDavClient {
 
 /// Build the `Authorization: Basic …` header value.
 pub fn basic_auth(user: &str, pass: &str) -> String {
-    format!("Basic {}", base64_encode(format!("{user}:{pass}").as_bytes()))
+    format!(
+        "Basic {}",
+        base64_encode(format!("{user}:{pass}").as_bytes())
+    )
 }
 
 /// Join a WebDAV collection URL with a vault-relative path, encoding spaces and

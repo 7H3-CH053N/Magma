@@ -58,7 +58,12 @@ const SECTION_END: &str = "<!-- magma:imported-end -->";
 pub fn upsert_managed_section(content: &str, block: &str) -> String {
     if let (Some(s), Some(e)) = (content.find(SECTION_START), content.find(SECTION_END)) {
         if e > s {
-            return format!("{}{}{}", &content[..s], block, &content[e + SECTION_END.len()..]);
+            return format!(
+                "{}{}{}",
+                &content[..s],
+                block,
+                &content[e + SECTION_END.len()..]
+            );
         }
     }
     format!("{}\n\n{}\n", content.trim_end(), block)
@@ -324,9 +329,7 @@ fn is_import_generated(vault: &Path, rel: &str) -> bool {
         Some(i) => i,
         None => return false,
     };
-    rest[..end]
-        .lines()
-        .any(|l| l.trim() == "source: import")
+    rest[..end].lines().any(|l| l.trim() == "source: import")
 }
 
 /// Normalize a post URL so REST links and RSS links compare equal.
@@ -464,8 +467,16 @@ fn normalize_base(site_url: &str) -> String {
 /// as a fallback when the author isn't embedded in the post.
 pub fn extract_post(item: &Value, authors: &HashMap<u64, String>) -> Post {
     let title = decode_entities(rendered(item, "title"));
-    let link = item.get("link").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let date = item.get("date").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let link = item
+        .get("link")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let date = item
+        .get("date")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     let content_html = rendered(item, "content");
 
     // Prefer the embedded author (_embedded.author[0].name); fall back to
@@ -498,7 +509,10 @@ pub fn extract_post(item: &Value, authors: &HashMap<u64, String>) -> Post {
             if let Some(terms) = group.as_array() {
                 for term in terms {
                     let name = decode_entities(
-                        term.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string(),
+                        term.get("name")
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("")
+                            .to_string(),
                     );
                     if name.is_empty() {
                         continue;
@@ -585,10 +599,16 @@ pub fn build_notes(
         let stem = unique_stem(&slugify(&post.title), &used);
         used.insert(stem.to_lowercase());
         for c in &post.categories {
-            cat_posts.entry(c.clone()).or_default().push(post.title.clone());
+            cat_posts
+                .entry(c.clone())
+                .or_default()
+                .push(post.title.clone());
         }
         for t in &post.tags {
-            tag_posts.entry(t.clone()).or_default().push(post.title.clone());
+            tag_posts
+                .entry(t.clone())
+                .or_default()
+                .push(post.title.clone());
         }
         if !post.author.is_empty() {
             author_posts
@@ -653,12 +673,8 @@ fn unique_stem(base: &str, used: &HashSet<String>) -> String {
 fn render_post(post: &Post, target: &BTreeMap<String, String>) -> String {
     // A [[link]] names a *filename*, so route every term through the resolved
     // target — that is what points at an existing note instead of a duplicate.
-    let link = |name: &str| -> String {
-        target
-            .get(name)
-            .cloned()
-            .unwrap_or_else(|| slugify(name))
-    };
+    let link =
+        |name: &str| -> String { target.get(name).cloned().unwrap_or_else(|| slugify(name)) };
     let mut fm = String::from("---\nsource: import\n");
     if !post.link.is_empty() {
         fm.push_str(&format!("url: {}\n", post.link));
@@ -765,7 +781,9 @@ pub fn html_to_markdown(html: &str) -> String {
     s = re(r"(?is)<li\b[^>]*>(.*?)</li>")
         .replace_all(&s, "- $1\n")
         .to_string();
-    s = re(r"(?is)</?(ul|ol)\b[^>]*>").replace_all(&s, "\n").to_string();
+    s = re(r"(?is)</?(ul|ol)\b[^>]*>")
+        .replace_all(&s, "\n")
+        .to_string();
 
     // Paragraphs and line breaks.
     s = re(r"(?is)<p\b[^>]*>(.*?)</p>")
@@ -782,7 +800,10 @@ pub fn html_to_markdown(html: &str) -> String {
 }
 
 fn strip_tags(s: &str) -> String {
-    Regex::new(r"(?is)<[^>]+>").unwrap().replace_all(s, "").to_string()
+    Regex::new(r"(?is)<[^>]+>")
+        .unwrap()
+        .replace_all(s, "")
+        .to_string()
 }
 
 fn attr(tag: &str, name: &str) -> String {
@@ -847,8 +868,14 @@ mod tests {
 
     #[test]
     fn normalizes_scheme_case_insensitively() {
-        assert_eq!(normalize_base("Https://digitalhandwerk.rocks"), "https://digitalhandwerk.rocks");
-        assert_eq!(normalize_base("digitalhandwerk.rocks"), "https://digitalhandwerk.rocks");
+        assert_eq!(
+            normalize_base("Https://digitalhandwerk.rocks"),
+            "https://digitalhandwerk.rocks"
+        );
+        assert_eq!(
+            normalize_base("digitalhandwerk.rocks"),
+            "https://digitalhandwerk.rocks"
+        );
         assert_eq!(normalize_base("HTTP://x.at/"), "http://x.at");
     }
 
@@ -895,7 +922,10 @@ mod tests {
         <pubDate>Fri, 17 Jul 2026 05:14:45 +0000</pubDate>
         </item></channel>"#;
         let item = feed.split("<item>").nth(1).unwrap();
-        assert_eq!(tag_text(item, "link"), "https://site.test/persoenliches/out-of-blog/");
+        assert_eq!(
+            tag_text(item, "link"),
+            "https://site.test/persoenliches/out-of-blog/"
+        );
         assert_eq!(tag_text(item, "dc:creator"), "Alex Januschewsky");
         // Trailing-slash and case differences must not break the match.
         assert_eq!(
@@ -954,14 +984,20 @@ mod tests {
         // post + 1 category hub + 1 tag hub + 1 author hub
         assert_eq!(notes.len(), 4);
         // Posts are filed under their first category.
-        let post = notes.iter().find(|n| n.rel == "Blog/Baking/Sourdough Guide.md").unwrap();
+        let post = notes
+            .iter()
+            .find(|n| n.rel == "Blog/Baking/Sourdough Guide.md")
+            .unwrap();
         assert!(post.markdown.contains("# Sourdough Guide"));
         assert!(post.markdown.contains("*von [[Jane Baker]]*"));
         assert!(post.markdown.contains("[[Baking]]"));
         assert!(post.markdown.contains("[[yeast]]"));
         let hub = notes.iter().find(|n| n.rel == "Blog/Baking.md").unwrap();
         assert!(hub.markdown.contains("[[Sourdough Guide]]"));
-        let author_hub = notes.iter().find(|n| n.rel == "Blog/Jane Baker.md").unwrap();
+        let author_hub = notes
+            .iter()
+            .find(|n| n.rel == "Blog/Jane Baker.md")
+            .unwrap();
         assert!(author_hub.markdown.contains("[[Sourdough Guide]]"));
         assert!(author_hub.markdown.contains("Autor"));
     }
@@ -974,11 +1010,19 @@ mod tests {
         ));
         std::fs::create_dir_all(&v).unwrap();
         // What the importer writes.
-        magma_core::write_note(&v, "Blog/Alex Januschewsky.md", "---\nsource: import\n---\n\n# Alex")
-            .unwrap();
+        magma_core::write_note(
+            &v,
+            "Blog/Alex Januschewsky.md",
+            "---\nsource: import\n---\n\n# Alex",
+        )
+        .unwrap();
         // What the user or the AI writes.
-        magma_core::write_note(&v, "Persoenlich/Alex Januschewsky.md", "---\nauthor: ai\n---\n\n# Alex")
-            .unwrap();
+        magma_core::write_note(
+            &v,
+            "Persoenlich/Alex Januschewsky.md",
+            "---\nauthor: ai\n---\n\n# Alex",
+        )
+        .unwrap();
         magma_core::write_note(&v, "Plain.md", "# No frontmatter at all").unwrap();
 
         assert!(is_import_generated(&v, "Blog/Alex Januschewsky.md"));
@@ -1003,7 +1047,10 @@ mod tests {
         // the sidebar shows "Jane Baker", the file is "Profil Jane Baker.md".
         let existing: HashMap<String, String> = [
             ("jane baker".to_string(), "Profil Jane Baker".to_string()),
-            ("profil jane baker".to_string(), "Profil Jane Baker".to_string()),
+            (
+                "profil jane baker".to_string(),
+                "Profil Jane Baker".to_string(),
+            ),
         ]
         .into_iter()
         .collect();
@@ -1014,7 +1061,10 @@ mod tests {
         assert!(!notes.iter().any(|n| n.rel.contains("Jane Baker.md")));
         // The byline must name the existing note's FILENAME, or the wikilink
         // would not reach it.
-        let post = notes.iter().find(|n| n.rel == "Blog/Baking/Sourdough Guide.md").unwrap();
+        let post = notes
+            .iter()
+            .find(|n| n.rel == "Blog/Baking/Sourdough Guide.md")
+            .unwrap();
         assert!(
             post.markdown.contains("*von [[Profil Jane Baker]]*"),
             "byline must link the existing file, got: {}",
@@ -1027,11 +1077,23 @@ mod tests {
         // A non-breaking space is what &nbsp; decodes to, and WP puts them in
         // titles and <dc:creator> constantly. Plain lowercasing misses it, which
         // silently produced a duplicate note.
-        assert_eq!(match_key("Alex\u{a0}Januschewsky"), match_key("Alex Januschewsky"));
-        assert_eq!(match_key("  Alex   Januschewsky  "), match_key("alex januschewsky"));
-        assert_eq!(match_key("Alex\tJanuschewsky"), match_key("Alex Januschewsky"));
+        assert_eq!(
+            match_key("Alex\u{a0}Januschewsky"),
+            match_key("Alex Januschewsky")
+        );
+        assert_eq!(
+            match_key("  Alex   Januschewsky  "),
+            match_key("alex januschewsky")
+        );
+        assert_eq!(
+            match_key("Alex\tJanuschewsky"),
+            match_key("Alex Januschewsky")
+        );
         // Genuinely different names must still differ.
-        assert_ne!(match_key("Alex Januschewsky"), match_key("Profil Alex Januschewsky"));
+        assert_ne!(
+            match_key("Alex Januschewsky"),
+            match_key("Profil Alex Januschewsky")
+        );
     }
 
     #[test]
@@ -1062,8 +1124,14 @@ mod tests {
     #[test]
     fn managed_section_is_added_once_and_then_replaced() {
         let own = "---\nauthor: ai\n---\n\n# Alex Januschewsky\n\nMein Profil.";
-        let first = upsert_managed_section(own, "<!-- magma:imported-start -->\nA\n<!-- magma:imported-end -->");
-        assert!(first.contains("Mein Profil."), "the author's own text survives");
+        let first = upsert_managed_section(
+            own,
+            "<!-- magma:imported-start -->\nA\n<!-- magma:imported-end -->",
+        );
+        assert!(
+            first.contains("Mein Profil."),
+            "the author's own text survives"
+        );
         assert!(first.contains("\nA\n"));
 
         let second = upsert_managed_section(
@@ -1072,7 +1140,10 @@ mod tests {
         );
         assert!(second.contains("Mein Profil."));
         assert!(second.contains("\nB\n"));
-        assert!(!second.contains("\nA\n"), "the old block is replaced, not stacked");
+        assert!(
+            !second.contains("\nA\n"),
+            "the old block is replaced, not stacked"
+        );
         assert_eq!(second.matches(SECTION_START).count(), 1);
     }
 

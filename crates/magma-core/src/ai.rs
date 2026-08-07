@@ -65,7 +65,11 @@ pub fn find_link_candidates(
             score,
         });
     }
-    scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    scored.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     scored.truncate(limit);
     Ok(scored)
 }
@@ -145,11 +149,7 @@ pub fn ai_create_note_for_client(
 }
 
 /// Overwrite an existing note as AI-authored, re-stamping frontmatter.
-pub fn ai_update_note(
-    vault: &Path,
-    rel: &str,
-    content: &str,
-) -> std::io::Result<AiWriteResult> {
+pub fn ai_update_note(vault: &Path, rel: &str, content: &str) -> std::io::Result<AiWriteResult> {
     ai_update_note_for_client(vault, rel, content, None)
 }
 
@@ -206,7 +206,11 @@ pub fn stamp_ai_author_for_client(content: &str, client: Option<&str>) -> String
 
 fn normalize_client(client: &str) -> Option<&str> {
     let client = client.trim();
-    if client.is_empty() || !client.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if client.is_empty()
+        || !client
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         None
     } else {
         Some(client)
@@ -333,7 +337,10 @@ mod tests {
 
     #[test]
     fn stamp_records_ai_client_when_known() {
-        let out = stamp_ai_author_for_client("---\ntitle: X\nauthor: human\nai_client: old\n---\n\nbody", Some("codex"));
+        let out = stamp_ai_author_for_client(
+            "---\ntitle: X\nauthor: human\nai_client: old\n---\n\nbody",
+            Some("codex"),
+        );
         assert_eq!(out.matches("author:").count(), 1);
         assert_eq!(out.matches("ai_client:").count(), 1);
         assert!(out.contains("author: ai"));
@@ -343,7 +350,12 @@ mod tests {
     #[test]
     fn candidates_rank_by_shared_terms() {
         let v = tmp_vault();
-        vault::write_note(&v, "Sourdough.md", "# Sourdough\n\nbaking bread with wild yeast starter").unwrap();
+        vault::write_note(
+            &v,
+            "Sourdough.md",
+            "# Sourdough\n\nbaking bread with wild yeast starter",
+        )
+        .unwrap();
         vault::write_note(&v, "Taxes.md", "# Taxes\n\nquarterly filing deadlines").unwrap();
         let c = find_link_candidates(&v, "notes about baking bread yeast", 5).unwrap();
         assert!(!c.is_empty());
@@ -360,7 +372,9 @@ mod tests {
         assert_eq!(check.resolved, vec!["Sourdough"]);
         assert_eq!(check.broken.len(), 1);
         assert_eq!(check.broken[0].target, "Sourdogh");
-        assert!(check.broken[0].suggestions.contains(&"Sourdough".to_string()));
+        assert!(check.broken[0]
+            .suggestions
+            .contains(&"Sourdough".to_string()));
         fs::remove_dir_all(&v).ok();
     }
 
@@ -374,7 +388,8 @@ mod tests {
             "Sourdough",
             "A [[Bread]] variant. See [[Missing]].",
             Some("codex"),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(res.path, "Sourdough.md");
         let content = vault::read_note(&v, &res.path).unwrap().content;
         assert!(content.contains("author: ai"));
