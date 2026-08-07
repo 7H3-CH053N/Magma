@@ -208,6 +208,16 @@ const STRINGS: Record<Lang, Record<string, string>> = {
       "Registered a development build ({exe}). That file is rebuilt on every `npm run tauri dev`, which makes Claude Desktop report \"Server disconnected\". For everyday use, install Magma and run this setup from the installed app.",
     "settings.mcpManual": "Manual setup (other MCP clients)",
     "settings.mcpNoVault": "Open a vault first to connect Claude.",
+    "settings.codexConnectTitle": "Connect to Codex",
+    "settings.codexConnectBody":
+      "Let Codex use the same Magma MCP server to read and co-author your vault.",
+    "settings.codexMcpInstall": "Set up Codex",
+    "settings.codexMcpInstalling": "Setting up…",
+    "settings.codexMcpInstalled": "Done — restart Codex. Written to {path}",
+    "settings.codexMcpDevBuild":
+      "Registered a development build ({exe}). That file is rebuilt on every `npm run tauri dev`, which can disconnect Codex. For everyday use, install Magma and run this setup from the installed app.",
+    "settings.codexMcpManual": "Manual Codex setup",
+    "settings.codexMcpNoVault": "Open a vault first to connect Codex.",
     "settings.close": "Close",
     "settings.remoteTitle": "Remote vault (WebDAV)",
     "settings.remoteBody":
@@ -424,6 +434,16 @@ const STRINGS: Record<Lang, Record<string, string>> = {
       "Es wurde ein Entwicklungs-Build eingetragen ({exe}). Diese Datei wird bei jedem `npm run tauri dev` neu gebaut – genau deshalb meldet Claude Desktop „Server disconnected“. Für den Alltag Magma installieren und die Einrichtung aus der installierten App starten.",
     "settings.mcpManual": "Manuelle Einrichtung (andere MCP-Clients)",
     "settings.mcpNoVault": "Öffne zuerst einen Vault, um Claude zu verbinden.",
+    "settings.codexConnectTitle": "Mit Codex verbinden",
+    "settings.codexConnectBody":
+      "Lass Codex denselben Magma-MCP-Server nutzen, um deinen Vault zu lesen und mitzuschreiben.",
+    "settings.codexMcpInstall": "Codex einrichten",
+    "settings.codexMcpInstalling": "Richte ein…",
+    "settings.codexMcpInstalled": "Fertig – starte Codex neu. Geschrieben nach {path}",
+    "settings.codexMcpDevBuild":
+      "Es wurde ein Entwicklungs-Build eingetragen ({exe}). Diese Datei wird bei jedem `npm run tauri dev` neu gebaut – dadurch kann Codex die Verbindung verlieren. Für den Alltag Magma installieren und die Einrichtung aus der installierten App starten.",
+    "settings.codexMcpManual": "Manuelle Codex-Einrichtung",
+    "settings.codexMcpNoVault": "Öffne zuerst einen Vault, um Codex zu verbinden.",
     "settings.close": "Schließen",
     "settings.remoteTitle": "Remote-Vault (WebDAV)",
     "settings.remoteBody":

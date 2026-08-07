@@ -10,7 +10,8 @@ pub mod related;
 pub mod vault;
 
 pub use ai::{
-    ai_create_note, ai_update_note, find_link_candidates, stamp_ai_author, validate_links,
+    ai_create_note, ai_create_note_for_client, ai_update_note, ai_update_note_for_client,
+    find_link_candidates, stamp_ai_author, stamp_ai_author_for_client, validate_links,
     AiWriteResult, BrokenLink, LinkCandidate, LinkCheck,
 };
 pub use history::{
@@ -25,7 +26,7 @@ pub use links::{
 };
 pub use related::{related_notes, RelatedNote};
 pub use vault::{
-    append_note, create_folder, create_note, create_note_in, delete_folder, delete_note, list_folders,
-    list_notes, move_folder, move_note, open_or_create, read_note, rename_note, safe_join, save_asset, slugify, write_note,
-    Note, NoteMeta,
+    append_note, create_folder, create_note, create_note_in, delete_folder, delete_note,
+    list_folders, list_notes, move_folder, move_note, open_or_create, read_note, rename_note,
+    safe_join, save_asset, slugify, write_note, Note, NoteMeta,
 };

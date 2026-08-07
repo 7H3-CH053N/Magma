@@ -60,7 +60,11 @@ pub fn list_versions(vault: &Path, rel: &str) -> std::io::Result<Vec<Version>> {
         };
         let taken_at = id.parse::<u64>().unwrap_or(0);
         let bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
-        out.push(Version { id, taken_at, bytes });
+        out.push(Version {
+            id,
+            taken_at,
+            bytes,
+        });
     }
     out.sort_by(|a, b| b.taken_at.cmp(&a.taken_at));
     Ok(out)
@@ -175,7 +179,10 @@ mod tests {
     fn tmp_vault(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "magma-hist-{tag}-{}",
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -191,14 +198,20 @@ mod tests {
 
         let versions = list_versions(&v, "A.md").unwrap();
         assert_eq!(versions.len(), 1, "one snapshot of the old text");
-        assert_eq!(read_version(&v, "A.md", &versions[0].id).unwrap(), "erste fassung");
+        assert_eq!(
+            read_version(&v, "A.md", &versions[0].id).unwrap(),
+            "erste fassung"
+        );
 
         restore(&v, "A.md", &versions[0].id).unwrap();
         assert_eq!(fs::read_to_string(v.join("A.md")).unwrap(), "erste fassung");
         // Restoring is itself undoable: the text it replaced was kept.
         let after = list_versions(&v, "A.md").unwrap();
         assert_eq!(after.len(), 2);
-        assert_eq!(read_version(&v, "A.md", &after[0].id).unwrap(), "zweite fassung");
+        assert_eq!(
+            read_version(&v, "A.md", &after[0].id).unwrap(),
+            "zweite fassung"
+        );
         fs::remove_dir_all(&v).ok();
     }
 
@@ -218,7 +231,11 @@ mod tests {
         vault::write_note(&v, "C.md", "text").unwrap();
         snapshot(&v, "C.md").unwrap();
         let notes = vault::list_notes(&v).unwrap();
-        assert_eq!(notes.len(), 1, "snapshots must not appear as notes: {notes:?}");
+        assert_eq!(
+            notes.len(),
+            1,
+            "snapshots must not appear as notes: {notes:?}"
+        );
         fs::remove_dir_all(&v).ok();
     }
 

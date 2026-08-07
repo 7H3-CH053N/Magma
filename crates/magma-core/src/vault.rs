@@ -14,6 +14,8 @@ pub struct NoteMeta {
     pub title: String,
     /// True when frontmatter declares `author: ai` — a note an LLM wrote.
     pub ai_authored: bool,
+    /// Optional MCP client name (`codex`, `claude`, ...), when the writer set it.
+    pub ai_client: Option<String>,
     /// Last modified, in milliseconds since the epoch. 0 when unknown.
     /// Lets the UI answer "what changed lately?" without reading every file.
     pub modified: u64,
@@ -25,6 +27,7 @@ pub struct Note {
     pub path: String,
     pub title: String,
     pub ai_authored: bool,
+    pub ai_client: Option<String>,
     pub content: String,
 }
 
@@ -53,6 +56,7 @@ fn collect(root: &Path, dir: &Path, out: &mut Vec<NoteMeta>) -> std::io::Result<
                 path: rel_path(root, &path),
                 title: title_of(&path, &content),
                 ai_authored: is_ai_authored(&content),
+                ai_client: ai_client(&content),
                 modified: modified_ms(&entry),
             });
         }
@@ -67,6 +71,7 @@ pub fn read_note(vault: &Path, rel: &str) -> std::io::Result<Note> {
         path: rel.to_string(),
         title: title_of(&full, &content),
         ai_authored: is_ai_authored(&content),
+        ai_client: ai_client(&content),
         content,
     })
 }
@@ -144,19 +149,30 @@ fn title_from_content(content: &str) -> Option<String> {
 
 /// Detect an `author: ai` line inside a leading YAML frontmatter block.
 fn is_ai_authored(content: &str) -> bool {
+    frontmatter_value(content, "author").is_some_and(|value| {
+        let l = value.trim().to_lowercase();
+        l == "ai" || l == "\"ai\"" || l == "'ai'"
+    })
+}
+
+fn ai_client(content: &str) -> Option<String> {
+    frontmatter_value(content, "ai_client")
+        .map(|value| value.trim().trim_matches(['"', '\'']).to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn frontmatter_value(content: &str, key: &str) -> Option<String> {
     let trimmed = content.trim_start();
     if !trimmed.starts_with("---") {
-        return false;
+        return None;
     }
-    // Frontmatter is everything up to the closing `---`.
     let after = &trimmed[3..];
-    let end = match after.find("\n---") {
-        Some(i) => i,
-        None => return false,
-    };
-    after[..end].lines().any(|line| {
+    let end = after.find("\n---")?;
+    after[..end].lines().find_map(|line| {
         let l = line.trim().to_lowercase();
-        l == "author: ai" || l == "author: \"ai\"" || l == "author: 'ai'"
+        let prefix = format!("{key}:");
+        l.strip_prefix(&prefix)
+            .map(|_| line.split_once(':').unwrap().1.trim().to_string())
     })
 }
 
@@ -507,8 +523,9 @@ mod tests {
 
     #[test]
     fn detects_ai_frontmatter() {
-        let md = "---\ntitle: X\nauthor: ai\n---\n\nbody";
+        let md = "---\ntitle: X\nauthor: ai\nai_client: codex\n---\n\nbody";
         assert!(is_ai_authored(md));
+        assert_eq!(ai_client(md), Some("codex".to_string()));
     }
 
     #[test]
@@ -528,17 +545,26 @@ mod tests {
 
     #[test]
     fn title_falls_back_to_stem() {
-        assert_eq!(title_of(Path::new("/v/ideas/second brain.md"), ""), "second brain");
+        assert_eq!(
+            title_of(Path::new("/v/ideas/second brain.md"), ""),
+            "second brain"
+        );
     }
 
     #[test]
     fn title_prefers_heading() {
-        assert_eq!(title_of(Path::new("/v/Untitled.md"), "# My Idea\n\nbody"), "My Idea");
+        assert_eq!(
+            title_of(Path::new("/v/Untitled.md"), "# My Idea\n\nbody"),
+            "My Idea"
+        );
     }
 
     #[test]
     fn title_uses_first_text_line() {
-        assert_eq!(title_of(Path::new("/v/Untitled.md"), "just some text\nmore"), "just some text");
+        assert_eq!(
+            title_of(Path::new("/v/Untitled.md"), "just some text\nmore"),
+            "just some text"
+        );
     }
 
     #[test]
@@ -641,7 +667,10 @@ mod tests {
 
         let moved = move_folder(&v, "Kunden", "Archiv").unwrap();
         assert_eq!(moved, "Archiv/Kunden");
-        assert!(v.join("Archiv/Kunden/Michael Klotz.md").is_file(), "notes came along");
+        assert!(
+            v.join("Archiv/Kunden/Michael Klotz.md").is_file(),
+            "notes came along"
+        );
         assert!(!v.join("Kunden").exists());
 
         // Into itself, into a child, and the vault root are all refused.
@@ -657,7 +686,10 @@ mod tests {
         create_folder(&v, "A/Notizen").unwrap();
         create_folder(&v, "Notizen").unwrap();
         write_note(&v, "Notizen/x.md", "x").unwrap();
-        assert!(move_folder(&v, "Notizen", "A").is_err(), "would have merged silently");
+        assert!(
+            move_folder(&v, "Notizen", "A").is_err(),
+            "would have merged silently"
+        );
         assert!(v.join("Notizen/x.md").is_file(), "nothing was moved");
         fs::remove_dir_all(&v).ok();
     }

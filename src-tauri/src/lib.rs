@@ -8,6 +8,7 @@ use serde_json::json;
 use std::path::PathBuf;
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
+use toml_edit::{value, Array, DocumentMut, Item, Table};
 
 #[tauri::command]
 async fn pick_vault(app: tauri::AppHandle) -> Option<String> {
@@ -15,10 +16,7 @@ async fn pick_vault(app: tauri::AppHandle) -> Option<String> {
     app.dialog().file().pick_folder(move |folder| {
         let _ = tx.send(folder);
     });
-    rx.recv()
-        .ok()
-        .flatten()
-        .map(|p| p.to_string())
+    rx.recv().ok().flatten().map(|p| p.to_string())
 }
 
 #[tauri::command]
@@ -184,9 +182,7 @@ fn replace_all(
     if !dry_run {
         // Snapshot everything this is about to touch, unconditionally — the
         // preview shows what will change, the history is how you take it back.
-        if let Ok(preview) =
-            vault::replace_in_vault(&root, &find, &replace, true, rename_notes)
-        {
+        if let Ok(preview) = vault::replace_in_vault(&root, &find, &replace, true, rename_notes) {
             for hit in &preview.hits {
                 let _ = vault::snapshot(&root, &hit.path);
             }
@@ -362,8 +358,8 @@ fn djb2(s: &str) -> u64 {
 /// Magma's own config file: `<config dir>/Magma/settings.json`.
 fn app_settings_path() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
-    let base = std::env::var_os("HOME")
-        .map(|h| PathBuf::from(h).join("Library/Application Support"))?;
+    let base =
+        std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support"))?;
     #[cfg(target_os = "windows")]
     let base = std::env::var_os("APPDATA").map(PathBuf::from)?;
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -398,17 +394,29 @@ fn set_last_vault(vault: String) -> Result<(), String> {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let mut root = read_app_settings();
-    root.as_object_mut().unwrap().insert("vault".into(), json!(vault));
-    std::fs::write(&path, serde_json::to_string_pretty(&root).unwrap_or_default())
-        .map_err(|e| e.to_string())
+    root.as_object_mut()
+        .unwrap()
+        .insert("vault".into(), json!(vault));
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&root).unwrap_or_default(),
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// The recommended MCP client entry: run *this* executable with `--mcp <vault>`.
-fn mcp_server_entry(vault: &str) -> serde_json::Value {
-    let exe = std::env::current_exe()
+fn mcp_executable() -> String {
+    std::env::current_exe()
         .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "magma".to_string());
-    json!({ "command": exe, "args": ["--mcp", vault] })
+        .unwrap_or_else(|_| "magma".to_string())
+}
+
+fn mcp_server_entry(vault: &str) -> serde_json::Value {
+    json!({
+        "command": mcp_executable(),
+        "args": ["--mcp", vault],
+        "env": { "MAGMA_MCP_CLIENT": "claude" }
+    })
 }
 
 /// Claude Desktop's config file location for this OS.
@@ -438,6 +446,12 @@ fn mcp_config(vault: String) -> String {
     serde_json::to_string_pretty(&cfg).unwrap_or_default()
 }
 
+/// The equivalent Codex CLI MCP config block for display / manual copy.
+#[tauri::command]
+fn codex_mcp_config(vault: String) -> String {
+    codex_mcp_config_block(&mcp_executable(), &vault)
+}
+
 /// One-click install: merge the Magma server into Claude Desktop's config,
 /// backing up any existing file. Returns the config path that was written.
 #[tauri::command]
@@ -459,9 +473,7 @@ fn install_mcp(vault: String) -> Result<McpInstall, String> {
         root = json!({});
     }
     let obj = root.as_object_mut().unwrap();
-    let servers = obj
-        .entry("mcpServers")
-        .or_insert_with(|| json!({}));
+    let servers = obj.entry("mcpServers").or_insert_with(|| json!({}));
     if !servers.is_object() {
         *servers = json!({});
     }
@@ -503,6 +515,140 @@ fn install_mcp(vault: String) -> Result<McpInstall, String> {
         executable: exe,
         dev_build,
     })
+}
+
+/// One-click install for Codex: write Codex's config file directly. A GUI app
+/// launched from Finder does not inherit the user's shell PATH, so invoking the
+/// `codex` binary would fail for many valid installs.
+#[tauri::command]
+fn install_codex_mcp(vault: String) -> Result<McpInstall, String> {
+    let exe = mcp_executable();
+    let config_path = codex_config_path().ok_or("could not locate the Codex config folder")?;
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let existing = std::fs::read_to_string(&config_path).unwrap_or_default();
+    if config_path.exists() {
+        let _ = std::fs::write(config_path.with_extension("toml.bak"), &existing);
+    }
+    let updated = merge_codex_mcp_config(&existing, &exe, &vault)?;
+    std::fs::write(&config_path, updated).map_err(|e| e.to_string())?;
+    let dev_build = exe.contains("/target/debug/")
+        || exe.contains("/target/release/")
+        || exe.contains("\\target\\debug\\")
+        || exe.contains("\\target\\release\\");
+    Ok(McpInstall {
+        config_path: config_path.to_string_lossy().to_string(),
+        executable: exe,
+        dev_build,
+    })
+}
+
+fn codex_config_path() -> Option<PathBuf> {
+    std::env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".codex")))
+        .map(|dir| dir.join("config.toml"))
+}
+
+fn codex_mcp_config_block(command: &str, vault: &str) -> String {
+    let mut doc = DocumentMut::new();
+    doc["mcp_servers"] = Item::Table(Table::new());
+    doc["mcp_servers"]["magma"] = Item::Table(magma_codex_mcp_table(command, vault));
+    doc.to_string()
+}
+
+fn magma_codex_mcp_table(command: &str, vault: &str) -> Table {
+    let mut server = Table::new();
+    server["enabled"] = value(true);
+    server["command"] = value(command);
+    let mut args = Array::new();
+    args.push("--mcp");
+    args.push(vault);
+    server["args"] = value(args);
+
+    let mut env = Table::new();
+    env["MAGMA_MCP_CLIENT"] = value("codex");
+    server["env"] = Item::Table(env);
+    server
+}
+
+fn merge_codex_mcp_config(existing: &str, command: &str, vault: &str) -> Result<String, String> {
+    let mut doc = if existing.trim().is_empty() {
+        DocumentMut::new()
+    } else {
+        existing.parse::<DocumentMut>().map_err(|e| e.to_string())?
+    };
+
+    if !doc.as_table().contains_key("mcp_servers") {
+        doc["mcp_servers"] = Item::Table(Table::new());
+    }
+    if !doc["mcp_servers"].is_table() {
+        return Err("Codex config has a non-table mcp_servers value".to_string());
+    }
+
+    doc["mcp_servers"]["magma"] = Item::Table(magma_codex_mcp_table(command, vault));
+    Ok(doc.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_config_merge_replaces_only_magma_server() {
+        let existing = r#"
+model = "gpt-5"
+
+[mcp_servers.other]
+command = "other"
+
+[mcp_servers.magma]
+enabled = true
+command = "old"
+args = ["--old"]
+
+[mcp_servers.magma.env]
+MAGMA_MCP_CLIENT = "old"
+
+[profiles.default]
+approval_policy = "never"
+"#;
+        let merged =
+            merge_codex_mcp_config(existing, "/Applications/Magma.app/magma", "/vault").unwrap();
+        assert!(merged.contains("[mcp_servers.other]"));
+        assert!(merged.contains("[profiles.default]"));
+        assert!(!merged.contains("command = \"old\""));
+        assert!(merged.contains("command = \"/Applications/Magma.app/magma\""));
+        assert!(merged.contains("args = [\"--mcp\", \"/vault\"]"));
+        assert!(merged.contains("MAGMA_MCP_CLIENT = \"codex\""));
+    }
+
+    #[test]
+    fn codex_config_merge_replaces_equivalent_magma_table_spellings() {
+        let existing = r#"
+model = "gpt-5"
+
+# Magma MCP server
+[ mcp_servers."magma" ]
+command = "old"
+
+[ mcp_servers."magma".env ]
+MAGMA_MCP_CLIENT = "old"
+"#;
+        let merged = merge_codex_mcp_config(existing, "/new", "/vault").unwrap();
+        let parsed = merged.parse::<DocumentMut>().unwrap();
+
+        assert_eq!(
+            parsed["mcp_servers"]["magma"]["command"].as_str(),
+            Some("/new")
+        );
+        assert_eq!(
+            parsed["mcp_servers"]["magma"]["env"]["MAGMA_MCP_CLIENT"].as_str(),
+            Some("codex")
+        );
+        assert!(!merged.contains("command = \"old\""));
+    }
 }
 
 /// What the one-click setup wrote, so the UI can be specific about it.
@@ -611,7 +757,12 @@ fn build_menu<R: tauri::Runtime>(
         ],
     )?;
 
-    let view = Submenu::with_items(app, t("view"), true, &[&P::fullscreen(app, Some(t("fullscreen")))?])?;
+    let view = Submenu::with_items(
+        app,
+        t("view"),
+        true,
+        &[&P::fullscreen(app, Some(t("fullscreen")))?],
+    )?;
 
     let window = Submenu::with_items(
         app,
@@ -644,8 +795,13 @@ fn set_language(app: tauri::AppHandle, lang: String) -> Result<(), String> {
             let _ = std::fs::create_dir_all(parent);
         }
         let mut root = read_app_settings();
-        root.as_object_mut().unwrap().insert("lang".into(), json!(lang));
-        let _ = std::fs::write(&path, serde_json::to_string_pretty(&root).unwrap_or_default());
+        root.as_object_mut()
+            .unwrap()
+            .insert("lang".into(), json!(lang));
+        let _ = std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&root).unwrap_or_default(),
+        );
     }
     let menu = build_menu(&app, &lang).map_err(|e| e.to_string())?;
     app.set_menu(menu).map_err(|e| e.to_string())?;
@@ -729,7 +885,9 @@ pub fn run() {
             remote_put,
             remote_delete,
             mcp_config,
+            codex_mcp_config,
             install_mcp,
+            install_codex_mcp,
             last_vault,
             set_last_vault,
             set_language,

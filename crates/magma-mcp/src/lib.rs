@@ -22,13 +22,22 @@ const PROTOCOL_VERSION: &str = "2024-11-05";
 struct Server {
     vault: PathBuf,
     allow_write: bool,
+    client: Option<String>,
 }
 
 /// Serve the MCP protocol over stdio until stdin closes. Shared by the
 /// `magma-mcp` binary and the Magma desktop app (`magma --mcp <vault>`), so a
 /// user never has to install a separate server to connect Claude.
 pub fn serve_stdio(vault: PathBuf, allow_write: bool) {
-    let server = Server { vault, allow_write };
+    let client = std::env::var("MAGMA_MCP_CLIENT")
+        .ok()
+        .map(|c| c.trim().to_lowercase())
+        .filter(|c| !c.is_empty());
+    let server = Server {
+        vault,
+        allow_write,
+        client,
+    };
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
@@ -44,7 +53,10 @@ pub fn serve_stdio(vault: PathBuf, allow_write: bool) {
         let req: Value = match serde_json::from_str(&line) {
             Ok(v) => v,
             Err(e) => {
-                write_msg(&mut out, error_response(Value::Null, -32700, &format!("parse error: {e}")));
+                write_msg(
+                    &mut out,
+                    error_response(Value::Null, -32700, &format!("parse error: {e}")),
+                );
                 continue;
             }
         };
@@ -84,7 +96,11 @@ impl Server {
             "ping" => Some(result_response(id, json!({}))),
             "tools/list" => Some(result_response(id, json!({ "tools": tools_spec() }))),
             "tools/call" => Some(self.handle_call(id, &params)),
-            other => Some(error_response(id, -32601, &format!("method not found: {other}"))),
+            other => Some(error_response(
+                id,
+                -32601,
+                &format!("method not found: {other}"),
+            )),
         }
     }
 
@@ -254,7 +270,14 @@ impl Server {
                 let title = str_arg(args, "title")?;
                 let content = str_arg(args, "content")?;
                 let folder = args.get("folder").and_then(|f| f.as_str());
-                let res = core::ai_create_note(v, folder, &title, &content).map_err(io)?;
+                let res = core::ai_create_note_for_client(
+                    v,
+                    folder,
+                    &title,
+                    &content,
+                    self.client.as_deref(),
+                )
+                .map_err(io)?;
                 Ok(json!(res))
             }
             "update_note" => {
@@ -262,7 +285,9 @@ impl Server {
                 let path = str_arg(args, "path")?;
                 core::safe_join(v, &path).ok_or("invalid path")?;
                 let content = str_arg(args, "content")?;
-                let res = core::ai_update_note(v, &path, &content).map_err(io)?;
+                let res =
+                    core::ai_update_note_for_client(v, &path, &content, self.client.as_deref())
+                        .map_err(io)?;
                 Ok(json!(res))
             }
             other => Err(format!("unknown tool: {other}")),
@@ -499,13 +524,19 @@ mod tests {
     }
 
     fn srv(v: PathBuf) -> Server {
-        Server { vault: v, allow_write: true }
+        Server {
+            vault: v,
+            allow_write: true,
+            client: Some("test".to_string()),
+        }
     }
 
     #[test]
     fn lists_nested_folders() {
         let v = vault();
-        let out = srv(v.clone()).call_tool("list_folders", &json!({})).unwrap();
+        let out = srv(v.clone())
+            .call_tool("list_folders", &json!({}))
+            .unwrap();
         let folders: Vec<String> = serde_json::from_value(out["folders"].clone()).unwrap();
         assert!(folders.contains(&"Blog".to_string()));
         assert!(folders.contains(&"Blog/KI-Wissen".to_string()));
@@ -523,7 +554,11 @@ mod tests {
         let deep = s
             .call_tool("list_notes", &json!({ "folder": "Blog/KI-Wissen" }))
             .unwrap();
-        assert_eq!(deep["notes"].as_array().unwrap().len(), 2, "includes the subfolder");
+        assert_eq!(
+            deep["notes"].as_array().unwrap().len(),
+            2,
+            "includes the subfolder"
+        );
 
         let shallow = s
             .call_tool(
@@ -531,7 +566,11 @@ mod tests {
                 &json!({ "folder": "Blog/KI-Wissen", "recursive": false }),
             )
             .unwrap();
-        assert_eq!(shallow["notes"].as_array().unwrap().len(), 1, "that folder alone");
+        assert_eq!(
+            shallow["notes"].as_array().unwrap().len(),
+            1,
+            "that folder alone"
+        );
         std::fs::remove_dir_all(&v).ok();
     }
 
@@ -539,7 +578,10 @@ mod tests {
     fn moves_a_note_between_folders() {
         let v = vault();
         let out = srv(v.clone())
-            .call_tool("move_note", &json!({ "path": "Root.md", "folder": "Blog/KI-Wissen" }))
+            .call_tool(
+                "move_note",
+                &json!({ "path": "Root.md", "folder": "Blog/KI-Wissen" }),
+            )
             .unwrap();
         assert_eq!(out["path"], "Blog/KI-Wissen/Root.md");
         assert!(v.join("Blog/KI-Wissen/Root.md").exists());
@@ -566,12 +608,17 @@ mod tests {
 
         // Deleting it reports which note is left pointing nowhere.
         let d = s
-            .call_tool("delete_note", &json!({ "path": "Blog/KI-Wissen/Post A neu.md" }))
+            .call_tool(
+                "delete_note",
+                &json!({ "path": "Blog/KI-Wissen/Post A neu.md" }),
+            )
             .unwrap();
         assert_eq!(d["nowBrokenLinksIn"][0], "Verweis.md");
         assert!(!v.join("Blog/KI-Wissen/Post A neu.md").exists());
 
-        let f = s.call_tool("delete_folder", &json!({ "folder": "Blog" })).unwrap();
+        let f = s
+            .call_tool("delete_folder", &json!({ "folder": "Blog" }))
+            .unwrap();
         assert!(!v.join("Blog").exists());
         assert_eq!(f["notesDeleted"], 2);
         std::fs::remove_dir_all(&v).ok();
@@ -580,11 +627,18 @@ mod tests {
     #[test]
     fn read_only_refuses_destructive_tools() {
         let v = vault();
-        let s = Server { vault: v.clone(), allow_write: false };
+        let s = Server {
+            vault: v.clone(),
+            allow_write: false,
+            client: None,
+        };
         for tool in ["delete_note", "delete_folder", "rename_note"] {
             assert!(
-                s.call_tool(tool, &json!({ "path": "Root.md", "folder": "Blog", "new_title": "X" }))
-                    .is_err(),
+                s.call_tool(
+                    tool,
+                    &json!({ "path": "Root.md", "folder": "Blog", "new_title": "X" })
+                )
+                .is_err(),
                 "{tool} must be refused when read-only"
             );
         }
@@ -601,10 +655,18 @@ mod tests {
             .map(|t| t["name"].as_str().unwrap().to_string())
             .collect();
         for expected in [
-            "list_folders", "list_notes", "create_folder", "move_note",
-            "rename_note", "delete_note", "delete_folder",
+            "list_folders",
+            "list_notes",
+            "create_folder",
+            "move_note",
+            "rename_note",
+            "delete_note",
+            "delete_folder",
         ] {
-            assert!(names.contains(&expected.to_string()), "missing tool: {expected}");
+            assert!(
+                names.contains(&expected.to_string()),
+                "missing tool: {expected}"
+            );
         }
     }
 }

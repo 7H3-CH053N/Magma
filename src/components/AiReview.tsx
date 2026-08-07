@@ -55,7 +55,12 @@ export default function AiReview({ notes, onSelect }: AiReviewProps) {
                   aria-hidden
                 />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium">{n.title}</span>
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="block truncate text-sm font-medium">{n.title}</span>
+                    <span className="shrink-0 rounded border border-black/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-magma-muted dark:border-white/10">
+                      {clientLabel(n.aiClient)}
+                    </span>
+                  </span>
                   <span className="block truncate text-xs text-magma-muted">{n.path}</span>
                 </span>
                 <span className="shrink-0 text-xs text-magma-muted">
@@ -68,6 +73,13 @@ export default function AiReview({ notes, onSelect }: AiReviewProps) {
       </div>
     </div>
   );
+}
+
+function clientLabel(client?: string | null): string {
+  if (!client) return "AI";
+  if (client.toLowerCase() === "codex") return "Codex";
+  if (client.toLowerCase() === "claude") return "Claude";
+  return client;
 }
 
 function formatWhen(ms: number, lang: string): string {
