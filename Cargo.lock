@@ -1687,6 +1687,7 @@ dependencies = [
 name = "magma-core"
 version = "0.1.0"
 dependencies = [
+ "regex",
  "serde",
 ]
 
