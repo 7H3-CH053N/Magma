@@ -86,10 +86,17 @@ plugin-hunting needed for basics. Magma keeps what's loved and fixes what's not:
   field. Matching is subsequence-based, so `grph` finds "Show graph".
   (`Cmd/Ctrl+K` stays the link key inside the editor.)
 - **Search** that reads note bodies, not just titles, and highlights the term
-  where it actually occurs.
+  where it actually occurs. Write `/pattern/i` or `re:pattern` and it is treated
+  as a regular expression; anything else stays a plain, case-insensitive search.
 - **Find & replace across the whole vault** — see below.
 - **Graph view** — force-directed, pan/zoom/drag, one colour per top-level
-  folder with shades for subfolders, AI-written notes ringed.
+  folder with shades for subfolders, AI-written notes ringed. Notes are sized in
+  five steps by how many others link to them, so the hub your vault revolves
+  around is the one you see first.
+- **Dataview queries** — a ` ```dataview ` block is answered in place: `TABLE`
+  and `LIST` over `FROM` a tag or folder, with `WHERE`, `SORT` and `LIMIT`,
+  reading YAML frontmatter and inline `key:: value` fields. DQL only —
+  DataviewJS would run arbitrary JavaScript out of your notes.
 
 **Every day**
 
@@ -138,12 +145,18 @@ note's *filename*, so replacing only the text would leave every `[[…]]` pointi
 at nothing — Magma renames the note that carries the term first, repointing its
 links (aliases and anchors included), and only then rewrites the text.
 
-## Connect to Claude
+## Connect to Claude or Codex
 
 Magma is its own MCP server — nothing extra to install. Open
 **Settings → Claude → Set up Claude Desktop**. One click writes the config
 (backing up any existing one) and replaces any older Magma entry; restart Claude
 Desktop and you're done.
+
+**Codex** is one click further down the same page. It writes Codex's own
+`config.toml` rather than calling the `codex` command, because an app started
+from the Dock does not inherit your shell's `PATH` and the call would fail on a
+perfectly good install. Your existing Codex config is parsed as TOML, so only
+Magma's own entry is replaced and everything else keeps its formatting.
 
 For other MCP clients, copy the JSON shown under *Manual setup*:
 
@@ -161,15 +174,17 @@ connections: `find_link_candidates`, `related_notes`, `unlinked_mentions`,
 `link_mentions` and `list_outgoing_links`. Every `[[wikilink]]` it writes is
 validated against the real vault; broken ones come back with suggestions instead
 of being written as dead ends. AI-written notes are stamped `author: ai`, shown
-in violet in the graph and listed under *AI*. A version snapshot is taken before
-every AI edit. Set `MAGMA_MCP_ALLOW_WRITE=0` for read-only.
+in violet in the graph and listed under *AI* — with a badge naming which client
+wrote them, so Claude's work and Codex's work stay apart. A version snapshot is
+taken before every AI edit. Set `MAGMA_MCP_ALLOW_WRITE=0` for read-only.
 
 ## Make it yours
 
-**Settings → Appearance & language**: light/dark/system, accent and AI-note
-colours, interface and editor fonts, font size, reading width. Changes preview
-live and are written when you press **Save**; closing without saving takes them
-back. Fonts use only what is already on your system, so nothing is downloaded.
+**Settings → Appearance & language**: light/dark/system, accent, AI-note and
+text-highlight colours, interface and editor fonts, font size, reading width.
+Changes preview live and are written when you press **Save**; closing without
+saving takes them back. Fonts use only what is already on your system, so
+nothing is downloaded.
 
 The native menu bar follows the language you pick. Only the entries macOS
 injects itself (Writing Tools, AutoFill, Dictation, Emoji & Symbols) stay in the
@@ -227,6 +242,21 @@ server always act on the same model of your notes.
 Milestones **M0–M4** and **M7** are done; **M5** (packaging) ships unsigned
 installers, with code signing and auto-update still open; **M6** (remote vault)
 has a working first version. The roadmap lives in [`docs/PLAN.md`](docs/PLAN.md).
+
+## Thanks
+
+[**Alexander Mut**](https://github.com/alexandermut) turned up shortly after the
+repository went public and has contributed a good part of what is in it:
+
+- **Dataview-style DQL queries**, rendered in place in the editor
+- **Codex support**, alongside Claude, plus the `ai_client` mark that says which
+  model wrote a note
+- **Regular expressions in search**
+- **A configurable text-highlight colour**
+- **Hardened vault paths** — `safe_join` rejected `..` but let an absolute path
+  through, which meant an LLM could name a file outside the vault and be given
+  it. Found and fixed before anyone hit it.
+- The **`desktop-tests` CI job**, which runs a crate no job had covered
 
 ## License
 
