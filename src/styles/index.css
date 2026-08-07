@@ -16,6 +16,7 @@
   --magma-muted: #6b6b6b;
   --magma-accent: #e0533d;
   --magma-ai: #7c5cff;
+  --magma-highlight: #d7d323;
 
   --magma-font-ui: Inter, system-ui, -apple-system, sans-serif;
   --magma-font-editor: -apple-system, BlinkMacSystemFont, Inter, "Segoe UI",
@@ -42,6 +43,16 @@ body,
 body {
   @apply bg-magma-bg text-magma-ink antialiased;
   font-family: var(--magma-font-ui);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--magma-highlight) 45%, transparent);
+  color: var(--magma-ink);
+}
+
+.magma-text-highlight {
+  background: color-mix(in srgb, var(--magma-highlight) 45%, transparent);
+  color: var(--magma-ink);
 }
 
 /* WYSIWYG editor (TipTap/ProseMirror). Formatting renders live; the markdown

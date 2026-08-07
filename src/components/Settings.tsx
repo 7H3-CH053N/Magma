@@ -327,7 +327,7 @@ export default function Settings({
           </div>
 
           {/* Colors */}
-          <div className="mb-3 flex gap-4">
+          <div className="mb-3 flex flex-wrap gap-4">
             <ColorField
               label={t("settings.accent")}
               value={theme.accent}
@@ -337,6 +337,11 @@ export default function Settings({
               label={t("settings.aiColor")}
               value={theme.ai}
               onChange={(ai) => setTheme({ ai })}
+            />
+            <ColorField
+              label={t("settings.highlightColor")}
+              value={theme.highlight}
+              onChange={(highlight) => setTheme({ highlight })}
             />
           </div>
 

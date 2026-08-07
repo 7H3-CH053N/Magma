@@ -14,6 +14,7 @@ export interface ThemeSettings {
   mode: ThemeMode;
   accent: string;
   ai: string;
+  highlight: string;
   uiFont: string;
   editorFont: string;
   fontSize: number; // px
@@ -41,6 +42,7 @@ export const DEFAULT_THEME: ThemeSettings = {
   mode: "system",
   accent: "#e0533d",
   ai: "#7c5cff",
+  highlight: "#d7d323",
   uiFont: FONT_PRESETS[1].value, // Inter / Sans
   editorFont: FONT_PRESETS[0].value, // System
   fontSize: 16,
@@ -66,6 +68,7 @@ function apply(s: ThemeSettings, systemDark: boolean) {
   root.classList.toggle("dark", dark);
   root.style.setProperty("--magma-accent", s.accent);
   root.style.setProperty("--magma-ai", s.ai);
+  root.style.setProperty("--magma-highlight", s.highlight);
   root.style.setProperty("--magma-font-ui", s.uiFont);
   root.style.setProperty("--magma-font-editor", s.editorFont);
   root.style.setProperty("--magma-font-size", `${s.fontSize}px`);

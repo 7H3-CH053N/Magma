@@ -459,7 +459,7 @@ function Highlight({ text, term }: { text: string; term: string }) {
         ) : (
           <mark
             key={i}
-            className="rounded-[3px] bg-magma-accent/25 px-0.5 text-magma-ink dark:text-[#ece9e4]"
+            className="magma-text-highlight rounded-[3px] px-0.5"
           >
             {p.hit}
           </mark>
@@ -524,4 +524,3 @@ function buildTree(notes: NoteMeta[], folders: string[]): FolderNode[] {
   roots.sort((a, b) => a.name.localeCompare(b.name));
   return roots;
 }
-
