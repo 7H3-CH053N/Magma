@@ -4,7 +4,7 @@
 
 use serde::Serialize;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 #[derive(Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -162,10 +162,17 @@ fn is_ai_authored(content: &str) -> bool {
 
 /// Build a path relative to the vault, guarding against escaping it via `..`.
 pub fn safe_join(vault: &Path, rel: &str) -> Option<PathBuf> {
-    if rel.split(['/', '\\']).any(|c| c == "..") {
+    let rel_path = Path::new(rel);
+    if rel_path.components().any(|c| {
+        matches!(
+            c,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) || rel.split(['/', '\\']).any(|c| c == "..")
+    {
         return None;
     }
-    Some(vault.join(rel))
+    Some(vault.join(rel_path))
 }
 
 /// Turn a title into a safe file stem: keep letters, digits, spaces, dashes
@@ -451,6 +458,12 @@ fn collect_dirs(root: &Path, dir: &Path, out: &mut Vec<String>) -> std::io::Resu
 /// Save pasted image bytes into the vault's `assets/` folder under a
 /// caller-provided name, returning the vault-relative path for embedding.
 pub fn save_asset(vault: &Path, file_name: &str, bytes: &[u8]) -> std::io::Result<String> {
+    if !is_plain_file_name(file_name) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "invalid asset filename",
+        ));
+    }
     let dir = vault.join("assets");
     fs::create_dir_all(&dir)?;
     let mut rel = format!("assets/{file_name}");
@@ -465,6 +478,20 @@ pub fn save_asset(vault: &Path, file_name: &str, bytes: &[u8]) -> std::io::Resul
     }
     fs::write(vault.join(&rel), bytes)?;
     Ok(rel)
+}
+
+fn is_plain_file_name(file_name: &str) -> bool {
+    let trimmed = file_name.trim();
+    !trimmed.is_empty()
+        && trimmed == file_name
+        && !file_name.chars().any(|c| c == '/' || c == '\\')
+        && !Path::new(file_name).components().any(|c| {
+            matches!(
+                c,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+        && file_name != ".."
 }
 
 fn split_ext(name: &str) -> (String, Option<String>) {
@@ -524,6 +551,7 @@ mod tests {
     fn safe_join_blocks_traversal() {
         let v = Path::new("/vault");
         assert!(safe_join(v, "../etc/passwd").is_none());
+        assert!(safe_join(v, "/etc/passwd").is_none());
         assert!(safe_join(v, "notes/ok.md").is_some());
     }
 
@@ -657,6 +685,16 @@ mod tests {
         assert_eq!(p1, "assets/pasted.png");
         assert_eq!(p2, "assets/pasted 2.png");
         assert!(v.join(&p2).exists());
+        fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn save_asset_rejects_path_segments() {
+        let v = tmp_vault();
+        assert!(save_asset(&v, "../outside.png", b"x").is_err());
+        assert!(save_asset(&v, "/tmp/outside.png", b"x").is_err());
+        assert!(save_asset(&v, "nested/image.png", b"x").is_err());
+        assert!(save_asset(&v, "nested\\image.png", b"x").is_err());
         fs::remove_dir_all(&v).ok();
     }
 }
