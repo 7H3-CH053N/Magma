@@ -217,6 +217,18 @@ npm run tauri build      # erzeugt das DMG (macOS) / MSI (Windows)
 
 Das Installationsprogramm liegt danach in `src-tauri/target/release/bundle/`.
 
+### Updates veröffentlichen
+
+Die installierte App prüft
+`https://github.com/7H3-CH053N/Magma/releases/latest/download/latest.json`.
+Für ein Update die App-Version erhöhen, über den GitHub-Workflow einen
+`vX.Y.Z`-Release bauen und `TAURI_SIGNING_PRIVATE_KEY` in GitHub Actions auf
+den Inhalt des privaten Magma-Updater-Schlüssels setzen. Wenn der Schlüssel
+kein Passwort hat, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` als leeren Secret
+setzen. Der passende öffentliche Schlüssel steht bereits in
+`src-tauri/tauri.conf.json`; nur rotieren, wenn bereits installierte Apps danach
+keine neuen Updates mehr verifizieren können.
+
 Zum Entwickeln:
 
 ```bash

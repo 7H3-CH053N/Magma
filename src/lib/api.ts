@@ -2,6 +2,8 @@
 // Kept isolated so the UI can be developed (and tested) against a mock
 // when the desktop shell is not available.
 import { invoke } from "@tauri-apps/api/core";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check, type DownloadEvent } from "@tauri-apps/plugin-updater";
 
 export interface NoteMeta {
   /** Path relative to the vault root, e.g. "ideas/second-brain.md". */
@@ -395,6 +397,71 @@ export async function openExternal(url: string): Promise<void> {
 export async function setLanguage(lang: string): Promise<void> {
   if (!hasTauri) return;
   return invoke("set_language", { lang });
+}
+
+export interface AppUpdate {
+  currentVersion: string;
+  version: string;
+  date?: string;
+  body?: string;
+}
+
+export type UpdateProgress =
+  | { status: "checking" }
+  | { status: "available"; update: AppUpdate }
+  | { status: "none" }
+  | { status: "downloading"; downloaded: number; total?: number }
+  | { status: "installing" }
+  | { status: "relaunching" };
+
+export async function checkForAppUpdate(): Promise<AppUpdate | null> {
+  if (!hasTauri) return null;
+  const update = await check();
+  if (!update) return null;
+  return {
+    currentVersion: update.currentVersion,
+    version: update.version,
+    date: update.date,
+    body: update.body,
+  };
+}
+
+export async function installAppUpdate(
+  onProgress: (progress: UpdateProgress) => void
+): Promise<void> {
+  if (!hasTauri) return;
+  onProgress({ status: "checking" });
+  const update = await check();
+  if (!update) {
+    onProgress({ status: "none" });
+    return;
+  }
+  onProgress({
+    status: "available",
+    update: {
+      currentVersion: update.currentVersion,
+      version: update.version,
+      date: update.date,
+      body: update.body,
+    },
+  });
+
+  let downloaded = 0;
+  let total: number | undefined;
+  await update.downloadAndInstall((event: DownloadEvent) => {
+    if (event.event === "Started") {
+      downloaded = 0;
+      total = event.data.contentLength;
+      onProgress({ status: "downloading", downloaded, total });
+    } else if (event.event === "Progress") {
+      downloaded += event.data.chunkLength;
+      onProgress({ status: "downloading", downloaded, total });
+    } else {
+      onProgress({ status: "installing" });
+    }
+  });
+  onProgress({ status: "relaunching" });
+  await relaunch();
 }
 
 export { hasTauri };

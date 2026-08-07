@@ -182,6 +182,22 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "settings.description":
       "A beautiful, local-first, LLM-native second brain. Your notes stay plain markdown files on your disk.",
     "settings.license": "Released under the terms in the project LICENSE.",
+    "settings.updateTitle": "Updates",
+    "settings.updateBody":
+      "Get the newest signed Magma release from GitHub and restart into it after installation.",
+    "settings.updateCheck": "Check for updates",
+    "settings.updateBusy": "Working…",
+    "settings.updateInstall": "Install {version}",
+    "settings.updateInstallLatest": "Download latest",
+    "settings.updateChecking": "Checking GitHub releases…",
+    "settings.updateNone": "Magma is up to date.",
+    "settings.updateFound": "Update {version} is available.",
+    "settings.updateDownloading": "Downloading {progress}",
+    "settings.updateInstalling": "Installing update…",
+    "settings.updateRelaunching": "Restarting Magma…",
+    "settings.updateNoManifest":
+      "This GitHub release was published before in-app updates existed. Install the next release once; after that updates work from here.",
+    "settings.updateFailed": "The update check failed. Please try again later.",
     "settings.importTitle": "Import WordPress blog",
     "settings.importBody":
       "Pull every post into a folder as linked notes — grouped by category and tag, then searchable and available to Claude.",
@@ -397,6 +413,22 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "settings.description":
       "Ein schönes, lokales, LLM-natives zweites Gehirn. Deine Notizen bleiben einfache Markdown-Dateien auf deiner Festplatte.",
     "settings.license": "Veröffentlicht unter den Bedingungen der LICENSE des Projekts.",
+    "settings.updateTitle": "Updates",
+    "settings.updateBody":
+      "Lädt den neuesten signierten Magma-Release von GitHub und startet danach in die neue Version.",
+    "settings.updateCheck": "Nach Updates suchen",
+    "settings.updateBusy": "Arbeite…",
+    "settings.updateInstall": "{version} installieren",
+    "settings.updateInstallLatest": "Neueste Version laden",
+    "settings.updateChecking": "Prüfe GitHub-Releases…",
+    "settings.updateNone": "Magma ist aktuell.",
+    "settings.updateFound": "Update {version} ist verfügbar.",
+    "settings.updateDownloading": "Lade herunter: {progress}",
+    "settings.updateInstalling": "Installiere Update…",
+    "settings.updateRelaunching": "Starte Magma neu…",
+    "settings.updateNoManifest":
+      "Dieser GitHub-Release wurde veröffentlicht, bevor In-App-Updates eingebaut waren. Installiere den nächsten Release einmal manuell; danach laufen Updates hierüber.",
+    "settings.updateFailed": "Die Update-Prüfung ist fehlgeschlagen. Bitte später erneut versuchen.",
     "settings.importTitle": "WordPress-Blog importieren",
     "settings.importBody":
       "Hol alle Beiträge als verlinkte Notizen in einen Ordner — gruppiert nach Kategorie und Tag, dann durchsuchbar und für Claude verfügbar.",

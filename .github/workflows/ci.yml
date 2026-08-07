@@ -82,6 +82,9 @@ jobs:
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - run: npm ci
       - name: Build desktop app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: >
           npm run tauri build --
           --bundles ${{ matrix.bundles }}
@@ -92,14 +95,69 @@ jobs:
           name: magma-${{ matrix.os }}
           path: |
             target/release/bundle/msi/*.msi
+            target/release/bundle/msi/*.msi.sig
             target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
+            target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
           if-no-files-found: ignore
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
+    needs: bundle
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Generate updater manifest
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import urllib.parse
+
+          root = pathlib.Path("release-artifacts")
+          tag = os.environ["RELEASE_TAG"]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          version = tag[1:] if tag.startswith("v") else tag
+
+          def one(pattern):
+              matches = sorted(root.glob(pattern))
+              if not matches:
+                  raise SystemExit(f"missing release artifact: {pattern}")
+              return matches[0]
+
+          mac = one("**/*.app.tar.gz")
+          win = one("**/*.msi")
+          mac_sig = pathlib.Path(str(mac) + ".sig").read_text().strip()
+          win_sig = pathlib.Path(str(win) + ".sig").read_text().strip()
+
+          def url(path):
+              return f"https://github.com/{repo}/releases/download/{tag}/{urllib.parse.quote(path.name)}"
+
+          latest = {
+              "version": version,
+              "notes": f"Magma {tag}",
+              "platforms": {
+                  "darwin-aarch64": {"signature": mac_sig, "url": url(mac)},
+                  "darwin-x86_64": {"signature": mac_sig, "url": url(mac)},
+                  "windows-x86_64": {"signature": win_sig, "url": url(win)},
+              },
+          }
+          pathlib.Path("latest.json").write_text(json.dumps(latest, indent=2) + "\n")
+          PY
 
       # On a version tag the installers go to a Release as well: artifacts
       # expire after 90 days and need a GitHub login to download, which is no
-      # way to hand an app to someone. Each OS appends to the same release.
-      - name: Publish installers to the release
-        if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
+      # way to hand an app to someone.
+      - name: Publish installers and updater manifest
         uses: softprops/action-gh-release@v2
         with:
           # A tag push releases under that tag; a dispatch releases under the
@@ -107,8 +165,12 @@ jobs:
           tag_name: ${{ inputs.release_tag || github.ref_name }}
           target_commitish: ${{ github.sha }}
           files: |
-            target/release/bundle/msi/*.msi
-            target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            release-artifacts/**/*.msi
+            release-artifacts/**/*.msi.sig
+            release-artifacts/**/*.dmg
+            release-artifacts/**/*.app.tar.gz
+            release-artifacts/**/*.app.tar.gz.sig
+            latest.json
           fail_on_unmatched_files: false
           generate_release_notes: true
           body: |

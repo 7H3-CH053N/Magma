@@ -5,11 +5,15 @@ import { useTheme, FONT_PRESETS, type ThemeMode } from "../lib/theme";
 import { usePrefs } from "../lib/prefs";
 import {
   hasTauri,
+  checkForAppUpdate,
   importWordpress,
+  installAppUpdate,
   installMcp,
   mcpConfig,
+  type AppUpdate,
   type NoteMeta,
   type RemoteConfig,
+  type UpdateProgress,
 } from "../lib/api";
 
 interface SettingsProps {
@@ -33,6 +37,18 @@ function savedRemote(): { url: string; username: string } {
     /* ignore */
   }
   return { url: "", username: "" };
+}
+
+function updateErrorKey(error: unknown): string {
+  const text = String(error).toLowerCase();
+  if (
+    text.includes("valid release json") ||
+    text.includes("status code: 404") ||
+    text.includes("not found")
+  ) {
+    return "settings.updateNoManifest";
+  }
+  return "settings.updateFailed";
 }
 
 /**
@@ -67,6 +83,10 @@ export default function Settings({
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<string | null>(null);
+  const [updateErr, setUpdateErr] = useState<string | null>(null);
+  const [availableUpdate, setAvailableUpdate] = useState<AppUpdate | null>(null);
 
   // MCP setup state.
   const [mcpBusy, setMcpBusy] = useState(false);
@@ -184,6 +204,48 @@ export default function Settings({
       setErr(String(e));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const renderUpdateProgress = (progress: UpdateProgress) => {
+    if (progress.status === "checking") setUpdateInfo(t("settings.updateChecking"));
+    else if (progress.status === "available") {
+      setAvailableUpdate(progress.update);
+      setUpdateInfo(t("settings.updateFound", { version: progress.update.version }));
+    } else if (progress.status === "none") setUpdateInfo(t("settings.updateNone"));
+    else if (progress.status === "downloading") {
+      const mb = (progress.downloaded / 1024 / 1024).toFixed(1);
+      const total = progress.total ? ` / ${(progress.total / 1024 / 1024).toFixed(1)} MB` : " MB";
+      setUpdateInfo(t("settings.updateDownloading", { progress: `${mb}${total}` }));
+    } else if (progress.status === "installing") setUpdateInfo(t("settings.updateInstalling"));
+    else setUpdateInfo(t("settings.updateRelaunching"));
+  };
+
+  const checkUpdates = async () => {
+    setUpdateErr(null);
+    setUpdateInfo(t("settings.updateChecking"));
+    setUpdateBusy(true);
+    try {
+      const update = await checkForAppUpdate();
+      setAvailableUpdate(update);
+      setUpdateInfo(update ? t("settings.updateFound", { version: update.version }) : t("settings.updateNone"));
+    } catch (e) {
+      setUpdateErr(t(updateErrorKey(e)));
+      setUpdateInfo(null);
+    } finally {
+      setUpdateBusy(false);
+    }
+  };
+
+  const installUpdate = async () => {
+    setUpdateErr(null);
+    setUpdateBusy(true);
+    try {
+      await installAppUpdate(renderUpdateProgress);
+    } catch (e) {
+      setUpdateErr(t(updateErrorKey(e)));
+    } finally {
+      setUpdateBusy(false);
     }
   };
 
@@ -598,6 +660,38 @@ export default function Settings({
               vibecraft.rocks
             </a>
             <div className="mt-1 opacity-80">{t("settings.license")}</div>
+          </div>
+          <div className="mt-3 w-full max-w-md border-t border-black/10 pt-4 dark:border-white/10">
+            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-magma-muted">
+              {t("settings.updateTitle")}
+            </div>
+            <p className="mb-3 text-xs leading-relaxed text-magma-muted">
+              {t("settings.updateBody")}
+            </p>
+            <div className="flex justify-center gap-2">
+              <button
+                onClick={checkUpdates}
+                disabled={updateBusy}
+                className="rounded-lg border border-black/10 px-3 py-1.5 text-sm text-magma-muted transition hover:border-black/20 hover:text-magma-ink disabled:opacity-50 dark:border-white/15 dark:hover:border-white/30"
+              >
+                {updateBusy ? t("settings.updateBusy") : t("settings.updateCheck")}
+              </button>
+              <button
+                onClick={installUpdate}
+                disabled={updateBusy || !hasTauri}
+                className="rounded-lg bg-magma-accent px-3 py-1.5 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+              >
+                {availableUpdate
+                  ? t("settings.updateInstall", { version: availableUpdate.version })
+                  : t("settings.updateInstallLatest")}
+              </button>
+            </div>
+            {updateInfo && (
+              <p className="mt-2 whitespace-pre-line text-xs text-green-600 dark:text-green-400">
+                {updateInfo}
+              </p>
+            )}
+            {updateErr && <p className="mt-2 text-xs text-red-500">{updateErr}</p>}
           </div>
         </section>
         )}
