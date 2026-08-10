@@ -176,7 +176,10 @@ validated against the real vault; broken ones come back with suggestions instead
 of being written as dead ends. AI-written notes are stamped `author: ai`, shown
 in violet in the graph and listed under *AI* — with a badge naming which client
 wrote them, so Claude's work and Codex's work stay apart. A version snapshot is
-taken before every AI edit. Set `MAGMA_MCP_ALLOW_WRITE=0` for read-only.
+taken before every AI edit — and before an AI deletes a note or a folder, since
+that is the one action with nothing left to compare against. The history lives
+outside whatever gets removed, so a deleted note can still be read back. Set
+`MAGMA_MCP_ALLOW_WRITE=0` for read-only.
 
 ## Make it yours
 

@@ -198,7 +198,10 @@ Sackgasse geschrieben zu werden. Von der KI geschriebene Notizen bekommen
 `author: ai`, erscheinen im Graph violett und stehen unter *KI* – mit einer
 Kennzeichnung, welcher Client sie geschrieben hat, damit die Arbeit von Claude
 und die von Codex auseinanderzuhalten sind. Vor jeder KI-Änderung wird ein
-Snapshot angelegt. `MAGMA_MCP_ALLOW_WRITE=0` schaltet auf Nur-Lesen.
+Snapshot angelegt — und bevor eine KI eine Notiz oder einen Ordner löscht, denn
+das ist die eine Aktion, bei der sonst nichts zum Vergleichen übrig bleibt. Der
+Verlauf liegt außerhalb dessen, was gelöscht wird, eine gelöschte Notiz lässt
+sich also weiterhin nachlesen. `MAGMA_MCP_ALLOW_WRITE=0` schaltet auf Nur-Lesen.
 
 ## Anpassen
 

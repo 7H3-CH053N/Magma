@@ -160,6 +160,17 @@ pub fn ai_update_note_for_client(
     client: Option<&str>,
 ) -> std::io::Result<AiWriteResult> {
     let stamped = stamp_ai_author_for_client(content, client);
+    // Keep the previous text before replacing it. This is the only reason it is
+    // comfortable to give a model write access at all: the worst case here is a
+    // note the user wrote and never opened inside Magma — an imported vault, say
+    // — where no editor autosave has ever taken a snapshot, so without this the
+    // old text is simply gone and the note now claims `author: ai`.
+    //
+    // A failure to snapshot must not stop the write from being reported
+    // honestly, but it must not silently pass either, so the error travels.
+    // `snapshot` no-ops when there is nothing on disk yet, which is why
+    // `ai_create_note_for_client` needs no equivalent.
+    crate::history::snapshot(vault, rel)?;
     vault::write_note(vault, rel, &stamped)?;
     let link_check = validate_links(vault, &stamped)?;
     Ok(AiWriteResult {
@@ -375,6 +386,51 @@ mod tests {
         assert!(check.broken[0]
             .suggestions
             .contains(&"Sourdough".to_string()));
+        fs::remove_dir_all(&v).ok();
+    }
+
+    /// The guarantee the README makes about letting a model write: the previous
+    /// text is kept. The dangerous case is a note the user wrote and never
+    /// opened in Magma, so no editor autosave has ever snapshotted it — that is
+    /// what this sets up.
+    #[test]
+    fn ai_update_keeps_the_previous_text() {
+        let v = tmp_vault();
+        let before = "# Wichtig\n\nVon Hand geschrieben, nie in Magma geoeffnet.";
+        vault::write_note(&v, "Wichtig.md", before).unwrap();
+        assert!(
+            crate::history::list_versions(&v, "Wichtig.md")
+                .unwrap()
+                .is_empty(),
+            "kein Verlauf vorher — genau der gefaehrliche Fall"
+        );
+
+        ai_update_note_for_client(&v, "Wichtig.md", "Komplett ersetzt.", Some("claude")).unwrap();
+
+        let versions = crate::history::list_versions(&v, "Wichtig.md").unwrap();
+        assert_eq!(versions.len(), 1, "genau ein Schnappschuss");
+        let restored = crate::history::read_version(&v, "Wichtig.md", &versions[0].id).unwrap();
+        assert_eq!(
+            restored, before,
+            "der alte Text muss wortgleich erhalten sein"
+        );
+
+        // Und die Notiz selbst traegt jetzt die neue Fassung.
+        let now = vault::read_note(&v, "Wichtig.md").unwrap();
+        assert!(now.content.contains("Komplett ersetzt."));
+        assert!(now.ai_authored);
+        fs::remove_dir_all(&v).ok();
+    }
+
+    /// A brand new note has nothing to preserve, and must not leave an empty
+    /// history entry behind.
+    #[test]
+    fn ai_create_takes_no_snapshot() {
+        let v = tmp_vault();
+        let res = ai_create_note_for_client(&v, None, "Neu", "Inhalt", None).unwrap();
+        assert!(crate::history::list_versions(&v, &res.path)
+            .unwrap()
+            .is_empty());
         fs::remove_dir_all(&v).ok();
     }
 
