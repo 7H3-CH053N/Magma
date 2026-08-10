@@ -21,7 +21,7 @@ pub use history::{
     snapshot, snapshot_if_due, Version,
 };
 pub use links::{
-    backlinks, build_graph, extract_links, link_mentions, link_mentions_in, note_name,
+    backlinks, build_graph, extract_links, link_mentions, link_mentions_in, name_key, note_name,
     outgoing_links, rename_note_updating_links, replace_in_vault, replace_link_target, search,
     unlinked_mentions, Graph, GraphEdge, GraphNode, Mention, OutgoingLink, ReplaceHit,
     ReplaceRename, ReplaceReport, SearchHit,

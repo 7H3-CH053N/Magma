@@ -209,6 +209,11 @@ impl Server {
                     .into_iter()
                     .map(|n| n.path)
                     .collect();
+                // The tool description asks the model to confirm first. That is a
+                // request, not a guarantee — so keep the text before the file goes.
+                // The history lives under `.magma/`, outside whatever is deleted,
+                // so it survives and the note can be written back by hand.
+                core::snapshot(v, &path).map_err(io)?;
                 core::delete_note(v, &path).map_err(io)?;
                 Ok(json!({ "deleted": path, "nowBrokenLinksIn": orphaned }))
             }
@@ -217,11 +222,18 @@ impl Server {
                 let folder = str_arg(args, "folder")?;
                 core::safe_join(v, &folder).ok_or("invalid path")?;
                 let prefix = format!("{}/", folder.trim().trim_matches('/').to_lowercase());
-                let count = core::list_notes(v)
+                let inside: Vec<String> = core::list_notes(v)
                     .map_err(io)?
-                    .iter()
+                    .into_iter()
                     .filter(|n| n.path.to_lowercase().starts_with(&prefix))
-                    .count();
+                    .map(|n| n.path)
+                    .collect();
+                let count = inside.len();
+                // Recursive and irreversible: snapshot every note first, one at a
+                // time, so a folder deleted on a misunderstanding can be rebuilt.
+                for note in &inside {
+                    core::snapshot(v, note).map_err(io)?;
+                }
                 core::delete_folder(v, &folder).map_err(io)?;
                 Ok(json!({ "deleted": folder, "notesDeleted": count }))
             }
@@ -621,6 +633,49 @@ mod tests {
             .unwrap();
         assert!(!v.join("Blog").exists());
         assert_eq!(f["notesDeleted"], 2);
+        std::fs::remove_dir_all(&v).ok();
+    }
+
+    /// Deleting through an agent has no undo and no trash. The tool description
+    /// asks the model to confirm first, which is a request rather than a check —
+    /// so the text has to be kept where the history lives (`.magma/`, outside
+    /// whatever gets removed).
+    #[test]
+    fn deleting_keeps_the_text_recoverable() {
+        let v = vault();
+        let s = srv(v.clone());
+
+        let before = core::read_note(&v, "Root.md").unwrap().content;
+        s.call_tool("delete_note", &json!({ "path": "Root.md" }))
+            .unwrap();
+        assert!(!v.join("Root.md").exists(), "die Datei ist weg");
+        let versions = core::list_versions(&v, "Root.md").unwrap();
+        assert_eq!(versions.len(), 1, "aber der Text nicht");
+        assert_eq!(
+            core::read_version(&v, "Root.md", &versions[0].id).unwrap(),
+            before
+        );
+
+        // Ein ganzer Ordner: jede Notiz darin einzeln, nicht nur die oberste.
+        let deep = core::read_note(&v, "Blog/KI-Wissen/Tief/Post B.md")
+            .unwrap()
+            .content;
+        s.call_tool("delete_folder", &json!({ "folder": "Blog" }))
+            .unwrap();
+        assert!(!v.join("Blog").exists());
+        for note in ["Blog/KI-Wissen/Post A.md", "Blog/Uebersicht.md"] {
+            assert_eq!(
+                core::list_versions(&v, note).unwrap().len(),
+                1,
+                "kein Schnappschuss fuer {note}"
+            );
+        }
+        let vs = core::list_versions(&v, "Blog/KI-Wissen/Tief/Post B.md").unwrap();
+        assert_eq!(vs.len(), 1, "auch verschachtelte Notizen");
+        assert_eq!(
+            core::read_version(&v, "Blog/KI-Wissen/Tief/Post B.md", &vs[0].id).unwrap(),
+            deep
+        );
         std::fs::remove_dir_all(&v).ok();
     }
 

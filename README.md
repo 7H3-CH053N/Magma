@@ -85,6 +85,10 @@ plugin-hunting needed for basics. Magma keeps what's loved and fixes what's not:
 - **Command palette** (`Cmd/Ctrl+P`) — notes, commands and templates in one
   field. Matching is subsequence-based, so `grph` finds "Show graph".
   (`Cmd/Ctrl+K` stays the link key inside the editor.)
+- Note names match regardless of how their umlauts are encoded. `ä` has two
+  valid encodings, and macOS stored filenames in the other one for years — so a
+  vault carried over from an older Mac holds names that look identical to what
+  you type and compare unequal to it. Links resolve either way.
 - **Search** that reads note bodies, not just titles, and highlights the term
   where it actually occurs. Write `/pattern/i` or `re:pattern` and it is treated
   as a regular expression; anything else stays a plain, case-insensitive search.
@@ -176,7 +180,10 @@ validated against the real vault; broken ones come back with suggestions instead
 of being written as dead ends. AI-written notes are stamped `author: ai`, shown
 in violet in the graph and listed under *AI* — with a badge naming which client
 wrote them, so Claude's work and Codex's work stay apart. A version snapshot is
-taken before every AI edit. Set `MAGMA_MCP_ALLOW_WRITE=0` for read-only.
+taken before every AI edit — and before an AI deletes a note or a folder, since
+that is the one action with nothing left to compare against. The history lives
+outside whatever gets removed, so a deleted note can still be read back. Set
+`MAGMA_MCP_ALLOW_WRITE=0` for read-only.
 
 ## Make it yours
 
