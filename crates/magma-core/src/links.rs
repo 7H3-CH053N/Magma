@@ -8,6 +8,7 @@ use regex::{Regex, RegexBuilder};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
+use unicode_normalization::UnicodeNormalization;
 
 /// Extract wikilink targets from note content. `[[Target]]` and
 /// `[[Target|alias]]` both yield `Target` (trimmed). A `#heading` or `^block`
@@ -114,7 +115,7 @@ pub fn build_graph(vault: &Path, exclude: &[String]) -> std::io::Result<Graph> {
     for note in &notes {
         let content = std::fs::read_to_string(vault.join(&note.path)).unwrap_or_default();
         for target in extract_links(&content) {
-            let dest = match by_name.get(&target.to_lowercase()) {
+            let dest = match by_name.get(&name_key(&target)) {
                 Some(d) => {
                     if *d == note.path {
                         continue; // ignore self-links
@@ -123,7 +124,7 @@ pub fn build_graph(vault: &Path, exclude: &[String]) -> std::io::Result<Graph> {
                 }
                 None => {
                     // Unresolved: keep it, as a ghost the UI can show.
-                    let id = format!("missing:{}", target.to_lowercase());
+                    let id = format!("missing:{}", name_key(&target));
                     ghosts.entry(id.clone()).or_insert_with(|| target.clone());
                     id
                 }
@@ -242,7 +243,7 @@ pub fn backlinks(vault: &Path, target_path: &str) -> std::io::Result<Vec<NoteMet
         let content = std::fs::read_to_string(vault.join(&note.path)).unwrap_or_default();
         let links_here = extract_links(&content)
             .into_iter()
-            .any(|t| by_name.get(&t.to_lowercase()).map(|p| p.as_str()) == Some(target_path));
+            .any(|t| by_name.get(&name_key(&t)).map(|p| p.as_str()) == Some(target_path));
         if links_here {
             out.push(NoteMeta {
                 path: note.path.clone(),
@@ -280,7 +281,7 @@ pub fn outgoing_links(vault: &Path, rel: &str) -> std::io::Result<Vec<OutgoingLi
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     for name in extract_links(&content) {
-        let key = name.to_lowercase();
+        let key = name_key(&name);
         if !seen.insert(key.clone()) {
             continue;
         }
@@ -324,6 +325,12 @@ pub fn unlinked_mentions(vault: &Path, rel: &str) -> std::io::Result<Vec<Mention
         // Too short to be anything but noise across a whole vault.
         return Ok(Vec::new());
     }
+    // Two different comparisons live below. Links resolve on the note name, so
+    // they go through `name_key`. The scan for the name inside body *text* stays
+    // on the raw lowercase form: normalising only the needle would stop it
+    // matching un-normalised prose, and normalising the prose would move the
+    // byte offsets the snippet is cut from.
+    let linked_key = name_key(name);
     let lower_name = name.to_lowercase();
     let needle: Vec<char> = lower_name.chars().collect();
     let notes = vault::list_notes(vault)?;
@@ -336,7 +343,7 @@ pub fn unlinked_mentions(vault: &Path, rel: &str) -> std::io::Result<Vec<Mention
         // Already linked? Then it is a backlink, not a missed mention.
         if extract_links(&content)
             .iter()
-            .any(|l| l.to_lowercase() == lower_name)
+            .any(|l| name_key(l) == linked_key)
         {
             continue;
         }
@@ -657,10 +664,29 @@ pub fn note_name(path: &str) -> &str {
 }
 
 /// Map lowercased note name (filename stem) -> note path.
+/// The key a note name is matched by.
+///
+/// `ä` has two valid encodings: composed (`U+00E4`) and decomposed (`U+0061`
+/// followed by a combining diaeresis). They render identically and compare
+/// unequal. macOS stored filenames decomposed for years, so a vault carried
+/// over from HFS+, restored from a backup, or synced through a tool that
+/// decomposes holds decomposed names — while anything typed on a keyboard or
+/// written by a model is composed.
+///
+/// Without normalising, every note whose *filename* carries an umlaut becomes
+/// unlinkable, and the "did you mean" suggestion comes back byte-identical to
+/// what was just written. In a German vault that is most notes.
+///
+/// NFC rather than NFD because composed is what keyboard input, LLM output and
+/// Obsidian all produce, so the common case stays a no-op.
+pub fn name_key(name: &str) -> String {
+    name.nfc().collect::<String>().to_lowercase()
+}
+
 fn name_index(notes: &[NoteMeta]) -> HashMap<String, String> {
     notes
         .iter()
-        .map(|n| (note_name(&n.path).to_lowercase(), n.path.clone()))
+        .map(|n| (name_key(note_name(&n.path)), n.path.clone()))
         .collect()
 }
 
@@ -866,6 +892,59 @@ mod tests {
             out.contains("[[MÜLLER GMBH]]"),
             "keeps the note's spelling: {out}"
         );
+    }
+
+    /// The macOS case: the filename is stored decomposed, the link is written
+    /// composed. Both render as "Oberfläche"; they are different bytes.
+    ///
+    /// Written with explicit escapes rather than a literal `ä`, because this
+    /// source file is saved composed — a literal would silently make both sides
+    /// identical and the test would pass without testing anything.
+    #[test]
+    fn a_decomposed_filename_resolves_from_a_composed_link() {
+        let v = tmp_vault();
+        let decomposed = "Oberfla\u{308}che";
+        let composed = "Oberfl\u{e4}che";
+        assert_ne!(decomposed, composed, "sonst prueft der Test nichts");
+
+        vault::write_note(&v, &format!("{decomposed}.md"), "# Oberflaeche").unwrap();
+        vault::write_note(&v, "Quelle.md", &format!("Siehe [[{composed}]].")).unwrap();
+
+        // Backlinks find the source note...
+        let back = backlinks(&v, &format!("{decomposed}.md")).unwrap();
+        assert_eq!(back.len(), 1, "Backlink fehlt");
+        assert_eq!(back[0].path, "Quelle.md");
+
+        // ...the link is an outgoing link to a note that exists, not a ghost...
+        let out = outgoing_links(&v, "Quelle.md").unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].path, format!("{decomposed}.md"));
+        assert!(!out[0].missing, "darf kein Geisterknoten sein");
+
+        // ...and the graph draws one edge between two real nodes.
+        let g = build_graph(&v, &[]).unwrap();
+        assert_eq!(
+            g.nodes.len(),
+            2,
+            "got: {:?}",
+            g.nodes.iter().map(|n| &n.path).collect::<Vec<_>>()
+        );
+        assert!(!g.nodes.iter().any(|n| n.missing), "kein Geisterknoten");
+        assert_eq!(g.edges.len(), 1);
+        fs::remove_dir_all(&v).ok();
+    }
+
+    /// And the other direction, for a vault written composed and linked from a
+    /// decomposed source (an older note, a paste from elsewhere).
+    #[test]
+    fn a_composed_filename_resolves_from_a_decomposed_link() {
+        let v = tmp_vault();
+        vault::write_note(&v, "Gr\u{fc}\u{df}e.md", "# Gruesse").unwrap();
+        vault::write_note(&v, "Quelle.md", "Siehe [[Gru\u{308}\u{df}e]].").unwrap();
+        let out = outgoing_links(&v, "Quelle.md").unwrap();
+        assert_eq!(out.len(), 1);
+        assert!(!out[0].missing);
+        fs::remove_dir_all(&v).ok();
     }
 
     #[test]

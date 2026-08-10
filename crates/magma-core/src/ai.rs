@@ -99,12 +99,14 @@ pub fn validate_links(vault: &Path, content: &str) -> std::io::Result<LinkCheck>
         .iter()
         .map(|n| crate::links::note_name(&n.path).to_string())
         .collect();
-    let lower: HashSet<String> = names.iter().map(|t| t.to_lowercase()).collect();
+    // Matched through `name_key`, so a decomposed filename and a composed link
+    // resolve to each other — see the doc comment there.
+    let lower: HashSet<String> = names.iter().map(|t| crate::links::name_key(t)).collect();
 
     let mut resolved = Vec::new();
     let mut broken = Vec::new();
     for target in extract_links(content) {
-        if lower.contains(&target.to_lowercase()) {
+        if lower.contains(&crate::links::name_key(&target)) {
             resolved.push(target);
         } else {
             broken.push(BrokenLink {
@@ -273,10 +275,10 @@ fn first_line(content: &str) -> String {
 /// returning up to `n` best matches. Deliberately simple; good enough to catch
 /// typos and near-misses.
 fn closest_titles(target: &str, titles: &[String], n: usize) -> Vec<String> {
-    let t = target.to_lowercase();
+    let t = crate::links::name_key(target);
     let mut scored: Vec<(f32, &String)> = titles
         .iter()
-        .map(|title| (similarity(&t, &title.to_lowercase()), title))
+        .map(|title| (similarity(&t, &crate::links::name_key(title)), title))
         .filter(|(s, _)| *s > 0.3)
         .collect();
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -372,6 +374,24 @@ mod tests {
         assert!(!c.is_empty());
         assert_eq!(c[0].title, "Sourdough");
         assert_eq!(c[0].name, "Sourdough");
+        fs::remove_dir_all(&v).ok();
+    }
+
+    /// Link validation is what stops an agent writing dead ends — so it must not
+    /// refuse a link that is perfectly good, which is what a normalisation
+    /// mismatch made it do. The suggestion it offered came back byte-identical
+    /// to the link it had just rejected.
+    #[test]
+    fn validate_accepts_a_composed_link_to_a_decomposed_file() {
+        let v = tmp_vault();
+        vault::write_note(&v, "Oberfla\u{308}che.md", "# Oberflaeche").unwrap();
+        let check = validate_links(&v, "Siehe [[Oberfl\u{e4}che]].").unwrap();
+        assert!(
+            check.broken.is_empty(),
+            "abgelehnt mit Vorschlag {:?}",
+            check.broken.first().map(|b| &b.suggestions)
+        );
+        assert_eq!(check.resolved.len(), 1);
         fs::remove_dir_all(&v).ok();
     }
 

@@ -96,6 +96,11 @@ geliebt wird, und repariert, was nervt:
 - **Befehlspalette** (`Cmd/Strg+P`) – Notizen, Befehle und Vorlagen in einem
   Feld. Gesucht wird als Teilfolge, `grph` findet also „Graph anzeigen".
   (`Cmd/Strg+K` bleibt im Editor die Link-Taste.)
+- Notiznamen finden zueinander, egal wie ihre Umlaute kodiert sind. `ä` hat zwei
+  gültige Kodierungen, und macOS hat Dateinamen jahrelang in der anderen
+  abgelegt – ein von einem älteren Mac übernommener Vault trägt also Namen, die
+  aussehen wie das, was du tippst, und sich davon unterscheiden. Links lösen so
+  oder so auf.
 - **Suche**, die in den Notiztexten sucht und nicht nur in Titeln – und den
   Begriff dort hervorhebt, wo er wirklich steht. `/muster/i` oder `re:muster`
   wird als regulärer Ausdruck gelesen; alles andere bleibt eine normale Suche

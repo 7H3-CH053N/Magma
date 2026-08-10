@@ -85,6 +85,10 @@ plugin-hunting needed for basics. Magma keeps what's loved and fixes what's not:
 - **Command palette** (`Cmd/Ctrl+P`) — notes, commands and templates in one
   field. Matching is subsequence-based, so `grph` finds "Show graph".
   (`Cmd/Ctrl+K` stays the link key inside the editor.)
+- Note names match regardless of how their umlauts are encoded. `ä` has two
+  valid encodings, and macOS stored filenames in the other one for years — so a
+  vault carried over from an older Mac holds names that look identical to what
+  you type and compare unequal to it. Links resolve either way.
 - **Search** that reads note bodies, not just titles, and highlights the term
   where it actually occurs. Write `/pattern/i` or `re:pattern` and it is treated
   as a regular expression; anything else stays a plain, case-insensitive search.
