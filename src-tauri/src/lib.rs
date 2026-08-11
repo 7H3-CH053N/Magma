@@ -150,6 +150,22 @@ fn build_graph(vault: String, exclude: Option<Vec<String>>) -> Result<vault::Gra
         .map_err(|e| e.to_string())
 }
 
+/// The same vault seen as terms rather than files. Runs entirely here — the
+/// point of having it built in rather than reaching for a service is that the
+/// notes never leave the machine.
+#[tauri::command]
+fn concept_graph(
+    vault: String,
+    exclude: Option<Vec<String>>,
+) -> Result<vault::ConceptGraph, String> {
+    vault::concept_graph(
+        &PathBuf::from(vault),
+        &exclude.unwrap_or_default(),
+        vault::ConceptOptions::default(),
+    )
+    .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn backlinks(vault: String, path: String) -> Result<Vec<vault::NoteMeta>, String> {
     vault::backlinks(&PathBuf::from(vault), &path).map_err(|e| e.to_string())
@@ -876,6 +892,7 @@ pub fn run() {
             import_wordpress,
             save_asset,
             build_graph,
+            concept_graph,
             backlinks,
             search,
             query_dataview,

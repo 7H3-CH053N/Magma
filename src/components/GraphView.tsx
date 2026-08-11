@@ -1,13 +1,23 @@
 import { useEffect, useRef, useState } from "react";
-import type { Graph } from "../lib/api";
+import { conceptGraph, type ConceptNode, type Graph } from "../lib/api";
+import { conceptGraphToGraph, noteLabel } from "../lib/conceptView";
 import { useI18n } from "../lib/i18n";
 
 interface GraphViewProps {
   graph: Graph;
+  vault: string | null;
   activePath: string | null;
   /** Clicking a node previews it; the panel's button opens it in the editor. */
   onSelect: (path: string) => void;
 }
+
+/**
+ * What the canvas is drawing. A view mode, so it lives on the view — burying
+ * it in Settings is exactly the habit Magma is built against.
+ */
+type Mode = "notes" | "concepts";
+
+const EMPTY: Graph = { nodes: [], edges: [] };
 
 interface Sim {
   path: string;
@@ -186,8 +196,55 @@ function folderColors(
  * empty canvas to pan, drag a node to reposition it. Until you touch it, the
  * view auto-fits so every node is on screen.
  */
-export default function GraphView({ graph, activePath, onSelect }: GraphViewProps) {
+export default function GraphView({
+  graph: noteGraph,
+  vault,
+  activePath,
+  onSelect,
+}: GraphViewProps) {
   const { t } = useI18n();
+  const [mode, setMode] = useState<Mode>("notes");
+  const [concepts, setConcepts] = useState<Graph | null>(null);
+  // What a click on a term reveals: the notes it actually appears in. Without
+  // this the term view is a picture you cannot get back out of.
+  const [details, setDetails] = useState<Map<string, ConceptNode>>(new Map());
+  const [picked, setPicked] = useState<ConceptNode | null>(null);
+  const [conceptOmitted, setConceptOmitted] = useState(0);
+  const [conceptBusy, setConceptBusy] = useState(false);
+  const [conceptError, setConceptError] = useState<string | null>(null);
+
+  // Built on demand and then kept: the analysis reads every note, which is
+  // quick but not free, and flipping back and forth should not repeat it.
+  useEffect(() => {
+    if (mode !== "concepts" || concepts || !vault) return;
+    let cancelled = false;
+    setConceptBusy(true);
+    setConceptError(null);
+    conceptGraph(vault)
+      .then((result) => {
+        if (cancelled) return;
+        const view = conceptGraphToGraph(result, (i) =>
+          t("graph.cluster", { n: String(i + 1) })
+        );
+        setConcepts(view.graph);
+        setDetails(view.details);
+        setConceptOmitted(result.omitted);
+      })
+      .catch((e) => !cancelled && setConceptError(String(e)))
+      .finally(() => !cancelled && setConceptBusy(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, concepts, vault, t]);
+
+  // A changed vault invalidates the analysis; recomputing lazily on the next
+  // switch is better than holding a graph of the previous vault's words.
+  useEffect(() => {
+    setConcepts(null);
+    setPicked(null);
+  }, [vault]);
+
+  const graph = mode === "concepts" ? (concepts ?? EMPTY) : noteGraph;
   const ACCENT = themeColor("--magma-accent", ACCENT_FALLBACK);
   const AI = themeColor("--magma-ai", AI_FALLBACK);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -216,6 +273,8 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
     showAiRingRef.current = showAiRing;
     localStorage.setItem("magma.aiRing", showAiRing ? "1" : "0");
   }, [showAiRing]);
+  const detailsRef = useRef(details);
+  detailsRef.current = details;
   const customRef = useRef(custom);
   const colorVersion = useRef(0);
   useEffect(() => {
@@ -265,7 +324,9 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
         missing: !!node.missing,
         degree: node.degree,
         inLinks,
-        r: radiusFor(inLinks),
+        // The concept view decides its own tiers (by how often a term is
+        // written); notes size themselves by who links to them.
+        r: node.sizeTier != null ? SIZE_TIERS[node.sizeTier].r : radiusFor(inLinks),
         x: Math.cos(a) * rad,
         y: Math.sin(a) * rad,
       };
@@ -679,8 +740,13 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
     };
 
     const onPointerUp = (e: PointerEvent) => {
-      // A press without a drag is a click → open the note.
-      if (!moved && dragIdx >= 0) onSelect(nodes[dragIdx].path);
+      // A press without a drag is a click. A note opens; a term has no file
+      // behind it, so it reveals the notes it appears in instead.
+      if (!moved && dragIdx >= 0) {
+        const path = nodes[dragIdx].path;
+        if (mode === "notes") onSelect(path);
+        else setPicked(detailsRef.current.get(path) ?? null);
+      }
       dragIdx = -1;
       panning = false;
       canvas.style.cursor = "default";
@@ -722,17 +788,43 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
     };
     // Rebuild the simulation whenever the graph shape changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graph]);
+  }, [graph, mode]);
 
   return (
     <div className="relative h-full w-full">
       {graph.nodes.length === 0 && (
-        <div className="absolute inset-0 grid place-items-center text-sm text-magma-muted">
-          {t("graph.empty")}
+        <div className="absolute inset-0 grid place-items-center px-8 text-center text-sm text-magma-muted">
+          {mode === "concepts"
+            ? conceptBusy
+              ? t("graph.conceptsBusy")
+              : (conceptError ?? t("graph.conceptsEmpty"))
+            : t("graph.empty")}
         </div>
       )}
       <canvas ref={canvasRef} className="h-full w-full touch-none" />
       <div className="absolute left-4 top-3 flex items-center gap-2">
+        {/* The mode switch sits on the canvas, not in Settings — it is what
+            you are looking at, not how the app is configured. */}
+        <div className="flex overflow-hidden rounded-md bg-black/5 text-xs dark:bg-white/10">
+          {(["notes", "concepts"] as Mode[]).map((m) => (
+            <button
+              key={m}
+              onClick={() => {
+                setMode(m);
+                setPicked(null);
+              }}
+              aria-pressed={mode === m}
+              className={
+                "px-2.5 py-1 transition " +
+                (mode === m
+                  ? "bg-magma-accent text-white"
+                  : "text-magma-muted hover:bg-black/5 dark:hover:bg-white/10")
+              }
+            >
+              {t(m === "notes" ? "graph.modeNotes" : "graph.modeConcepts")}
+            </button>
+          ))}
+        </div>
         <button
           onClick={() => {
             interactedRef.current = false; // hand control back to auto-fit
@@ -755,7 +847,7 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
           <p className="mb-2 text-xs text-magma-muted">{t("graph.colorsHint")}</p>
           <div className="flex max-h-64 flex-col gap-1.5 overflow-auto">
             {legend.map((l) => (
-              <label key={l.name} className="flex items-center gap-2 text-sm">
+              <label key={l.name} className="flex shrink-0 items-center gap-2 text-sm">
                 <input
                   type="color"
                   value={custom[l.name] ?? hslToHex(l.color)}
@@ -784,6 +876,58 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
           </button>
         </div>
       )}
+      {picked && mode === "concepts" && (
+        <div className="absolute right-4 top-3 z-10 w-72 rounded-xl bg-magma-bg/95 p-3 shadow-xl backdrop-blur dark:bg-[#201c19]/95">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="truncate font-medium">{picked.label}</div>
+              <div className="text-xs text-magma-muted">
+                {t("graph.conceptNotes", {
+                  notes: String(picked.noteCount),
+                  times: String(picked.weight),
+                })}
+              </div>
+            </div>
+            <button
+              onClick={() => setPicked(null)}
+              className="rounded px-1.5 text-magma-muted transition hover:bg-black/5 dark:hover:bg-white/10"
+            >
+              ✕
+            </button>
+          </div>
+          {/* Rows must not shrink. A flex item is normally protected from being
+              squashed below its content by `min-height: auto` — but that rule
+              only applies while the item's overflow is visible, and `truncate`
+              sets `overflow: hidden`. So 25 rows wanting 700px inside a 256px
+              box were compressed to 8px each and their text clipped away: the
+              list looked empty while every row was present, correctly filled
+              and even showing its path on hover. */}
+          <div className="mt-2 flex max-h-64 flex-col gap-0.5 overflow-auto border-t border-black/5 pt-2 dark:border-white/10">
+            {picked.notes.length === 0 && (
+              <p className="px-1.5 py-1 text-sm text-magma-muted">
+                {t("graph.conceptNoNotes")}
+              </p>
+            )}
+            {picked.notes.map((p) => (
+              <button
+                key={p}
+                onClick={() => onSelect(p)}
+                className="shrink-0 truncate rounded px-1.5 py-1 text-left text-sm text-magma-ink transition hover:bg-black/5 dark:hover:bg-white/10"
+                title={p}
+              >
+                {noteLabel(p)}
+              </button>
+            ))}
+          </div>
+          {picked.noteCount > picked.notes.length && (
+            <p className="mt-1.5 text-xs text-magma-muted">
+              {t("graph.conceptMore", {
+                n: String(picked.noteCount - picked.notes.length),
+              })}
+            </p>
+          )}
+        </div>
+      )}
       {/* One entry per top-level folder, plus the AI ring. */}
       <div className="pointer-events-none absolute bottom-3 right-4 flex max-w-[70%] flex-wrap justify-end gap-x-4 gap-y-1 text-xs text-magma-muted">
         {legend.slice(0, 8).map((l) => (
@@ -792,7 +936,7 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
             <span className="max-w-[10rem] truncate">{l.name}</span>
           </span>
         ))}
-        {showAiRing && (
+        {showAiRing && mode === "notes" && (
           <span className="flex items-center gap-1.5">
             <span
               className="h-2.5 w-2.5 rounded-full border-2"
@@ -801,16 +945,27 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
             {t("graph.legendAi")}
           </span>
         )}
-        <span className="flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full border border-dashed border-magma-muted" />
-          {t("graph.legendMissing")}
-        </span>
+        {mode === "notes" && (
+          <span className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-full border border-dashed border-magma-muted" />
+            {t("graph.legendMissing")}
+          </span>
+        )}
+        {/* What a concept edge means, said plainly. Without this the picture
+            invites being read as "these ideas are related", which is a claim
+            counting words apart cannot make. */}
+        {mode === "concepts" && graph.nodes.length > 0 && (
+          <span className="max-w-[24rem] text-right">
+            {t("graph.conceptsHint")}
+            {conceptOmitted > 0 && ` ${t("graph.conceptsOmitted", { n: String(conceptOmitted) })}`}
+          </span>
+        )}
         {/* Why the dots differ in size — otherwise it reads as decoration. */}
         <span className="flex items-center gap-1">
           <span className="h-1 w-1 rounded-full bg-magma-muted" />
           <span className="h-2 w-2 rounded-full bg-magma-muted" />
           <span className="mr-0.5 h-3 w-3 rounded-full bg-magma-muted" />
-          {t("graph.legendSize")}
+          {t(mode === "concepts" ? "graph.legendSizeTerms" : "graph.legendSize")}
         </span>
       </div>
     </div>
