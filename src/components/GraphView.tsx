@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { conceptGraph, type ConceptNode, type Graph } from "../lib/api";
-import { conceptGraphToGraph } from "../lib/conceptView";
+import { conceptGraphToGraph, noteLabel } from "../lib/conceptView";
 import { useI18n } from "../lib/i18n";
 
 interface GraphViewProps {
@@ -896,6 +896,11 @@ export default function GraphView({
             </button>
           </div>
           <div className="mt-2 flex max-h-64 flex-col gap-0.5 overflow-auto border-t border-black/5 pt-2 dark:border-white/10">
+            {picked.notes.length === 0 && (
+              <p className="px-1.5 py-1 text-sm text-magma-muted">
+                {t("graph.conceptNoNotes")}
+              </p>
+            )}
             {picked.notes.map((p) => (
               <button
                 key={p}
@@ -903,7 +908,7 @@ export default function GraphView({
                 className="truncate rounded px-1.5 py-1 text-left text-sm text-magma-ink transition hover:bg-black/5 dark:hover:bg-white/10"
                 title={p}
               >
-                {p.replace(/\.md$/, "").split("/").pop() || p}
+                {noteLabel(p)}
               </button>
             ))}
           </div>

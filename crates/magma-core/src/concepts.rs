@@ -424,6 +424,13 @@ pub struct ConceptGraph {
     /// rather than dropped quietly, so a trimmed graph never passes for a
     /// complete one.
     pub omitted: usize,
+    /// A name for each cluster, by index: its heaviest term.
+    ///
+    /// "Thema 1" through "Thema 7" is a legend that tells you nothing. The
+    /// biggest word in a group is a rough name for it, and rough beats
+    /// numbered — you can see at a glance that one corner of the map is Code
+    /// and another is Marketing without clicking anything.
+    pub cluster_names: Vec<String>,
 }
 
 const NOTE_SAMPLE: usize = 25;
@@ -606,10 +613,21 @@ pub fn concept_graph(
             .then_with(|| a.target.cmp(&b.target))
     });
 
+    // Name each cluster after its heaviest term. `nodes` is already sorted by
+    // weight, so the first hit per cluster is that cluster's biggest word.
+    let cluster_count = nodes.iter().map(|n| n.cluster + 1).max().unwrap_or(0);
+    let mut cluster_names = vec![String::new(); cluster_count];
+    for node in &nodes {
+        if cluster_names[node.cluster].is_empty() {
+            cluster_names[node.cluster] = node.label.clone();
+        }
+    }
+
     Ok(ConceptGraph {
         nodes,
         edges,
         omitted,
+        cluster_names,
     })
 }
 
@@ -1213,6 +1231,63 @@ mod tests {
             clusters.len(),
             g.nodes
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn every_topic_is_named_after_its_biggest_term() {
+        // "Thema 1" through "Thema 7" is a legend that says nothing. A group's
+        // heaviest word names it well enough to read the map without clicking.
+        let dir = tmp_vault("names");
+        let groups = [
+            ["Hypothek", "Tilgung", "Grundbuch"],
+            ["Risotto", "Safran", "Parmesan"],
+            ["Kamera", "Blende", "Belichtung"],
+            ["Gitarre", "Saite", "Stimmung"],
+        ];
+        for (gi, group) in groups.iter().enumerate() {
+            for n in 0..5 {
+                let mut body = String::new();
+                // The first word of each group is written twice as often, so
+                // it is the one the group should be named after.
+                for _ in 0..4 {
+                    body.push_str(&format!(
+                        "{} {} {} {} ",
+                        group[0], group[0], group[1], group[2]
+                    ));
+                }
+                write(&dir, &format!("g{gi}n{n}.md"), &body);
+            }
+        }
+        let g = concept_graph(&dir, &[], ConceptOptions::default()).unwrap();
+
+        assert!(
+            !g.cluster_names.is_empty(),
+            "no topics at all: {:?}",
+            g.nodes
+        );
+        for (i, name) in g.cluster_names.iter().enumerate() {
+            assert!(!name.is_empty(), "topic {i} came back nameless");
+            // The name has to be a term actually in that cluster, not a label
+            // borrowed from somewhere else in the graph.
+            assert!(
+                g.nodes.iter().any(|n| n.cluster == i && &n.label == name),
+                "topic {i} is named {name:?}, which is not in it"
+            );
+        }
+        // And the name is the heaviest term, not just any member.
+        for (i, name) in g.cluster_names.iter().enumerate() {
+            let heaviest = g
+                .nodes
+                .iter()
+                .filter(|n| n.cluster == i)
+                .max_by_key(|n| n.weight)
+                .unwrap();
+            assert_eq!(
+                &heaviest.label, name,
+                "topic {i} is not named after its biggest term"
+            );
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

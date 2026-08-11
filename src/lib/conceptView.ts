@@ -45,23 +45,56 @@ function sizeTiers(weights: number[]): Map<number, number> {
 }
 
 /**
+ * How a note path is shown in the list a term opens.
+ *
+ * Splits on both separators because a Windows vault reports backslashes, and
+ * strips the extension case-insensitively. If anything about a path defeats
+ * all that, the raw path is shown rather than an empty row — a blank line is
+ * a bug that hides itself, and this list rendered blank once already.
+ */
+export function noteLabel(path: string): string {
+  const base = path.split(/[\\/]/).filter(Boolean).pop() ?? "";
+  return base.replace(/\.md$/i, "") || path;
+}
+
+/**
  * Map a concept graph onto the note-graph shape the renderer consumes.
  *
- * `clusterName` is supplied by the caller so the legend can be translated —
- * the cluster labels are read by a person, not by code.
+ * `fallbackName` supplies a translated "Topic N" for the rare cluster whose
+ * own terms give no usable name.
  */
 export function conceptGraphToGraph(
   concepts: ConceptGraph,
-  clusterName: (index: number) => string
+  fallbackName: (index: number) => string
 ): ConceptView {
+  // A group named after its biggest word beats "Topic 4". Two groups can end
+  // up wanting the same word, so a repeat gets the number appended rather than
+  // two identical legend entries.
+  const used = new Map<string, number>();
+  const clusterName = (index: number): string => {
+    const raw = concepts.clusterNames?.[index]?.trim();
+    if (!raw) return fallbackName(index);
+    const seen = used.get(raw) ?? 0;
+    used.set(raw, seen + 1);
+    return seen === 0 ? raw : `${raw} (${seen + 1})`;
+  };
   const tiers = sizeTiers(concepts.nodes.map((n) => n.weight));
   const pathOf = new Map<string, string>();
   const details = new Map<string, ConceptNode>();
+  const names = new Map<number, string>();
+  const nameOf = (cluster: number): string => {
+    let name = names.get(cluster);
+    if (name === undefined) {
+      name = clusterName(cluster);
+      names.set(cluster, name);
+    }
+    return name;
+  };
 
   const nodes: GraphNode[] = concepts.nodes.map((node, i) => {
     // The renderer groups by the text before the last slash, so the cluster
     // name there earns colours and a legend entry with no renderer change.
-    const path = `${clusterName(node.cluster)}/${node.id}`;
+    const path = `${nameOf(node.cluster)}/${node.id}`;
     pathOf.set(node.id, path);
     details.set(path, node);
     return {

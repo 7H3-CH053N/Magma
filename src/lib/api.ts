@@ -456,6 +456,8 @@ export interface ConceptGraph {
   edges: ConceptEdge[];
   /** Terms frequent enough to qualify that did not fit the node cap. */
   omitted: number;
+  /** One name per cluster, by index: the heaviest term in it. */
+  clusterNames: string[];
 }
 
 /**
