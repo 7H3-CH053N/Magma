@@ -204,6 +204,14 @@ webserver and edit it from any machine. Magma syncs it into a local cache and
 pushes your edits back on save. HTTPS is required; the password is kept only for
 the session (OS-keychain storage is a planned follow-up).
 
+The vault is listed one folder at a time. WebDAV can return a whole tree in a
+single request, but hardly any server allows it: Apache's `mod_dav` answers 403
+unless `DavDepthInfinity` is switched on, and sabre/dav — which Nextcloud and
+ownCloud are built on — serves the request as if only one level had been asked
+for. The second is the reason for walking rather than asking once: it looks like
+a normal answer, so a vault would sync its top-level notes and silently leave
+every subfolder behind.
+
 ---
 
 ## Build from source

@@ -229,6 +229,14 @@ Magma synchronisiert ihn in einen lokalen Cache und schickt deine Änderungen
 beim Speichern zurück. HTTPS ist Pflicht; das Passwort bleibt nur für die
 Sitzung gespeichert (Ablage im Schlüsselbund ist geplant).
 
+Der Vault wird Ordner für Ordner aufgelistet. WebDAV kann einen ganzen Baum in
+einer einzigen Anfrage liefern, aber kaum ein Server lässt das zu: Apaches
+`mod_dav` antwortet mit 403, solange `DavDepthInfinity` aus ist, und sabre/dav —
+die Grundlage von Nextcloud und ownCloud — beantwortet die Anfrage so, als wäre
+nur eine Ebene verlangt worden. Der zweite Fall ist der Grund fürs Ablaufen: Er
+sieht aus wie eine normale Antwort, der Vault würde also seine obersten Notizen
+synchronisieren und jeden Unterordner still weglassen.
+
 ---
 
 ## Aus dem Quellcode bauen
