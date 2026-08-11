@@ -900,10 +900,10 @@ export default function GraphView({
               <button
                 key={p}
                 onClick={() => onSelect(p)}
-                className="truncate rounded px-1.5 py-1 text-left text-sm transition hover:bg-black/5 dark:hover:bg-white/10"
+                className="truncate rounded px-1.5 py-1 text-left text-sm text-magma-ink transition hover:bg-black/5 dark:hover:bg-white/10"
                 title={p}
               >
-                {p.replace(/\.md$/, "").split("/").pop()}
+                {p.replace(/\.md$/, "").split("/").pop() || p}
               </button>
             ))}
           </div>

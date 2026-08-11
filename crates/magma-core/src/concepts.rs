@@ -252,7 +252,7 @@ fn is_filler(lower: &str) -> bool {
 /// reads like a bug. YAML frontmatter and fenced code are skipped: `author: ai`
 /// is bookkeeping, and a code sample would contribute its language's keywords
 /// as if they were your ideas.
-fn terms(text: &str) -> Vec<(String, String)> {
+fn terms(text: &str) -> Vec<Term> {
     let mut out = Vec::new();
     let mut in_frontmatter = text.starts_with("---");
     let mut in_code = false;
@@ -275,23 +275,58 @@ fn terms(text: &str) -> Vec<(String, String)> {
         // segment of somebody else's site. None of that is what the note is
         // about, and all of it is frequent enough to survive any filter.
         let line = strip_urls(line);
-        for raw in line.split(|c: char| !c.is_alphanumeric() && c != '_') {
-            let surface = raw.trim();
-            if surface.chars().count() < 3 {
-                continue;
+        // Position matters now, so the line is walked rather than split: a word
+        // is only evidence of being a noun if it is capitalised *mid*-sentence.
+        let mut opener = true;
+        let mut word = String::new();
+        let chars: Vec<char> = line.chars().collect();
+        let mut i = 0;
+        while i <= chars.len() {
+            let c = if i < chars.len() { chars[i] } else { ' ' };
+            if c.is_alphanumeric() || c == '_' {
+                word.push(c);
+            } else {
+                if !word.is_empty() {
+                    push_term(&mut out, &word, !opener);
+                    opener = false;
+                    word.clear();
+                }
+                // A new sentence starts after terminal punctuation, and every
+                // list bullet or heading marker opens one too.
+                if ".!?:;•*#>|-–—".contains(c) {
+                    opener = true;
+                }
             }
-            // A bare number is a date or a page count, never a subject.
-            if surface.chars().all(|c| c.is_numeric()) {
-                continue;
-            }
-            let lower = surface.nfc().collect::<String>().to_lowercase();
-            if is_filler(&lower) {
-                continue;
-            }
-            out.push((surface.to_string(), fold(surface)));
+            i += 1;
         }
     }
     out
+}
+
+/// One occurrence of a word, with the two things the graph needs to know
+/// about it beyond the word itself.
+struct Term {
+    surface: String,
+    folded: String,
+    /// True when the word did not open a sentence. Only these occurrences say
+    /// anything about capitalisation: at the start of a sentence, every word
+    /// is capitalised and the signal is worthless.
+    mid_sentence: bool,
+}
+
+fn push_term(out: &mut Vec<Term>, surface: &str, mid_sentence: bool) {
+    if surface.chars().count() < 3 || surface.chars().all(|c| c.is_numeric()) {
+        return;
+    }
+    let lower = surface.nfc().collect::<String>().to_lowercase();
+    if is_filler(&lower) {
+        return;
+    }
+    out.push(Term {
+        surface: surface.to_string(),
+        folded: fold(surface),
+        mid_sentence,
+    });
 }
 
 /// How the graph is cut down to something a person can look at.
@@ -316,6 +351,19 @@ pub struct ConceptOptions {
     /// a signature no subject matter has — it turns up in nearly every note.
     /// Measuring that needs no dictionary and works in any language.
     pub max_doc_ratio: f32,
+    /// Require a term to read like a noun before it counts as subject matter.
+    ///
+    /// German capitalises its nouns, and subject matter is overwhelmingly
+    /// nouns — which is why a real vault filled up with "hätte", "willst",
+    /// "brauchst" and "passiert" while every actual topic in the same picture
+    /// (Infrastruktur, Vertrauen, Entscheidungen, Plattform) was capitalised.
+    /// Frequency filters cannot separate those; orthography can.
+    ///
+    /// Only occurrences away from the start of a sentence count, since there
+    /// everything is capitalised. And the rule disables itself on a vault that
+    /// does not work this way — English capitalises almost nothing, so too few
+    /// terms qualifying is read as "wrong language" rather than "empty graph".
+    pub require_noun_case: bool,
     /// Strongest edges kept per term.
     ///
     /// Without this the graph is a hairball: everything frequent co-occurs
@@ -334,6 +382,7 @@ impl Default for ConceptOptions {
             window: 4,
             min_edge: 2,
             max_doc_ratio: 0.35,
+            require_noun_case: true,
             max_edges_per_node: 6,
         }
     }
@@ -399,6 +448,9 @@ pub fn concept_graph(
     let mut surfaces: Vec<HashMap<String, usize>> = Vec::new();
     let mut in_notes: Vec<Vec<String>> = Vec::new();
     let mut streams: Vec<Vec<u32>> = Vec::new();
+    // Capitalisation evidence, counted only away from sentence starts.
+    let mut mid_total: Vec<usize> = Vec::new();
+    let mut mid_caps: Vec<usize> = Vec::new();
 
     for meta in vault::list_notes(vault)? {
         let lower = meta.path.to_lowercase();
@@ -413,20 +465,33 @@ pub fn concept_graph(
         };
         let mut stream = Vec::new();
         let mut seen_here: Vec<u32> = Vec::new();
-        for (surface, folded) in terms(&note.content) {
-            let id = match ids.get(&folded) {
+        for term in terms(&note.content) {
+            let id = match ids.get(&term.folded) {
                 Some(id) => *id,
                 None => {
                     let id = counts.len() as u32;
-                    ids.insert(folded.clone(), id);
+                    ids.insert(term.folded.clone(), id);
                     counts.push(0);
                     surfaces.push(HashMap::new());
                     in_notes.push(Vec::new());
+                    mid_total.push(0);
+                    mid_caps.push(0);
                     id
                 }
             };
             counts[id as usize] += 1;
-            *surfaces[id as usize].entry(surface).or_insert(0) += 1;
+            if term.mid_sentence {
+                mid_total[id as usize] += 1;
+                if term
+                    .surface
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_uppercase())
+                {
+                    mid_caps[id as usize] += 1;
+                }
+            }
+            *surfaces[id as usize].entry(term.surface).or_insert(0) += 1;
             if !seen_here.contains(&id) {
                 seen_here.push(id);
                 in_notes[id as usize].push(meta.path.clone());
@@ -444,12 +509,25 @@ pub fn concept_graph(
     // without anyone having to list them, and does it in whatever language the
     // notes happen to be written in.
     let doc_ceiling = ((streams.len() as f32) * opts.max_doc_ratio).ceil() as usize;
-    let mut ranked: Vec<u32> = (0..counts.len() as u32)
+    let candidates: Vec<u32> = (0..counts.len() as u32)
         .filter(|id| {
             let i = *id as usize;
             counts[i] >= opts.min_count && (streams.len() < 8 || in_notes[i].len() <= doc_ceiling)
         })
         .collect();
+    // Reads like a noun: capitalised in most of the places it appears away
+    // from a sentence start. A term never seen mid-sentence has cast no vote
+    // and is kept rather than punished for it.
+    let noun_like = |id: &u32| -> bool {
+        let i = *id as usize;
+        mid_total[i] == 0 || mid_caps[i] * 2 >= mid_total[i]
+    };
+    let nouns: Vec<u32> = candidates.iter().copied().filter(noun_like).collect();
+    // A vault that does not capitalise its nouns — English, mostly — would be
+    // emptied by the rule, so it switches itself off instead of switching the
+    // graph off.
+    let use_case = opts.require_noun_case && nouns.len() * 4 >= candidates.len();
+    let mut ranked: Vec<u32> = if use_case { nouns } else { candidates };
     ranked.sort_by(|a, b| {
         counts[*b as usize]
             .cmp(&counts[*a as usize])
@@ -489,7 +567,7 @@ pub fn concept_graph(
         adjacency[*a].push((*b, *w));
         adjacency[*b].push((*a, *w));
     }
-    let clusters = label_propagation(&adjacency);
+    let clusters = louvain(&adjacency);
 
     let mut nodes: Vec<ConceptNode> = ranked
         .iter()
@@ -576,50 +654,142 @@ fn sparsify(
     pairs.retain(|key, _| keep.contains(key));
 }
 
-/// Group nodes by label propagation: everyone repeatedly adopts whichever
-/// label carries the most edge weight among their neighbours.
+/// Group nodes into communities by Louvain modularity optimisation.
 ///
-/// Chosen over Louvain because it is short enough to read, needs no tuning
-/// parameter, and the difference does not show at this graph size. It is
-/// normally randomised; here the order is fixed and ties break on the lower
-/// label, so the same vault always draws the same clusters — a graph that
-/// re-colours itself on every open would look broken.
-fn label_propagation(adjacency: &[Vec<(usize, usize)>]) -> Vec<usize> {
-    let mut labels: Vec<usize> = (0..adjacency.len()).collect();
-    for _ in 0..20 {
-        let mut changed = false;
-        for node in 0..adjacency.len() {
-            if adjacency[node].is_empty() {
-                continue;
-            }
-            let mut weight_by_label: HashMap<usize, usize> = HashMap::new();
-            for (other, w) in &adjacency[node] {
-                *weight_by_label.entry(labels[*other]).or_insert(0) += w;
-            }
-            let best = weight_by_label
-                .iter()
-                .max_by(|a, b| a.1.cmp(b.1).then_with(|| b.0.cmp(a.0)))
-                .map(|(l, _)| *l)
-                .unwrap_or(labels[node]);
-            if best != labels[node] {
-                labels[node] = best;
-                changed = true;
-            }
-        }
-        if !changed {
+/// This replaced label propagation, which was the wrong tool and was chosen on
+/// an assumption that a real vault disproved: on a connected graph — which a
+/// vault's vocabulary always is — propagation converges on a single label and
+/// reports one topic for everything. Modularity does not have that failure
+/// mode, because it asks whether a grouping beats chance rather than who
+/// shouts loudest.
+///
+/// Deterministic on purpose: nodes are visited in index order and ties keep
+/// the current community, so the same vault always draws the same colours. A
+/// graph that re-groups itself on every open reads as a bug.
+fn louvain(adjacency: &[Vec<(usize, usize)>]) -> Vec<usize> {
+    let n = adjacency.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    // `node_of` maps original nodes to the current level's super-nodes, so the
+    // answer can be expanded back down once the levels stop improving.
+    let mut node_of: Vec<usize> = (0..n).collect();
+    let mut level: Vec<Vec<(usize, f64)>> = adjacency
+        .iter()
+        .map(|es| es.iter().map(|(j, w)| (*j, *w as f64)).collect())
+        .collect();
+    let mut self_loops: Vec<f64> = vec![0.0; n];
+
+    loop {
+        let size = level.len();
+        let two_m: f64 = level
+            .iter()
+            .flat_map(|es| es.iter().map(|(_, w)| *w))
+            .sum::<f64>()
+            + self_loops.iter().sum::<f64>() * 2.0;
+        if two_m <= 0.0 {
             break;
         }
+        let degree: Vec<f64> = (0..size)
+            .map(|i| level[i].iter().map(|(_, w)| *w).sum::<f64>() + 2.0 * self_loops[i])
+            .collect();
+
+        let mut community: Vec<usize> = (0..size).collect();
+        let mut tot: Vec<f64> = degree.clone();
+        let mut moved = false;
+
+        for _ in 0..20 {
+            let mut changed = false;
+            for i in 0..size {
+                let from = community[i];
+                tot[from] -= degree[i];
+                // Weight from `i` into each neighbouring community.
+                let mut into: HashMap<usize, f64> = HashMap::new();
+                for (j, w) in &level[i] {
+                    if *j != i {
+                        *into.entry(community[*j]).or_insert(0.0) += *w;
+                    }
+                }
+                let gain = |c: usize| -> f64 {
+                    into.get(&c).copied().unwrap_or(0.0) - tot[c] * degree[i] / two_m
+                };
+                let mut best = from;
+                let mut best_gain = gain(from);
+                let mut targets: Vec<usize> = into.keys().copied().collect();
+                targets.sort_unstable();
+                for c in targets {
+                    let g = gain(c);
+                    if g > best_gain + 1e-12 {
+                        best_gain = g;
+                        best = c;
+                    }
+                }
+                tot[best] += degree[i];
+                if best != from {
+                    community[i] = best;
+                    changed = true;
+                    moved = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        if !moved {
+            break;
+        }
+
+        // Renumber the communities found at this level, then fold the graph so
+        // each becomes one node and the next level can group *those*.
+        let mut slot: HashMap<usize, usize> = HashMap::new();
+        for c in &community {
+            let next = slot.len();
+            slot.entry(*c).or_insert(next);
+        }
+        let compact: Vec<usize> = community.iter().map(|c| slot[c]).collect();
+        for owner in node_of.iter_mut() {
+            *owner = compact[*owner];
+        }
+
+        let groups = slot.len();
+        let mut folded: Vec<HashMap<usize, f64>> = vec![HashMap::new(); groups];
+        let mut folded_loops = vec![0.0; groups];
+        for i in 0..size {
+            folded_loops[compact[i]] += self_loops[i];
+            for (j, w) in &level[i] {
+                let (a, b) = (compact[i], compact[*j]);
+                if a == b {
+                    // Each internal edge is seen from both ends.
+                    folded_loops[a] += w / 2.0;
+                } else {
+                    *folded[a].entry(b).or_insert(0.0) += *w;
+                }
+            }
+        }
+        if groups == size {
+            break; // nothing merged; another level would repeat this one
+        }
+        level = folded
+            .into_iter()
+            .map(|m| {
+                let mut es: Vec<(usize, f64)> = m.into_iter().collect();
+                es.sort_unstable_by_key(|(j, _)| *j);
+                es
+            })
+            .collect();
+        self_loops = folded_loops;
     }
-    // Renumber so the biggest cluster is 0. Colours then stay put as the vault
-    // grows, instead of every cluster shifting hue because one term was added.
+
+    // Biggest community first, so colours stay put as a vault grows instead of
+    // every group shifting hue because one term was added.
     let mut sizes: HashMap<usize, usize> = HashMap::new();
-    for l in &labels {
-        *sizes.entry(*l).or_insert(0) += 1;
+    for c in &node_of {
+        *sizes.entry(*c).or_insert(0) += 1;
     }
     let mut order: Vec<usize> = sizes.keys().copied().collect();
     order.sort_by(|a, b| sizes[b].cmp(&sizes[a]).then_with(|| a.cmp(b)));
-    let slot: HashMap<usize, usize> = order.iter().enumerate().map(|(i, l)| (*l, i)).collect();
-    labels.iter().map(|l| slot[l]).collect()
+    let slot: HashMap<usize, usize> = order.iter().enumerate().map(|(i, c)| (*c, i)).collect();
+    node_of.iter().map(|c| slot[c]).collect()
 }
 
 #[cfg(test)]
@@ -666,7 +836,7 @@ mod tests {
     #[test]
     fn frontmatter_and_code_are_not_subject_matter() {
         let text = "---\nauthor: ai\ntags: [privat]\n---\n\nDie Zinsberechnung ist wichtig.\n\n```rust\nfn zinsberechnung() { let unrelated = 1; }\n```\n";
-        let found: Vec<String> = terms(text).into_iter().map(|(s, _)| s).collect();
+        let found: Vec<String> = terms(text).into_iter().map(|t| t.surface).collect();
         assert!(found.contains(&"Zinsberechnung".to_string()));
         assert!(!found.contains(&"author".to_string()), "frontmatter leaked");
         assert!(!found.contains(&"unrelated".to_string()), "code leaked");
@@ -678,7 +848,7 @@ mod tests {
     fn filler_verbs_do_not_become_hubs() {
         let found: Vec<String> = terms("Man kann das machen und es gibt immer eine Zinsberechnung")
             .into_iter()
-            .map(|(_, f)| f)
+            .map(|t| t.folded)
             .collect();
         assert_eq!(found, vec!["zinsberechnung"]);
     }
@@ -908,6 +1078,140 @@ mod tests {
             clusters.len() >= 3,
             "ten subjects collapsed into {} cluster(s)",
             clusters.len()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn german_verbs_lose_to_german_nouns() {
+        // What a real vault filled up with: "hätte", "willst", "brauchst",
+        // "passiert" — under the everywhere-threshold, on no stopword list,
+        // and useless. Every actual topic in the same picture was capitalised,
+        // because German capitalises its nouns. That is the signal.
+        //
+        // The verbs sit in four of twenty notes — a fifth of the vault, well
+        // under the everywhere-threshold — and the subjects in four each. So
+        // frequency cannot separate them here. Only case can, which is what
+        // makes this a test of the rule rather than of the filter above it.
+        let dir = tmp_vault("nouncase");
+        let groups = [
+            ["Infrastruktur", "Plattform", "Vertrauen"],
+            ["Hypothek", "Tilgung", "Grundbuch"],
+            ["Risotto", "Safran", "Parmesan"],
+            ["Kamera", "Blende", "Belichtung"],
+            ["Gitarre", "Saite", "Stimmung"],
+        ];
+        for (gi, group) in groups.iter().enumerate() {
+            for n in 0..4 {
+                let mut body = String::new();
+                for _ in 0..4 {
+                    body.push_str(&format!("{} {} {} ", group[0], group[1], group[2]));
+                }
+                // Chatter, mid-sentence and lowercase, in under a third of the
+                // vault — exactly the case the frequency filter cannot catch.
+                if gi < 1 {
+                    body.push_str(
+                        "Man hätte das anders bauen können, wenn du willst; du \
+                         brauchst es aber. Was passiert dann, hätte, willst, \
+                         brauchst, passiert.",
+                    );
+                }
+                write(&dir, &format!("g{gi}n{n}.md"), &body);
+            }
+        }
+        let g = concept_graph(&dir, &[], ConceptOptions::default()).unwrap();
+        let labels: Vec<&str> = g.nodes.iter().map(|n| n.label.as_str()).collect();
+        assert!(!labels.is_empty(), "graph came back empty");
+
+        for verb in ["hätte", "willst", "brauchst", "passiert"] {
+            assert!(
+                !labels.iter().any(|l| l.eq_ignore_ascii_case(verb)),
+                "{verb:?} is a verb, not a subject: {labels:?}"
+            );
+        }
+        for noun in ["Infrastruktur", "Plattform", "Vertrauen"] {
+            assert!(labels.contains(&noun), "{noun} is the subject: {labels:?}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_english_vault_is_not_emptied_by_the_noun_rule() {
+        // English capitalises almost nothing, so the rule has to notice it does
+        // not apply here rather than hand back an empty graph.
+        let dir = tmp_vault("english");
+        let groups = [
+            ["mortgage", "repayment", "schedule"],
+            ["risotto", "saffron", "parmesan"],
+            ["camera", "aperture", "exposure"],
+            ["guitar", "strings", "tuning"],
+            ["bicycle", "chain", "brakes"],
+        ];
+        for (gi, group) in groups.iter().enumerate() {
+            for n in 0..4 {
+                let mut body = String::new();
+                for _ in 0..4 {
+                    body.push_str(&format!("{} {} {} ", group[0], group[1], group[2]));
+                }
+                write(&dir, &format!("g{gi}n{n}.md"), &body);
+            }
+        }
+        let g = concept_graph(&dir, &[], ConceptOptions::default()).unwrap();
+        let labels: Vec<String> = g.nodes.iter().map(|n| n.label.to_lowercase()).collect();
+        for noun in ["mortgage", "repayment", "schedule"] {
+            assert!(
+                labels.iter().any(|l| l.starts_with(&noun[..5])),
+                "{noun} vanished — the noun-case rule did not switch itself off: {labels:?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_connected_vault_is_still_split_into_topics() {
+        // A guard that topics come back separate at all.
+        //
+        // Stated plainly, because it would be easy to read more into it: this
+        // does *not* prove Louvain beats label propagation. Propagation passes
+        // it too. The collapse that motivated the switch needs the hundreds of
+        // heavily cross-linked terms a real vault has, and every attempt to
+        // build that here ran into the everywhere-filter instead — bridge the
+        // groups hard enough for propagation to drown and every term is in
+        // every note, so nothing survives to cluster.
+        //
+        // The evidence for Louvain is a real 600-note vault whose legend read
+        // "Thema 1" and nothing else, twice, plus propagation's known
+        // behaviour on connected graphs. This test only holds the floor.
+        let dir = tmp_vault("connected");
+        let groups = [
+            ["Hypothek", "Tilgung", "Grundbuch"],
+            ["Risotto", "Safran", "Parmesan"],
+            ["Umsatzsteuer", "Voranmeldung", "Finanzamt"],
+            ["Fahrrad", "Kette", "Bremse"],
+            ["Gitarre", "Saite", "Stimmung"],
+            ["Kamera", "Blende", "Belichtung"],
+        ];
+        for (gi, group) in groups.iter().enumerate() {
+            for n in 0..6 {
+                let mut body = String::new();
+                for _ in 0..4 {
+                    body.push_str(&format!("{} {} {} ", group[0], group[1], group[2]));
+                }
+                // The bridge that makes the whole graph one component.
+                let next = &groups[(gi + 1) % groups.len()];
+                body.push_str(&format!("{} ", next[n % next.len()]));
+                write(&dir, &format!("g{gi}n{n}.md"), &body);
+            }
+        }
+        let g = concept_graph(&dir, &[], ConceptOptions::default()).unwrap();
+        let clusters: std::collections::HashSet<usize> =
+            g.nodes.iter().map(|n| n.cluster).collect();
+        assert!(
+            clusters.len() >= 4,
+            "six subjects came back as {} topic(s) — the legend would read \
+             \"Thema 1\" and nothing else: {:?}",
+            clusters.len(),
+            g.nodes
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
