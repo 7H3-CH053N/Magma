@@ -965,7 +965,7 @@ export default function GraphView({
           <span className="h-1 w-1 rounded-full bg-magma-muted" />
           <span className="h-2 w-2 rounded-full bg-magma-muted" />
           <span className="mr-0.5 h-3 w-3 rounded-full bg-magma-muted" />
-          {t("graph.legendSize")}
+          {t(mode === "concepts" ? "graph.legendSizeTerms" : "graph.legendSize")}
         </span>
       </div>
     </div>
