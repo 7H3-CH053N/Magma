@@ -241,13 +241,29 @@ The installer lands in `src-tauri/target/release/bundle/`.
 ### Publishing updates
 
 The installed app checks
-`https://github.com/7H3-CH053N/Magma/releases/latest/download/latest.json`.
-To publish an update, bump the app version, create a `vX.Y.Z` release through
-the GitHub workflow, and set `TAURI_SIGNING_PRIVATE_KEY` in GitHub Actions to
-the contents of the Magma updater private key. If the key has no password, set
-`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` to an empty secret. The matching public key
-is already in `src-tauri/tauri.conf.json`; do not rotate it unless you also
-accept that already-installed apps cannot verify future updates.
+`https://github.com/7H3-CH053N/Magma/releases/latest/download/latest.json` and
+only installs what the updater key signed. That key is **not** the code-signing
+certificate — Tauri's updater uses its own minisign pair, which costs nothing
+and you generate yourself.
+
+**Before the first signed release**, the repository owner has to create that
+pair and replace the placeholder:
+
+```bash
+npm run tauri signer generate -- -w ~/.tauri/magma-updater.key
+```
+
+Put the public half into `pubkey` in `src-tauri/tauri.conf.json` and the private
+half into the `TAURI_SIGNING_PRIVATE_KEY` secret in GitHub Actions; if the key
+has no password, set `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` to an empty secret.
+The `pubkey` in the file right now came in with the contributed patch and is a
+placeholder: whoever holds its private half could sign an update that every
+installed Magma would accept. Replace it before any release goes out — once
+updates are public the key can no longer be rotated without cutting off apps
+that are already installed.
+
+Publishing an update is then: bump the app version and create a `vX.Y.Z` release
+through the GitHub workflow.
 
 For development:
 
@@ -278,8 +294,10 @@ server always act on the same model of your notes.
 ## Status
 
 Milestones **M0–M4** and **M7** are done; **M5** (packaging) ships unsigned
-installers, with code signing and auto-update still open; **M6** (remote vault)
-has a working first version. The roadmap lives in [`docs/PLAN.md`](docs/PLAN.md).
+installers, with code signing still open. Auto-update is built in but not live:
+it starts working once the repository owner generates the updater key described
+above and cuts a release with it. **M6** (remote vault) has a working first
+version. The roadmap lives in [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Thanks
 
