@@ -148,6 +148,8 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "graph.conceptsHint":
       "Terms that keep appearing near each other. This counts words, it does not read meaning.",
     "graph.conceptsOmitted": "{n} rarer terms left out.",
+    "graph.conceptNotes": "in {notes} notes · written {times} times",
+    "graph.conceptMore": "and {n} more.",
     "graph.openEditor": "Open in editor",
     "graph.createNote": "Create this note",
     "graph.previewMissing": "No note of this name exists yet — something links to it.",
@@ -393,6 +395,8 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "graph.conceptsHint":
       "Begriffe, die immer wieder nebeneinander auftauchen. Gezählt werden Wörter, gelesen wird keine Bedeutung.",
     "graph.conceptsOmitted": "{n} seltenere Begriffe weggelassen.",
+    "graph.conceptNotes": "in {notes} Notizen · {times}× geschrieben",
+    "graph.conceptMore": "und {n} weitere.",
     "graph.openEditor": "Im Editor öffnen",
     "graph.createNote": "Notiz anlegen",
     "graph.previewMissing": "Es gibt noch keine Notiz dieses Namens — etwas verlinkt darauf.",

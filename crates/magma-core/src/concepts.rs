@@ -224,6 +224,23 @@ pub fn fold(word: &str) -> String {
     flat
 }
 
+/// Blank out anything that looks like a URL or a bare domain.
+fn strip_urls(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    for chunk in line.split_whitespace() {
+        let lower = chunk.to_lowercase();
+        let is_url = lower.starts_with("http://")
+            || lower.starts_with("https://")
+            || lower.starts_with("www.")
+            || (lower.contains('/') && lower.contains('.') && !lower.starts_with('/'));
+        if !is_url {
+            out.push_str(chunk);
+        }
+        out.push(' ');
+    }
+    out
+}
+
 fn is_filler(lower: &str) -> bool {
     FILLER.contains(&lower) || crate::related::is_stopword(lower)
 }
@@ -254,6 +271,10 @@ fn terms(text: &str) -> Vec<(String, String)> {
         if in_code {
             continue;
         }
+        // A pasted link contributes "https", "www", "com" and every path
+        // segment of somebody else's site. None of that is what the note is
+        // about, and all of it is frequent enough to survive any filter.
+        let line = strip_urls(line);
         for raw in line.split(|c: char| !c.is_alphanumeric() && c != '_') {
             let surface = raw.trim();
             if surface.chars().count() < 3 {
@@ -286,6 +307,23 @@ pub struct ConceptOptions {
     /// Edges below this weight are dropped — one shared sentence is a
     /// coincidence.
     pub min_edge: usize,
+    /// Drop any term appearing in more than this share of notes.
+    ///
+    /// This is the load-bearing filter, and the reason the stopword lists
+    /// above stay short. A hand-written list of function words is a bucket
+    /// with no bottom: German alone will supply "willst", "hast", "täglich",
+    /// "ganz", "jemand" for as long as you keep adding to it. But grammar has
+    /// a signature no subject matter has — it turns up in nearly every note.
+    /// Measuring that needs no dictionary and works in any language.
+    pub max_doc_ratio: f32,
+    /// Strongest edges kept per term.
+    ///
+    /// Without this the graph is a hairball: everything frequent co-occurs
+    /// with everything else frequent, every node ends up connected to every
+    /// other, clustering collapses into one blob and the layout has thousands
+    /// of springs to solve per frame. Keeping each term's strongest few
+    /// connections leaves a graph with a shape.
+    pub max_edges_per_node: usize,
 }
 
 impl Default for ConceptOptions {
@@ -295,6 +333,8 @@ impl Default for ConceptOptions {
             min_count: 3,
             window: 4,
             min_edge: 2,
+            max_doc_ratio: 0.35,
+            max_edges_per_node: 6,
         }
     }
 }
@@ -399,8 +439,16 @@ pub fn concept_graph(
     // Keep the most frequent terms. Ties break on the stem so the same vault
     // always produces the same graph.
     let by_stem: HashMap<u32, &String> = ids.iter().map(|(k, v)| (*v, k)).collect();
+    // Grammar turns up nearly everywhere; subject matter does not. Dropping
+    // terms above a share of the vault removes "willst", "täglich" and "ganz"
+    // without anyone having to list them, and does it in whatever language the
+    // notes happen to be written in.
+    let doc_ceiling = ((streams.len() as f32) * opts.max_doc_ratio).ceil() as usize;
     let mut ranked: Vec<u32> = (0..counts.len() as u32)
-        .filter(|id| counts[*id as usize] >= opts.min_count)
+        .filter(|id| {
+            let i = *id as usize;
+            counts[i] >= opts.min_count && (streams.len() < 8 || in_notes[i].len() <= doc_ceiling)
+        })
         .collect();
     ranked.sort_by(|a, b| {
         counts[*b as usize]
@@ -434,6 +482,7 @@ pub fn concept_graph(
         }
     }
     pairs.retain(|_, w| *w >= opts.min_edge);
+    sparsify(&mut pairs, &ranked, &counts, opts.max_edges_per_node);
 
     let mut adjacency: Vec<Vec<(usize, usize)>> = vec![Vec::new(); ranked.len()];
     for ((a, b), w) in &pairs {
@@ -484,6 +533,47 @@ pub fn concept_graph(
         edges,
         omitted,
     })
+}
+
+/// Keep only each term's strongest connections.
+///
+/// Raw co-occurrence counts favour whatever is frequent: two common words
+/// share sentences often simply because both are everywhere. Ranking by
+/// `w / sqrt(count_a * count_b)` asks instead how much of each term's life is
+/// spent next to the other, which is what "these belong together" means.
+///
+/// An edge survives if *either* end considers it one of its strongest. That
+/// keeps a small specific term attached to the big one it hangs off, instead
+/// of stranding it because the big term has more interesting company.
+fn sparsify(
+    pairs: &mut HashMap<(usize, usize), usize>,
+    ranked: &[u32],
+    counts: &[usize],
+    per_node: usize,
+) {
+    let strength = |a: usize, b: usize, w: usize| -> f64 {
+        let ca = counts[ranked[a] as usize] as f64;
+        let cb = counts[ranked[b] as usize] as f64;
+        w as f64 / (ca * cb).sqrt().max(1.0)
+    };
+    let mut best: Vec<Vec<(f64, (usize, usize))>> = vec![Vec::new(); ranked.len()];
+    for ((a, b), w) in pairs.iter() {
+        let s = strength(*a, *b, *w);
+        best[*a].push((s, (*a, *b)));
+        best[*b].push((s, (*a, *b)));
+    }
+    let mut keep: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    for edges in best.iter_mut() {
+        edges.sort_by(|x, y| {
+            y.0.partial_cmp(&x.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| x.1.cmp(&y.1))
+        });
+        for (_, key) in edges.iter().take(per_node) {
+            keep.insert(*key);
+        }
+    }
+    pairs.retain(|key, _| keep.contains(key));
 }
 
 /// Group nodes by label propagation: everyone repeatedly adopts whichever
@@ -696,6 +786,129 @@ mod tests {
         let first = concept_graph(&dir, &[], ConceptOptions::default()).unwrap();
         let again = concept_graph(&dir, &[], ConceptOptions::default()).unwrap();
         assert_eq!(first, again);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn words_that_are_everywhere_are_grammar_and_get_dropped() {
+        // The failure a real vault showed: the graph filled up with "willst",
+        // "täglich", "ganz" and "jemand" — none of them on any stopword list,
+        // all of them in nearly every note. No list will ever be complete, so
+        // the share of notes a word appears in has to do the work.
+        let dir = tmp_vault("everywhere");
+        let subjects = ["Hypothek", "Risotto", "Umsatzsteuer", "Fahrrad", "Klavier"];
+        for (i, subject) in subjects.iter().enumerate() {
+            for n in 0..4 {
+                write(
+                    &dir,
+                    &format!("note{i}{n}.md"),
+                    // The chatter appears in every note; the subject in a fifth.
+                    &format!(
+                        "täglich willst ganz jemand {subject} {subject} {subject} täglich willst ganz jemand"
+                    ),
+                );
+            }
+        }
+        let g = concept_graph(&dir, &[], ConceptOptions::default()).unwrap();
+        let labels: Vec<&str> = g.nodes.iter().map(|n| n.label.as_str()).collect();
+
+        for chatter in ["täglich", "willst", "ganz", "jemand"] {
+            assert!(
+                !labels.iter().any(|l| l.eq_ignore_ascii_case(chatter)),
+                "{chatter:?} is in every note — that makes it grammar, not a subject: {labels:?}"
+            );
+        }
+        assert!(labels.contains(&"Hypothek"), "{labels:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pasted_links_do_not_become_subjects() {
+        // "www", "com" and "uploads" showed up as concepts in a real vault.
+        let dir = tmp_vault("urls");
+        write(
+            &dir,
+            "a.md",
+            "Zur Hypothek siehe https://www.example.com/wp-content/uploads/zinsen.pdf und \
+             www.beispiel.de/rechner — die Hypothek bleibt das Thema. Hypothek.",
+        );
+        let g = concept_graph(
+            &dir,
+            &[],
+            ConceptOptions {
+                min_count: 1,
+                ..ConceptOptions::default()
+            },
+        )
+        .unwrap();
+        let labels: Vec<&str> = g.nodes.iter().map(|n| n.label.as_str()).collect();
+        for junk in ["www", "com", "uploads", "https", "example"] {
+            assert!(
+                !labels.iter().any(|l| l.eq_ignore_ascii_case(junk)),
+                "{junk:?} came out of a URL, not out of a thought: {labels:?}"
+            );
+        }
+        assert!(labels.contains(&"Hypothek"), "{labels:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_bleeding_vault_does_not_become_a_hairball() {
+        // The other half of what a real vault showed: with nothing pruned,
+        // every frequent term ends up wired to every other, clustering
+        // collapses into one blob, and the layout has thousands of springs to
+        // solve per frame — which is what "it stutters" meant.
+        //
+        // What produces it is bleed: notes mostly about one thing that mention
+        // the others in passing. Ten subjects here rather than four, so no
+        // single one is in enough notes to look like grammar.
+        let dir = tmp_vault("hairball");
+        let groups = [
+            ["Hypothek", "Tilgung", "Grundbuch"],
+            ["Risotto", "Safran", "Parmesan"],
+            ["Umsatzsteuer", "Voranmeldung", "Finanzamt"],
+            ["Fahrrad", "Kette", "Bremse"],
+            ["Gitarre", "Saite", "Stimmung"],
+            ["Garten", "Beet", "Kompost"],
+            ["Kamera", "Blende", "Belichtung"],
+            ["Reise", "Fahrplan", "Gepäck"],
+            ["Vertrag", "Kündigung", "Frist"],
+            ["Rechner", "Speicher", "Kühlung"],
+        ];
+        for (gi, group) in groups.iter().enumerate() {
+            for n in 0..6 {
+                let mut body = String::new();
+                for _ in 0..4 {
+                    body.push_str(&format!("{} {} {} ", group[0], group[1], group[2]));
+                }
+                // A passing mention of two neighbours — enough to connect
+                // everything to everything if nothing prunes it.
+                for step in 1..=2 {
+                    let other = &groups[(gi + step) % groups.len()];
+                    body.push_str(&format!("{} ", other[n % other.len()]));
+                }
+                write(&dir, &format!("g{gi}n{n}.md"), &body);
+            }
+        }
+        let g = concept_graph(&dir, &[], ConceptOptions::default()).unwrap();
+
+        assert!(
+            g.nodes.len() >= 20,
+            "subjects were filtered away: {:?}",
+            g.nodes
+        );
+        let per_node = g.edges.len() as f32 / g.nodes.len() as f32;
+        assert!(
+            per_node <= 6.0,
+            "{per_node:.1} edges per node is a hairball, not a picture"
+        );
+        let clusters: std::collections::HashSet<usize> =
+            g.nodes.iter().map(|n| n.cluster).collect();
+        assert!(
+            clusters.len() >= 3,
+            "ten subjects collapsed into {} cluster(s)",
+            clusters.len()
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

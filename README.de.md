@@ -119,8 +119,12 @@ geliebt wird, und repariert, was nervt:
   auftretende Wörter, gelesen wird keine Bedeutung. Deutsch wird vorher
   zusammengeführt, damit „Notiz", „Notizen" und „Notizen" ein Knoten sind statt
   drei – und beschriftet wird mit der Schreibweise, die du tatsächlich am
-  häufigsten verwendest. Läuft hier: kein Konto, kein Upload, kein
-  Modell-Download.
+  häufigsten verwendest. Wörter, die in mehr als einem Drittel deiner Notizen
+  vorkommen, fallen als Grammatik heraus statt als Thema zu gelten: Eine
+  Stoppwortliste wird nie fertig, aber „steht fast überall" ist ein Merkmal,
+  das Grammatik hat und ein Thema nicht – in jeder Sprache. Ein Klick auf einen
+  Begriff zeigt die Notizen, in denen er vorkommt. Läuft hier: kein Konto, kein
+  Upload, kein Modell-Download.
 - **Dataview-Abfragen** – ein ` ```dataview `-Block wird an Ort und Stelle
   beantwortet: `TABLE` und `LIST` über `FROM` einen Tag oder Ordner, mit
   `WHERE`, `SORT` und `LIMIT`, gelesen aus YAML-Frontmatter und aus

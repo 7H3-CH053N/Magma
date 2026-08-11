@@ -13,7 +13,14 @@
 // tries to *open* them: the view knows which mode it is in and does not offer
 // a concept node to the editor.
 
-import type { ConceptGraph, Graph, GraphNode } from "./api";
+import type { ConceptGraph, ConceptNode, Graph, GraphNode } from "./api";
+
+/** A concept graph plus what a click on one of its nodes should reveal. */
+export interface ConceptView {
+  graph: Graph;
+  /** Synthetic node path → the term behind it. */
+  details: Map<string, ConceptNode>;
+}
 
 /**
  * Split terms into the same five size steps the note view uses.
@@ -46,15 +53,17 @@ function sizeTiers(weights: number[]): Map<number, number> {
 export function conceptGraphToGraph(
   concepts: ConceptGraph,
   clusterName: (index: number) => string
-): Graph {
+): ConceptView {
   const tiers = sizeTiers(concepts.nodes.map((n) => n.weight));
   const pathOf = new Map<string, string>();
+  const details = new Map<string, ConceptNode>();
 
   const nodes: GraphNode[] = concepts.nodes.map((node, i) => {
     // The renderer groups by the text before the last slash, so the cluster
     // name there earns colours and a legend entry with no renderer change.
     const path = `${clusterName(node.cluster)}/${node.id}`;
     pathOf.set(node.id, path);
+    details.set(path, node);
     return {
       path,
       title: node.label,
@@ -69,5 +78,5 @@ export function conceptGraphToGraph(
     .map((e) => ({ source: pathOf.get(e.source), target: pathOf.get(e.target) }))
     .filter((e): e is { source: string; target: string } => !!e.source && !!e.target);
 
-  return { nodes, edges };
+  return { graph: { nodes, edges }, details };
 }

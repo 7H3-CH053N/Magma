@@ -103,8 +103,12 @@ plugin-hunting needed for basics. Magma keeps what's loved and fixes what's not:
   is most vaults. Named as honestly as the similarity above it: this counts
   words that co-occur, it does not read meaning. German is folded first, so
   "Notiz", "Notizen" and "Notizen" are one node instead of three — and the
-  label is the spelling you actually write most. It runs here: no account, no
-  upload, no model download.
+  label is the spelling you actually write most. Words that turn up in more
+  than a third of your notes are dropped as grammar rather than subject matter:
+  no stopword list is ever finished, but "appears nearly everywhere" is a
+  signature grammar has and a subject does not, in any language. Click a term to
+  see the notes it appears in. It runs here: no account, no upload, no model
+  download.
 - **Dataview queries** — a ` ```dataview ` block is answered in place: `TABLE`
   and `LIST` over `FROM` a tag or folder, with `WHERE`, `SORT` and `LIMIT`,
   reading YAML frontmatter and inline `key:: value` fields. DQL only —

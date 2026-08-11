@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { conceptGraph, type Graph } from "../lib/api";
+import { conceptGraph, type ConceptNode, type Graph } from "../lib/api";
 import { conceptGraphToGraph } from "../lib/conceptView";
 import { useI18n } from "../lib/i18n";
 
@@ -205,6 +205,10 @@ export default function GraphView({
   const { t } = useI18n();
   const [mode, setMode] = useState<Mode>("notes");
   const [concepts, setConcepts] = useState<Graph | null>(null);
+  // What a click on a term reveals: the notes it actually appears in. Without
+  // this the term view is a picture you cannot get back out of.
+  const [details, setDetails] = useState<Map<string, ConceptNode>>(new Map());
+  const [picked, setPicked] = useState<ConceptNode | null>(null);
   const [conceptOmitted, setConceptOmitted] = useState(0);
   const [conceptBusy, setConceptBusy] = useState(false);
   const [conceptError, setConceptError] = useState<string | null>(null);
@@ -219,9 +223,11 @@ export default function GraphView({
     conceptGraph(vault)
       .then((result) => {
         if (cancelled) return;
-        setConcepts(
-          conceptGraphToGraph(result, (i) => t("graph.cluster", { n: String(i + 1) }))
+        const view = conceptGraphToGraph(result, (i) =>
+          t("graph.cluster", { n: String(i + 1) })
         );
+        setConcepts(view.graph);
+        setDetails(view.details);
         setConceptOmitted(result.omitted);
       })
       .catch((e) => !cancelled && setConceptError(String(e)))
@@ -235,6 +241,7 @@ export default function GraphView({
   // switch is better than holding a graph of the previous vault's words.
   useEffect(() => {
     setConcepts(null);
+    setPicked(null);
   }, [vault]);
 
   const graph = mode === "concepts" ? (concepts ?? EMPTY) : noteGraph;
@@ -266,6 +273,8 @@ export default function GraphView({
     showAiRingRef.current = showAiRing;
     localStorage.setItem("magma.aiRing", showAiRing ? "1" : "0");
   }, [showAiRing]);
+  const detailsRef = useRef(details);
+  detailsRef.current = details;
   const customRef = useRef(custom);
   const colorVersion = useRef(0);
   useEffect(() => {
@@ -731,10 +740,13 @@ export default function GraphView({
     };
 
     const onPointerUp = (e: PointerEvent) => {
-      // A press without a drag is a click → open the note. A concept has no
-      // file behind it, so clicking one moves it and nothing more; offering it
-      // to the editor would open a note that does not exist.
-      if (!moved && dragIdx >= 0 && mode === "notes") onSelect(nodes[dragIdx].path);
+      // A press without a drag is a click. A note opens; a term has no file
+      // behind it, so it reveals the notes it appears in instead.
+      if (!moved && dragIdx >= 0) {
+        const path = nodes[dragIdx].path;
+        if (mode === "notes") onSelect(path);
+        else setPicked(detailsRef.current.get(path) ?? null);
+      }
       dragIdx = -1;
       panning = false;
       canvas.style.cursor = "default";
@@ -797,7 +809,10 @@ export default function GraphView({
           {(["notes", "concepts"] as Mode[]).map((m) => (
             <button
               key={m}
-              onClick={() => setMode(m)}
+              onClick={() => {
+                setMode(m);
+                setPicked(null);
+              }}
               aria-pressed={mode === m}
               className={
                 "px-2.5 py-1 transition " +
@@ -859,6 +874,46 @@ export default function GraphView({
           >
             {t("graph.colorsReset")}
           </button>
+        </div>
+      )}
+      {picked && mode === "concepts" && (
+        <div className="absolute right-4 top-3 z-10 w-72 rounded-xl bg-magma-bg/95 p-3 shadow-xl backdrop-blur dark:bg-[#201c19]/95">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="truncate font-medium">{picked.label}</div>
+              <div className="text-xs text-magma-muted">
+                {t("graph.conceptNotes", {
+                  notes: String(picked.noteCount),
+                  times: String(picked.weight),
+                })}
+              </div>
+            </div>
+            <button
+              onClick={() => setPicked(null)}
+              className="rounded px-1.5 text-magma-muted transition hover:bg-black/5 dark:hover:bg-white/10"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="mt-2 flex max-h-64 flex-col gap-0.5 overflow-auto border-t border-black/5 pt-2 dark:border-white/10">
+            {picked.notes.map((p) => (
+              <button
+                key={p}
+                onClick={() => onSelect(p)}
+                className="truncate rounded px-1.5 py-1 text-left text-sm transition hover:bg-black/5 dark:hover:bg-white/10"
+                title={p}
+              >
+                {p.replace(/\.md$/, "").split("/").pop()}
+              </button>
+            ))}
+          </div>
+          {picked.noteCount > picked.notes.length && (
+            <p className="mt-1.5 text-xs text-magma-muted">
+              {t("graph.conceptMore", {
+                n: String(picked.noteCount - picked.notes.length),
+              })}
+            </p>
+          )}
         </div>
       )}
       {/* One entry per top-level folder, plus the AI ring. */}
