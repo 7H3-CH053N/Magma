@@ -847,7 +847,7 @@ export default function GraphView({
           <p className="mb-2 text-xs text-magma-muted">{t("graph.colorsHint")}</p>
           <div className="flex max-h-64 flex-col gap-1.5 overflow-auto">
             {legend.map((l) => (
-              <label key={l.name} className="flex items-center gap-2 text-sm">
+              <label key={l.name} className="flex shrink-0 items-center gap-2 text-sm">
                 <input
                   type="color"
                   value={custom[l.name] ?? hslToHex(l.color)}
@@ -895,6 +895,13 @@ export default function GraphView({
               ✕
             </button>
           </div>
+          {/* Rows must not shrink. A flex item is normally protected from being
+              squashed below its content by `min-height: auto` — but that rule
+              only applies while the item's overflow is visible, and `truncate`
+              sets `overflow: hidden`. So 25 rows wanting 700px inside a 256px
+              box were compressed to 8px each and their text clipped away: the
+              list looked empty while every row was present, correctly filled
+              and even showing its path on hover. */}
           <div className="mt-2 flex max-h-64 flex-col gap-0.5 overflow-auto border-t border-black/5 pt-2 dark:border-white/10">
             {picked.notes.length === 0 && (
               <p className="px-1.5 py-1 text-sm text-magma-muted">
@@ -905,7 +912,7 @@ export default function GraphView({
               <button
                 key={p}
                 onClick={() => onSelect(p)}
-                className="truncate rounded px-1.5 py-1 text-left text-sm text-magma-ink transition hover:bg-black/5 dark:hover:bg-white/10"
+                className="shrink-0 truncate rounded px-1.5 py-1 text-left text-sm text-magma-ink transition hover:bg-black/5 dark:hover:bg-white/10"
                 title={p}
               >
                 {noteLabel(p)}
