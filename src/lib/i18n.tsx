@@ -139,6 +139,15 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "graph.aiRing": "Ring around AI-written notes",
     "graph.legendMissing": "not created yet",
     "graph.legendSize": "more notes link here",
+    "graph.modeNotes": "Notes",
+    "graph.modeConcepts": "Terms",
+    "graph.cluster": "Topic {n}",
+    "graph.conceptsBusy": "Reading every note…",
+    "graph.conceptsEmpty":
+      "Not enough repeated words yet. The term view needs a word to come up a few times before it counts as a subject.",
+    "graph.conceptsHint":
+      "Terms that keep appearing near each other. This counts words, it does not read meaning.",
+    "graph.conceptsOmitted": "{n} rarer terms left out.",
     "graph.openEditor": "Open in editor",
     "graph.createNote": "Create this note",
     "graph.previewMissing": "No note of this name exists yet — something links to it.",
@@ -375,6 +384,15 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "graph.aiRing": "Ring um KI-geschriebene Notizen",
     "graph.legendMissing": "noch nicht angelegt",
     "graph.legendSize": "mehr Notizen verlinken hierher",
+    "graph.modeNotes": "Notizen",
+    "graph.modeConcepts": "Begriffe",
+    "graph.cluster": "Thema {n}",
+    "graph.conceptsBusy": "Lese alle Notizen…",
+    "graph.conceptsEmpty":
+      "Noch zu wenig Wiederholung. Die Begriffsansicht braucht Wörter, die mehrfach vorkommen, bevor sie als Thema zählen.",
+    "graph.conceptsHint":
+      "Begriffe, die immer wieder nebeneinander auftauchen. Gezählt werden Wörter, gelesen wird keine Bedeutung.",
+    "graph.conceptsOmitted": "{n} seltenere Begriffe weggelassen.",
     "graph.openEditor": "Im Editor öffnen",
     "graph.createNote": "Notiz anlegen",
     "graph.previewMissing": "Es gibt noch keine Notiz dieses Namens — etwas verlinkt darauf.",

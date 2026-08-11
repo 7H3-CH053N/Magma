@@ -97,6 +97,14 @@ plugin-hunting needed for basics. Magma keeps what's loved and fixes what's not:
   folder with shades for subfolders, AI-written notes ringed. Notes are sized in
   five steps by how many others link to them, so the hub your vault revolves
   around is the one you see first.
+- **Term view** — the same canvas switched to what the notes are *about*:
+  terms as nodes, an edge where two keep turning up near each other, coloured
+  by topic. It shows the shape of a vault whose links were never drawn, which
+  is most vaults. Named as honestly as the similarity above it: this counts
+  words that co-occur, it does not read meaning. German is folded first, so
+  "Notiz", "Notizen" and "Notizen" are one node instead of three — and the
+  label is the spelling you actually write most. It runs here: no account, no
+  upload, no model download.
 - **Dataview queries** — a ` ```dataview ` block is answered in place: `TABLE`
   and `LIST` over `FROM` a tag or folder, with `WHERE`, `SORT` and `LIMIT`,
   reading YAML frontmatter and inline `key:: value` fields. DQL only —

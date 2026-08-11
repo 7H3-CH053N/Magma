@@ -831,6 +831,7 @@ export default function App() {
           ) : view === "graph" ? (
             <GraphView
               graph={graph}
+              vault={vault}
               activePath={activePath}
               onSelect={(path) => {
                 const node = graph.nodes.find((n) => n.path === path);

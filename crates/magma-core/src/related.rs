@@ -42,6 +42,12 @@ const STOPWORDS: &[&str] = &[
     "these", "they", "this", "were", "what", "when", "which", "who", "will", "with", "you", "your",
 ];
 
+/// True for a word too common to say anything about subject matter. Shared
+/// with the concept graph, which needs the same floor before adding its own.
+pub fn is_stopword(lower: &str) -> bool {
+    STOPWORDS.contains(&lower)
+}
+
 /// Split text into comparable terms: lowercased words of 3+ characters, with
 /// markdown punctuation and stopwords dropped.
 pub fn tokenize(text: &str) -> Vec<String> {

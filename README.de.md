@@ -111,6 +111,16 @@ geliebt wird, und repariert, was nervt:
   haben eine von fünf Größen, je nachdem wie viele andere auf sie verlinken –
   der Knotenpunkt, um den sich dein Vault dreht, ist also der, den du zuerst
   siehst.
+- **Begriffsansicht** – dieselbe Fläche, umgeschaltet auf das, worum es in den
+  Notizen *geht*: Begriffe als Knoten, eine Kante, wo zwei immer wieder
+  nebeneinander auftauchen, eingefärbt nach Thema. Sie zeigt die Form eines
+  Vaults, dessen Links nie gezogen wurden – also der meisten. Genauso ehrlich
+  benannt wie die Ähnlichkeit weiter oben: Gezählt werden gemeinsam
+  auftretende Wörter, gelesen wird keine Bedeutung. Deutsch wird vorher
+  zusammengeführt, damit „Notiz", „Notizen" und „Notizen" ein Knoten sind statt
+  drei – und beschriftet wird mit der Schreibweise, die du tatsächlich am
+  häufigsten verwendest. Läuft hier: kein Konto, kein Upload, kein
+  Modell-Download.
 - **Dataview-Abfragen** – ein ` ```dataview `-Block wird an Ort und Stelle
   beantwortet: `TABLE` und `LIST` über `FROM` einen Tag oder Ordner, mit
   `WHERE`, `SORT` und `LIMIT`, gelesen aus YAML-Frontmatter und aus

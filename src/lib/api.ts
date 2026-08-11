@@ -140,6 +140,13 @@ export interface GraphNode {
   degree: number;
   /** A link target with no note behind it yet (shown as a ghost node). */
   missing?: boolean;
+  /**
+   * Size tier (0–4) decided by the caller instead of from incoming links.
+   * The concept view sizes by how often a term is written, but wants the same
+   * five visual steps the note view uses — the language of the graph should
+   * not change just because what it draws does.
+   */
+  sizeTier?: number;
 }
 
 export interface GraphEdge {
@@ -427,6 +434,39 @@ export async function openExternal(url: string): Promise<void> {
 export async function setLanguage(lang: string): Promise<void> {
   if (!hasTauri) return;
   return invoke("set_language", { lang });
+}
+
+export interface ConceptNode {
+  id: string;
+  label: string;
+  weight: number;
+  cluster: number;
+  noteCount: number;
+  notes: string[];
+}
+
+export interface ConceptEdge {
+  source: string;
+  target: string;
+  weight: number;
+}
+
+export interface ConceptGraph {
+  nodes: ConceptNode[];
+  edges: ConceptEdge[];
+  /** Terms frequent enough to qualify that did not fit the node cap. */
+  omitted: number;
+}
+
+/**
+ * The vault seen as terms rather than files. Computed in Rust, on this
+ * machine — no account, no upload, no model download.
+ */
+export async function conceptGraph(
+  vault: string,
+  exclude?: string[]
+): Promise<ConceptGraph> {
+  return invoke("concept_graph", { vault, exclude });
 }
 
 export { hasTauri };

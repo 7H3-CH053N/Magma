@@ -1,13 +1,23 @@
 import { useEffect, useRef, useState } from "react";
-import type { Graph } from "../lib/api";
+import { conceptGraph, type Graph } from "../lib/api";
+import { conceptGraphToGraph } from "../lib/conceptView";
 import { useI18n } from "../lib/i18n";
 
 interface GraphViewProps {
   graph: Graph;
+  vault: string | null;
   activePath: string | null;
   /** Clicking a node previews it; the panel's button opens it in the editor. */
   onSelect: (path: string) => void;
 }
+
+/**
+ * What the canvas is drawing. A view mode, so it lives on the view — burying
+ * it in Settings is exactly the habit Magma is built against.
+ */
+type Mode = "notes" | "concepts";
+
+const EMPTY: Graph = { nodes: [], edges: [] };
 
 interface Sim {
   path: string;
@@ -186,8 +196,48 @@ function folderColors(
  * empty canvas to pan, drag a node to reposition it. Until you touch it, the
  * view auto-fits so every node is on screen.
  */
-export default function GraphView({ graph, activePath, onSelect }: GraphViewProps) {
+export default function GraphView({
+  graph: noteGraph,
+  vault,
+  activePath,
+  onSelect,
+}: GraphViewProps) {
   const { t } = useI18n();
+  const [mode, setMode] = useState<Mode>("notes");
+  const [concepts, setConcepts] = useState<Graph | null>(null);
+  const [conceptOmitted, setConceptOmitted] = useState(0);
+  const [conceptBusy, setConceptBusy] = useState(false);
+  const [conceptError, setConceptError] = useState<string | null>(null);
+
+  // Built on demand and then kept: the analysis reads every note, which is
+  // quick but not free, and flipping back and forth should not repeat it.
+  useEffect(() => {
+    if (mode !== "concepts" || concepts || !vault) return;
+    let cancelled = false;
+    setConceptBusy(true);
+    setConceptError(null);
+    conceptGraph(vault)
+      .then((result) => {
+        if (cancelled) return;
+        setConcepts(
+          conceptGraphToGraph(result, (i) => t("graph.cluster", { n: String(i + 1) }))
+        );
+        setConceptOmitted(result.omitted);
+      })
+      .catch((e) => !cancelled && setConceptError(String(e)))
+      .finally(() => !cancelled && setConceptBusy(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, concepts, vault, t]);
+
+  // A changed vault invalidates the analysis; recomputing lazily on the next
+  // switch is better than holding a graph of the previous vault's words.
+  useEffect(() => {
+    setConcepts(null);
+  }, [vault]);
+
+  const graph = mode === "concepts" ? (concepts ?? EMPTY) : noteGraph;
   const ACCENT = themeColor("--magma-accent", ACCENT_FALLBACK);
   const AI = themeColor("--magma-ai", AI_FALLBACK);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -265,7 +315,9 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
         missing: !!node.missing,
         degree: node.degree,
         inLinks,
-        r: radiusFor(inLinks),
+        // The concept view decides its own tiers (by how often a term is
+        // written); notes size themselves by who links to them.
+        r: node.sizeTier != null ? SIZE_TIERS[node.sizeTier].r : radiusFor(inLinks),
         x: Math.cos(a) * rad,
         y: Math.sin(a) * rad,
       };
@@ -679,8 +731,10 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
     };
 
     const onPointerUp = (e: PointerEvent) => {
-      // A press without a drag is a click → open the note.
-      if (!moved && dragIdx >= 0) onSelect(nodes[dragIdx].path);
+      // A press without a drag is a click → open the note. A concept has no
+      // file behind it, so clicking one moves it and nothing more; offering it
+      // to the editor would open a note that does not exist.
+      if (!moved && dragIdx >= 0 && mode === "notes") onSelect(nodes[dragIdx].path);
       dragIdx = -1;
       panning = false;
       canvas.style.cursor = "default";
@@ -722,17 +776,40 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
     };
     // Rebuild the simulation whenever the graph shape changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graph]);
+  }, [graph, mode]);
 
   return (
     <div className="relative h-full w-full">
       {graph.nodes.length === 0 && (
-        <div className="absolute inset-0 grid place-items-center text-sm text-magma-muted">
-          {t("graph.empty")}
+        <div className="absolute inset-0 grid place-items-center px-8 text-center text-sm text-magma-muted">
+          {mode === "concepts"
+            ? conceptBusy
+              ? t("graph.conceptsBusy")
+              : (conceptError ?? t("graph.conceptsEmpty"))
+            : t("graph.empty")}
         </div>
       )}
       <canvas ref={canvasRef} className="h-full w-full touch-none" />
       <div className="absolute left-4 top-3 flex items-center gap-2">
+        {/* The mode switch sits on the canvas, not in Settings — it is what
+            you are looking at, not how the app is configured. */}
+        <div className="flex overflow-hidden rounded-md bg-black/5 text-xs dark:bg-white/10">
+          {(["notes", "concepts"] as Mode[]).map((m) => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              aria-pressed={mode === m}
+              className={
+                "px-2.5 py-1 transition " +
+                (mode === m
+                  ? "bg-magma-accent text-white"
+                  : "text-magma-muted hover:bg-black/5 dark:hover:bg-white/10")
+              }
+            >
+              {t(m === "notes" ? "graph.modeNotes" : "graph.modeConcepts")}
+            </button>
+          ))}
+        </div>
         <button
           onClick={() => {
             interactedRef.current = false; // hand control back to auto-fit
@@ -792,7 +869,7 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
             <span className="max-w-[10rem] truncate">{l.name}</span>
           </span>
         ))}
-        {showAiRing && (
+        {showAiRing && mode === "notes" && (
           <span className="flex items-center gap-1.5">
             <span
               className="h-2.5 w-2.5 rounded-full border-2"
@@ -801,10 +878,21 @@ export default function GraphView({ graph, activePath, onSelect }: GraphViewProp
             {t("graph.legendAi")}
           </span>
         )}
-        <span className="flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full border border-dashed border-magma-muted" />
-          {t("graph.legendMissing")}
-        </span>
+        {mode === "notes" && (
+          <span className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-full border border-dashed border-magma-muted" />
+            {t("graph.legendMissing")}
+          </span>
+        )}
+        {/* What a concept edge means, said plainly. Without this the picture
+            invites being read as "these ideas are related", which is a claim
+            counting words apart cannot make. */}
+        {mode === "concepts" && graph.nodes.length > 0 && (
+          <span className="max-w-[24rem] text-right">
+            {t("graph.conceptsHint")}
+            {conceptOmitted > 0 && ` ${t("graph.conceptsOmitted", { n: String(conceptOmitted) })}`}
+          </span>
+        )}
         {/* Why the dots differ in size — otherwise it reads as decoration. */}
         <span className="flex items-center gap-1">
           <span className="h-1 w-1 rounded-full bg-magma-muted" />
