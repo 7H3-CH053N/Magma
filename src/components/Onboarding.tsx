@@ -1,5 +1,5 @@
 import { useState } from "react";
-import FlameIcon from "./FlameIcon";
+import { MagmaMark } from "./MagmaMark";
 import { useI18n } from "../lib/i18n";
 
 interface OnboardingProps {
@@ -55,7 +55,7 @@ export default function Onboarding({
     <div className="fixed inset-0 z-40 grid place-items-center bg-black/50 p-4">
       <div className="w-full max-w-md rounded-2xl bg-magma-bg p-6 shadow-2xl dark:bg-[#201c19]">
         <div className="mb-4 flex items-center gap-3">
-          <FlameIcon size={32} />
+          <MagmaMark size={32} />
           <div>
             <div className="text-base font-semibold tracking-tight">Magma</div>
             <div className="text-xs text-magma-muted">{t("app.tagline")}</div>

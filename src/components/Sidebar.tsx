@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import type { NoteMeta, SearchHit } from "../lib/api";
 import { useI18n } from "../lib/i18n";
-import FlameIcon from "./FlameIcon";
+import { MagmaMark } from "./MagmaMark";
 import {
   ChevronIcon,
   FolderIcon,
@@ -302,7 +302,7 @@ export default function Sidebar({
         className="absolute right-0 top-0 z-10 h-full w-1.5 cursor-col-resize transition-colors hover:bg-magma-accent/40"
       />
       <div className="flex items-center gap-2 px-4 py-3">
-        <FlameIcon size={18} />
+        <MagmaMark size={18} />
         <span className="font-semibold tracking-tight">Magma</span>
         <div className="ml-auto flex items-center gap-0.5">
           {vault && (

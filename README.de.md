@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/magma-dark.svg" />
+    <img src="assets/magma-light.svg" alt="" width="88" height="84" />
+  </picture>
+</p>
+
 # Magma
 
 [English](README.md) · **Deutsch**

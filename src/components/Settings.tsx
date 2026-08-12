@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import FlameIcon from "./FlameIcon";
+import { MagmaMark } from "./MagmaMark";
 import { useI18n, type Lang } from "../lib/i18n";
 import { useTheme, FONT_PRESETS, type ThemeMode } from "../lib/theme";
 import { usePrefs } from "../lib/prefs";
@@ -716,7 +716,7 @@ export default function Settings({
         {tab === "about" && (
         /* About */
         <section className="flex flex-col items-center gap-2 rounded-xl bg-black/[0.03] p-6 text-center dark:bg-white/[0.04]">
-          <FlameIcon size={56} />
+          <MagmaMark size={56} />
           <div className="text-lg font-semibold tracking-tight">Magma</div>
           <div className="text-sm text-magma-muted">
             {t("settings.version", { version: __APP_VERSION__, build: __BUILD_ID__ })}
