@@ -99,7 +99,7 @@ pub fn related_notes(vault: &Path, rel: &str, limit: usize) -> std::io::Result<V
     let notes = vault::list_notes(vault)?;
     let mut docs: Vec<(vault::NoteMeta, String)> = Vec::with_capacity(notes.len());
     for note in notes {
-        let content = std::fs::read_to_string(vault.join(&note.path)).unwrap_or_default();
+        let content = vault::read_for_scan(&vault.join(&note.path));
         docs.push((note, content));
     }
 

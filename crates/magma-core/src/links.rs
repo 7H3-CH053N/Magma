@@ -113,7 +113,7 @@ pub fn build_graph(vault: &Path, exclude: &[String]) -> std::io::Result<Graph> {
     // Link targets with no note behind them, keyed by a synthetic id.
     let mut ghosts: HashMap<String, String> = HashMap::new();
     for note in &notes {
-        let content = std::fs::read_to_string(vault.join(&note.path)).unwrap_or_default();
+        let content = vault::read_for_scan(&vault.join(&note.path));
         for target in extract_links(&content) {
             let dest = match by_name.get(&name_key(&target)) {
                 Some(d) => {
@@ -240,7 +240,7 @@ pub fn backlinks(vault: &Path, target_path: &str) -> std::io::Result<Vec<NoteMet
         if note.path == target_path {
             continue;
         }
-        let content = std::fs::read_to_string(vault.join(&note.path)).unwrap_or_default();
+        let content = vault::read_for_scan(&vault.join(&note.path));
         let links_here = extract_links(&content)
             .into_iter()
             .any(|t| by_name.get(&name_key(&t)).map(|p| p.as_str()) == Some(target_path));
@@ -339,7 +339,7 @@ pub fn unlinked_mentions(vault: &Path, rel: &str) -> std::io::Result<Vec<Mention
         if note.path == rel {
             continue;
         }
-        let content = std::fs::read_to_string(vault.join(&note.path)).unwrap_or_default();
+        let content = vault::read_for_scan(&vault.join(&note.path));
         // Already linked? Then it is a backlink, not a missed mention.
         if extract_links(&content)
             .iter()
@@ -523,7 +523,7 @@ pub fn search(vault: &Path, query: &str) -> std::io::Result<Vec<SearchHit>> {
     let notes = vault::list_notes(vault)?;
     let mut hits = Vec::new();
     for note in notes {
-        let content = std::fs::read_to_string(vault.join(&note.path)).unwrap_or_default();
+        let content = vault::read_for_scan(&vault.join(&note.path));
         let title_match = matcher.is_match(&note.title);
         if title_match || matcher.is_match(&content) {
             hits.push(SearchHit {

@@ -10,6 +10,29 @@ use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use toml_edit::{value, Array, DocumentMut, Item, Table};
 
+/// Run vault work away from the thread that owns the window.
+///
+/// Tauri runs a *synchronous* command on the main thread, so anything slow in
+/// one freezes the whole UI. On a vault kept in iCloud Drive, Dropbox or
+/// OneDrive, "slow" is the normal case rather than the exception: reading a
+/// file whose contents have been evicted to the cloud blocks in the kernel
+/// until the sync daemon hands it back, and if that daemon is throttled or
+/// offline the wait does not end. macOS notices the app has stopped answering
+/// and offers to force-quit it — a hang the user experiences as a crash.
+///
+/// So every command that touches the vault goes through here, and the window
+/// keeps drawing no matter how long the disk takes.
+async fn off_main<T, F>(work: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    match tauri::async_runtime::spawn_blocking(work).await {
+        Ok(result) => result,
+        Err(e) => Err(format!("vault task failed: {e}")),
+    }
+}
+
 #[tauri::command]
 async fn pick_vault(app: tauri::AppHandle) -> Option<String> {
     let (tx, rx) = std::sync::mpsc::channel();
@@ -20,15 +43,17 @@ async fn pick_vault(app: tauri::AppHandle) -> Option<String> {
 }
 
 #[tauri::command]
-fn list_notes(vault: String) -> Result<Vec<vault::NoteMeta>, String> {
-    vault::list_notes(&PathBuf::from(vault)).map_err(|e| e.to_string())
+async fn list_notes(vault: String) -> Result<Vec<vault::NoteMeta>, String> {
+    off_main(move || vault::list_notes(&PathBuf::from(vault)).map_err(|e| e.to_string())).await
 }
 
 #[tauri::command]
-fn read_note(vault: String, path: String) -> Result<vault::Note, String> {
+async fn read_note(vault: String, path: String) -> Result<vault::Note, String> {
     let root = PathBuf::from(vault);
     vault::safe_join(&root, &path).ok_or_else(|| "invalid path".to_string())?;
-    vault::read_note(&root, &path).map_err(|e| e.to_string())
+    // Opening one note may legitimately pull it down from the cloud — the user
+    // asked for this file. It just must not do so on the main thread.
+    off_main(move || vault::read_note(&root, &path).map_err(|e| e.to_string())).await
 }
 
 /// How long to leave between version snapshots of the same note while it is
@@ -37,80 +62,96 @@ fn read_note(vault: String, path: String) -> Result<vault::Note, String> {
 const SNAPSHOT_EVERY_SECS: u64 = 120;
 
 #[tauri::command]
-fn write_note(vault: String, path: String, content: String) -> Result<(), String> {
+async fn write_note(vault: String, path: String, content: String) -> Result<(), String> {
     let root = PathBuf::from(vault);
     vault::safe_join(&root, &path).ok_or_else(|| "invalid path".to_string())?;
-    // Keep what is about to be overwritten. Best-effort: a history that cannot
-    // be written must never stop the note itself from being saved.
-    let _ = vault::snapshot_if_due(&root, &path, SNAPSHOT_EVERY_SECS);
-    vault::write_note(&root, &path, &content).map_err(|e| e.to_string())
+    off_main(move || {
+        // Keep what is about to be overwritten. Best-effort: a history that
+        // cannot be written must never stop the note itself from being saved.
+        let _ = vault::snapshot_if_due(&root, &path, SNAPSHOT_EVERY_SECS);
+        vault::write_note(&root, &path, &content).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn create_note(vault: String, title: String) -> Result<String, String> {
+async fn create_note(vault: String, title: String) -> Result<String, String> {
     let root = PathBuf::from(vault);
     // Seed with an H1 of the title so the note isn't blank on open.
     let body = format!("# {}\n\n", title.trim());
-    vault::create_note(&root, &title, &body).map_err(|e| e.to_string())
+    off_main(move || vault::create_note(&root, &title, &body).map_err(|e| e.to_string())).await
 }
 
 #[tauri::command]
-fn rename_note(vault: String, path: String, new_title: String) -> Result<String, String> {
+async fn rename_note(vault: String, path: String, new_title: String) -> Result<String, String> {
     let root = PathBuf::from(vault);
     vault::safe_join(&root, &path).ok_or_else(|| "invalid path".to_string())?;
-    // Link-safe: repoint every [[wikilink]] that named the old filename.
-    let (new_path, _updated) =
-        vault::rename_note_updating_links(&root, &path, &new_title).map_err(|e| e.to_string())?;
-    vault::relocate_history(&root, &path, &new_path);
-    Ok(new_path)
+    off_main(move || {
+        // Link-safe: repoint every [[wikilink]] that named the old filename.
+        let (new_path, _updated) = vault::rename_note_updating_links(&root, &path, &new_title)
+            .map_err(|e| e.to_string())?;
+        vault::relocate_history(&root, &path, &new_path);
+        Ok(new_path)
+    })
+    .await
 }
 
 #[tauri::command]
-fn delete_note(vault: String, path: String) -> Result<(), String> {
+async fn delete_note(vault: String, path: String) -> Result<(), String> {
     let root = PathBuf::from(vault);
     vault::safe_join(&root, &path).ok_or_else(|| "invalid path".to_string())?;
-    vault::delete_note(&root, &path).map_err(|e| e.to_string())?;
-    vault::forget_history(&root, &path);
-    Ok(())
+    off_main(move || {
+        vault::delete_note(&root, &path).map_err(|e| e.to_string())?;
+        vault::forget_history(&root, &path);
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
-fn move_note(vault: String, path: String, folder: String) -> Result<String, String> {
+async fn move_note(vault: String, path: String, folder: String) -> Result<String, String> {
     let root = PathBuf::from(vault);
     vault::safe_join(&root, &path).ok_or_else(|| "invalid path".to_string())?;
-    let new_path = vault::move_note(&root, &path, &folder).map_err(|e| e.to_string())?;
-    vault::relocate_history(&root, &path, &new_path);
-    Ok(new_path)
+    off_main(move || {
+        let new_path = vault::move_note(&root, &path, &folder).map_err(|e| e.to_string())?;
+        vault::relocate_history(&root, &path, &new_path);
+        Ok(new_path)
+    })
+    .await
 }
 
 #[tauri::command]
-fn create_folder(vault: String, name: String) -> Result<String, String> {
-    vault::create_folder(&PathBuf::from(vault), &name).map_err(|e| e.to_string())
+async fn create_folder(vault: String, name: String) -> Result<String, String> {
+    off_main(move || vault::create_folder(&PathBuf::from(vault), &name).map_err(|e| e.to_string()))
+        .await
 }
 
 #[tauri::command]
-fn delete_folder(vault: String, folder: String) -> Result<(), String> {
+async fn delete_folder(vault: String, folder: String) -> Result<(), String> {
     let root = PathBuf::from(vault);
     vault::safe_join(&root, &folder).ok_or_else(|| "invalid path".to_string())?;
-    vault::delete_folder(&root, &folder).map_err(|e| e.to_string())
+    off_main(move || vault::delete_folder(&root, &folder).map_err(|e| e.to_string())).await
 }
 
 /// Move a folder (with everything in it) into another folder; "" = vault root.
 #[tauri::command]
-fn move_folder(vault: String, folder: String, into: String) -> Result<String, String> {
+async fn move_folder(vault: String, folder: String, into: String) -> Result<String, String> {
     let root = PathBuf::from(vault);
     vault::safe_join(&root, &folder).ok_or_else(|| "invalid path".to_string())?;
     vault::safe_join(&root, &into).ok_or_else(|| "invalid path".to_string())?;
-    let moved = vault::move_folder(&root, &folder, &into).map_err(|e| e.to_string())?;
-    // History is filed under the note path, so it mirrors the folder tree and
-    // moves as one piece.
-    vault::relocate_history(&root, &folder, &moved);
-    Ok(moved)
+    off_main(move || {
+        let moved = vault::move_folder(&root, &folder, &into).map_err(|e| e.to_string())?;
+        // History is filed under the note path, so it mirrors the folder tree
+        // and moves as one piece.
+        vault::relocate_history(&root, &folder, &moved);
+        Ok(moved)
+    })
+    .await
 }
 
 #[tauri::command]
-fn list_folders(vault: String) -> Result<Vec<String>, String> {
-    vault::list_folders(&PathBuf::from(vault)).map_err(|e| e.to_string())
+async fn list_folders(vault: String) -> Result<Vec<String>, String> {
+    off_main(move || vault::list_folders(&PathBuf::from(vault)).map_err(|e| e.to_string())).await
 }
 
 /// Import a WordPress blog into a folder, returning how many notes were written.
@@ -139,54 +180,67 @@ async fn import_wordpress(
 }
 
 #[tauri::command]
-fn save_asset(vault: String, file_name: String, bytes: Vec<u8>) -> Result<String, String> {
+async fn save_asset(vault: String, file_name: String, bytes: Vec<u8>) -> Result<String, String> {
     let root = PathBuf::from(vault);
-    vault::save_asset(&root, &file_name, &bytes).map_err(|e| e.to_string())
+    off_main(move || vault::save_asset(&root, &file_name, &bytes).map_err(|e| e.to_string())).await
 }
 
 #[tauri::command]
-fn build_graph(vault: String, exclude: Option<Vec<String>>) -> Result<vault::Graph, String> {
-    vault::build_graph(&PathBuf::from(vault), &exclude.unwrap_or_default())
-        .map_err(|e| e.to_string())
+async fn build_graph(vault: String, exclude: Option<Vec<String>>) -> Result<vault::Graph, String> {
+    off_main(move || {
+        vault::build_graph(&PathBuf::from(vault), &exclude.unwrap_or_default())
+            .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// The same vault seen as terms rather than files. Runs entirely here — the
 /// point of having it built in rather than reaching for a service is that the
 /// notes never leave the machine.
 #[tauri::command]
-fn concept_graph(
+async fn concept_graph(
     vault: String,
     exclude: Option<Vec<String>>,
 ) -> Result<vault::ConceptGraph, String> {
-    vault::concept_graph(
-        &PathBuf::from(vault),
-        &exclude.unwrap_or_default(),
-        vault::ConceptOptions::default(),
-    )
-    .map_err(|e| e.to_string())
+    off_main(move || {
+        vault::concept_graph(
+            &PathBuf::from(vault),
+            &exclude.unwrap_or_default(),
+            vault::ConceptOptions::default(),
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn backlinks(vault: String, path: String) -> Result<Vec<vault::NoteMeta>, String> {
-    vault::backlinks(&PathBuf::from(vault), &path).map_err(|e| e.to_string())
+async fn backlinks(vault: String, path: String) -> Result<Vec<vault::NoteMeta>, String> {
+    off_main(move || vault::backlinks(&PathBuf::from(vault), &path).map_err(|e| e.to_string()))
+        .await
 }
 
 /// Search, isolated from the rest of the app. A panic in here (a bad slice, a
 /// pathological note) must surface as an error message, never take the window
 /// down — losing the whole app because a search hiccuped is not acceptable.
 #[tauri::command]
-fn search(vault: String, query: String) -> Result<Vec<vault::SearchHit>, String> {
+async fn search(vault: String, query: String) -> Result<Vec<vault::SearchHit>, String> {
     let root = PathBuf::from(vault);
-    std::panic::catch_unwind(|| vault::search(&root, &query))
-        .map_err(|_| "search failed on this vault — please report the query".to_string())?
-        .map_err(|e| e.to_string())
+    off_main(move || {
+        std::panic::catch_unwind(|| vault::search(&root, &query))
+            .map_err(|_| "search failed on this vault — please report the query".to_string())?
+            .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// Evaluate a safe Dataview-style query against the vault. This deliberately
 /// supports DQL only; DataviewJS would execute arbitrary JavaScript from notes.
 #[tauri::command]
-fn query_dataview(vault: String, query: String) -> Result<vault::DataviewResult, String> {
-    vault::query_dataview(&PathBuf::from(vault), &query).map_err(|e| e.to_string())
+async fn query_dataview(vault: String, query: String) -> Result<vault::DataviewResult, String> {
+    off_main(move || {
+        vault::query_dataview(&PathBuf::from(vault), &query).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// Vault-wide find & replace. `dryRun` reports what would change without
@@ -194,7 +248,7 @@ fn query_dataview(vault: String, query: String) -> Result<vault::DataviewResult,
 /// whose own name carries the term are renamed too, so `[[wikilinks]]` and the
 /// notes they point at stay in sync.
 #[tauri::command]
-fn replace_all(
+async fn replace_all(
     vault: String,
     find: String,
     replace: String,
@@ -202,94 +256,119 @@ fn replace_all(
     rename_notes: bool,
 ) -> Result<vault::ReplaceReport, String> {
     let root = PathBuf::from(vault);
-    if !dry_run {
-        // Snapshot everything this is about to touch, unconditionally — the
-        // preview shows what will change, the history is how you take it back.
-        if let Ok(preview) = vault::replace_in_vault(&root, &find, &replace, true, rename_notes) {
-            for hit in &preview.hits {
-                let _ = vault::snapshot(&root, &hit.path);
-            }
-            for rename in &preview.renames {
-                let _ = vault::snapshot(&root, &rename.path);
+    off_main(move || {
+        if !dry_run {
+            // Snapshot everything this is about to touch, unconditionally — the
+            // preview shows what will change, the history is how you take it back.
+            if let Ok(preview) = vault::replace_in_vault(&root, &find, &replace, true, rename_notes)
+            {
+                for hit in &preview.hits {
+                    let _ = vault::snapshot(&root, &hit.path);
+                }
+                for rename in &preview.renames {
+                    let _ = vault::snapshot(&root, &rename.path);
+                }
             }
         }
-    }
-    vault::replace_in_vault(&root, &find, &replace, dry_run, rename_notes)
-        .map_err(|e| e.to_string())
+        vault::replace_in_vault(&root, &find, &replace, dry_run, rename_notes)
+            .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// Open (or create) a note at an exact name — daily notes and notes made from
 /// a template. Returns the path plus whether it was created just now.
 #[tauri::command]
-fn open_or_create(
+async fn open_or_create(
     vault: String,
     folder: String,
     title: String,
     content: String,
 ) -> Result<(String, bool), String> {
-    vault::open_or_create(&PathBuf::from(vault), &folder, &title, &content)
-        .map_err(|e| e.to_string())
+    off_main(move || {
+        vault::open_or_create(&PathBuf::from(vault), &folder, &title, &content)
+            .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// Append text to a note without opening it — what quick capture writes.
 #[tauri::command]
-fn append_note(vault: String, path: String, text: String) -> Result<(), String> {
+async fn append_note(vault: String, path: String, text: String) -> Result<(), String> {
     let root = PathBuf::from(vault);
     vault::safe_join(&root, &path).ok_or_else(|| "invalid path".to_string())?;
-    let _ = vault::snapshot_if_due(&root, &path, SNAPSHOT_EVERY_SECS);
-    vault::append_note(&root, &path, &text).map_err(|e| e.to_string())
+    off_main(move || {
+        let _ = vault::snapshot_if_due(&root, &path, SNAPSHOT_EVERY_SECS);
+        vault::append_note(&root, &path, &text).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 // --- Version history -------------------------------------------------------
 
 #[tauri::command]
-fn list_versions(vault: String, path: String) -> Result<Vec<vault::Version>, String> {
-    vault::list_versions(&PathBuf::from(vault), &path).map_err(|e| e.to_string())
+async fn list_versions(vault: String, path: String) -> Result<Vec<vault::Version>, String> {
+    off_main(move || vault::list_versions(&PathBuf::from(vault), &path).map_err(|e| e.to_string()))
+        .await
 }
 
 #[tauri::command]
-fn read_version(vault: String, path: String, id: String) -> Result<String, String> {
-    vault::read_version(&PathBuf::from(vault), &path, &id).map_err(|e| e.to_string())
+async fn read_version(vault: String, path: String, id: String) -> Result<String, String> {
+    off_main(move || {
+        vault::read_version(&PathBuf::from(vault), &path, &id).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn restore_version(vault: String, path: String, id: String) -> Result<(), String> {
-    vault::restore(&PathBuf::from(vault), &path, &id).map_err(|e| e.to_string())
+async fn restore_version(vault: String, path: String, id: String) -> Result<(), String> {
+    off_main(move || vault::restore(&PathBuf::from(vault), &path, &id).map_err(|e| e.to_string()))
+        .await
 }
 
 // --- Connections: outgoing links, unlinked mentions, related notes ---------
 
 #[tauri::command]
-fn outgoing_links(vault: String, path: String) -> Result<Vec<vault::OutgoingLink>, String> {
-    vault::outgoing_links(&PathBuf::from(vault), &path).map_err(|e| e.to_string())
+async fn outgoing_links(vault: String, path: String) -> Result<Vec<vault::OutgoingLink>, String> {
+    off_main(move || vault::outgoing_links(&PathBuf::from(vault), &path).map_err(|e| e.to_string()))
+        .await
 }
 
 #[tauri::command]
-fn unlinked_mentions(vault: String, path: String) -> Result<Vec<vault::Mention>, String> {
+async fn unlinked_mentions(vault: String, path: String) -> Result<Vec<vault::Mention>, String> {
     let root = PathBuf::from(vault);
-    // Scans every note's text; same isolation as search, for the same reason.
-    std::panic::catch_unwind(|| vault::unlinked_mentions(&root, &path))
-        .map_err(|_| "scanning for mentions failed on this vault".to_string())?
-        .map_err(|e| e.to_string())
+    off_main(move || {
+        // Scans every note's text; same isolation as search, for the same reason.
+        std::panic::catch_unwind(|| vault::unlinked_mentions(&root, &path))
+            .map_err(|_| "scanning for mentions failed on this vault".to_string())?
+            .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// Turn plain-text mentions of `name` inside `path` into `[[name]]` links.
 #[tauri::command]
-fn link_mentions(vault: String, path: String, name: String) -> Result<usize, String> {
+async fn link_mentions(vault: String, path: String, name: String) -> Result<usize, String> {
     let root = PathBuf::from(vault);
     vault::safe_join(&root, &path).ok_or_else(|| "invalid path".to_string())?;
-    let _ = vault::snapshot(&root, &path);
-    vault::link_mentions(&root, &path, &name).map_err(|e| e.to_string())
+    off_main(move || {
+        let _ = vault::snapshot(&root, &path);
+        vault::link_mentions(&root, &path, &name).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn related_notes(
+async fn related_notes(
     vault: String,
     path: String,
     limit: Option<usize>,
 ) -> Result<Vec<vault::RelatedNote>, String> {
-    vault::related_notes(&PathBuf::from(vault), &path, limit.unwrap_or(8))
-        .map_err(|e| e.to_string())
+    off_main(move || {
+        vault::related_notes(&PathBuf::from(vault), &path, limit.unwrap_or(8))
+            .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 // --- Optional remote (WebDAV) vault ---------------------------------------
