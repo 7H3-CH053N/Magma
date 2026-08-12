@@ -8,6 +8,8 @@ import {
   hasTauri,
   checkForAppUpdate,
   importWordpress,
+  onImportProgress,
+  type ImportProgress,
   installAppUpdate,
   installCodexMcp,
   installMcp,
@@ -121,15 +123,28 @@ export default function Settings({
   const [impWarn, setImpWarn] = useState<string | null>(null);
   const [impInfo, setImpInfo] = useState<string | null>(null);
   const [impErr, setImpErr] = useState<string | null>(null);
+  const [impProgress, setImpProgress] = useState<ImportProgress | null>(null);
 
   const runImport = async () => {
-    if (!vault || !impUrl.trim()) return;
+    // Saying nothing at all is what makes an import look broken. If there is
+    // nothing to import from, say which half is missing.
+    if (!vault) {
+      setImpErr(t("settings.importNoVault"));
+      return;
+    }
+    if (!impUrl.trim()) {
+      setImpErr(t("settings.importNoUrl"));
+      return;
+    }
     setImpErr(null);
     setImpDone(null);
     setImpWarn(null);
     setImpInfo(null);
+    setImpProgress(null);
     setImpBusy(true);
+    let unlisten: (() => void) | null = null;
     try {
+      unlisten = await onImportProgress(setImpProgress);
       const res = await importWordpress(
         vault,
         impFolder.trim(),
@@ -158,7 +173,9 @@ export default function Settings({
     } catch (e) {
       setImpErr(String(e));
     } finally {
+      unlisten?.();
       setImpBusy(false);
+      setImpProgress(null);
     }
   };
 
@@ -610,6 +627,36 @@ export default function Settings({
               >
                 {impBusy ? t("settings.importing") : t("settings.importRun")}
               </button>
+              {/* Fetching has no denominator — WordPress only reveals the total
+                  when pagination runs out — so that half is an indeterminate
+                  bar with a live count, and writing is a real one. Either way
+                  something moves, which is the whole point. */}
+              {impBusy && (
+                <div className="flex flex-col gap-1">
+                  <div className="h-1 w-full overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+                    {impProgress?.total ? (
+                      <div
+                        className="h-full rounded-full bg-magma-accent transition-[width] duration-300"
+                        style={{
+                          width: `${Math.round((impProgress.done / impProgress.total) * 100)}%`,
+                        }}
+                      />
+                    ) : (
+                      <div className="h-full w-1/3 animate-pulse rounded-full bg-magma-accent" />
+                    )}
+                  </div>
+                  <p className="text-xs text-magma-muted">
+                    {impProgress
+                      ? impProgress.stage === "writing"
+                        ? t("settings.importWriting", {
+                            done: String(impProgress.done),
+                            total: String(impProgress.total ?? 0),
+                          })
+                        : t("settings.importFetching", { done: String(impProgress.done) })
+                      : t("settings.importConnecting")}
+                  </p>
+                </div>
+              )}
               {impDone && (
                 <p className="text-xs text-green-600 dark:text-green-400">{impDone}</p>
               )}

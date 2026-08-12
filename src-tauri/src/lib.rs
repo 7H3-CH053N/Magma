@@ -6,7 +6,7 @@ use magma_core as vault;
 use magma_webdav as webdav;
 use serde_json::json;
 use std::path::PathBuf;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
 use toml_edit::{value, Array, DocumentMut, Item, Table};
 
@@ -154,9 +154,14 @@ async fn list_folders(vault: String) -> Result<Vec<String>, String> {
     off_main(move || vault::list_folders(&PathBuf::from(vault)).map_err(|e| e.to_string())).await
 }
 
+/// The event the import reports its progress on. The window listens for it and
+/// draws the bar; a blog import is otherwise minutes of nothing.
+const IMPORT_PROGRESS_EVENT: &str = "import-progress";
+
 /// Import a WordPress blog into a folder, returning how many notes were written.
 #[tauri::command]
 async fn import_wordpress(
+    app: tauri::AppHandle,
     vault: String,
     folder: String,
     site_url: String,
@@ -167,12 +172,17 @@ async fn import_wordpress(
     let author = author.unwrap_or_default();
     let author_note = author_note.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
-        magma_import::import_wordpress(
+        magma_import::import_wordpress_reporting(
             &PathBuf::from(vault),
             &folder,
             &site_url,
             &author,
             &author_note,
+            // Best-effort: a progress event that cannot be delivered must never
+            // abort the import it is only describing.
+            &|p| {
+                let _ = app.emit(IMPORT_PROGRESS_EVENT, p);
+            },
         )
     })
     .await

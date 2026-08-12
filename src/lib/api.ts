@@ -104,6 +104,23 @@ export interface ImportSummary {
   created: string[];
 }
 
+/** How far the blog import has got. `total` is unknown while posts are still
+ *  being fetched — WordPress does not say how many there are until pagination
+ *  runs out. */
+export interface ImportProgress {
+  stage: "fetching" | "writing";
+  done: number;
+  total: number | null;
+}
+
+/** Listen for import progress. Returns the unlisten function. */
+export async function onImportProgress(
+  handler: (p: ImportProgress) => void
+): Promise<() => void> {
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<ImportProgress>("import-progress", (e) => handler(e.payload));
+}
+
 export async function importWordpress(
   vault: string,
   folder: string,

@@ -116,7 +116,31 @@ pub fn import_wordpress(
     author_override: &str,
     author_note: &str,
 ) -> Result<ImportSummary, String> {
-    let mut posts = fetch_posts(site_url)?;
+    import_wordpress_reporting(
+        vault,
+        folder,
+        site_url,
+        author_override,
+        author_note,
+        &|_| {},
+    )
+}
+
+/// `import_wordpress`, reporting how far it has got.
+///
+/// A blog import is minutes of silence otherwise: fetching a large site with
+/// `_embed=1` is slow, and a button reading "importing" cannot tell a working
+/// import from a stuck one. The callback runs on the calling thread — the
+/// desktop shell turns it into an event for the window.
+pub fn import_wordpress_reporting(
+    vault: &Path,
+    folder: &str,
+    site_url: &str,
+    author_override: &str,
+    author_note: &str,
+    on_progress: &dyn Fn(ImportProgress),
+) -> Result<ImportSummary, String> {
+    let mut posts = fetch_posts_reporting(site_url, on_progress)?;
     if posts.is_empty() {
         return Err("no posts found — is this a WordPress site with the REST API enabled?".into());
     }
@@ -224,8 +248,12 @@ pub fn import_wordpress(
         merged,
         created,
     };
-    for note in built.notes {
+    // Past this point the total is known, so the bar can stop guessing and
+    // start filling.
+    let total = built.notes.len();
+    for (i, note) in built.notes.into_iter().enumerate() {
         magma_core::write_note(vault, &note.rel, &note.markdown).map_err(|e| e.to_string())?;
+        on_progress(ImportProgress::new("writing", i + 1, Some(total)));
     }
 
     // Notes the vault already had (your author profile, a category you'd written
@@ -247,8 +275,61 @@ pub fn import_wordpress(
     Ok(summary)
 }
 
+/// Every HTTP call the import makes goes through this.
+///
+/// `ureq::get` on its own has no read timeout: a server that accepts the
+/// connection and then says nothing leaves the import waiting forever, and the
+/// only thing the user sees is a button that stays on "importing". A stall has
+/// to become an error message, and these are the bounds that make it one.
+fn agent() -> &'static ureq::Agent {
+    static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+    AGENT.get_or_init(build_agent)
+}
+
+fn build_agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(15))
+        // Generous, because `_embed=1` on a big site is genuinely slow to
+        // assemble — but finite.
+        .timeout_read(std::time::Duration::from_secs(60))
+        .timeout_write(std::time::Duration::from_secs(30))
+        .build()
+}
+
+/// How far along the import is, for the progress bar.
+///
+/// WordPress does not say how many posts there are until pagination runs out,
+/// so `total` stays `None` until it is actually known rather than guessing a
+/// denominator and jumping about.
+#[derive(serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportProgress {
+    /// `fetching`, `writing`, or `linking` — named so the UI can translate it
+    /// rather than display an English string from the core.
+    pub stage: String,
+    pub done: usize,
+    pub total: Option<usize>,
+}
+
+impl ImportProgress {
+    fn new(stage: &str, done: usize, total: Option<usize>) -> Self {
+        Self {
+            stage: stage.to_string(),
+            done,
+            total,
+        }
+    }
+}
+
 /// Fetch all posts from `<site>/wp-json/wp/v2/posts`, following pagination.
 fn fetch_posts(site_url: &str) -> Result<Vec<Post>, String> {
+    fetch_posts_reporting(site_url, &|_| {})
+}
+
+fn fetch_posts_reporting(
+    site_url: &str,
+    on_progress: &dyn Fn(ImportProgress),
+) -> Result<Vec<Post>, String> {
     let base = normalize_base(site_url);
     // Resolve author id -> name up front. Embedding the author per-post relies
     // on the /users endpoint, which many security plugins block; a single list
@@ -261,7 +342,7 @@ fn fetch_posts(site_url: &str) -> Result<Vec<Post>, String> {
         // (categories/tags); the `authors` map is the fallback when the author
         // relation isn't embeddable.
         let url = format!("{base}/wp-json/wp/v2/posts?per_page=100&page={page}&_embed=1");
-        let body = match ureq::get(&url).call() {
+        let body = match agent().get(&url).call() {
             Ok(resp) => resp.into_string().map_err(|e| e.to_string())?,
             // WP returns 400 once the page number exceeds the total pages.
             Err(ureq::Error::Status(400, _)) => break,
@@ -275,6 +356,9 @@ fn fetch_posts(site_url: &str) -> Result<Vec<Post>, String> {
         for item in &arr {
             posts.push(extract_post(item, &authors));
         }
+        // Posts found so far. The total is unknown until pagination ends, so
+        // this counts up without a denominator rather than inventing one.
+        on_progress(ImportProgress::new("fetching", posts.len(), None));
         if arr.len() < 100 {
             break;
         }
@@ -384,7 +468,7 @@ fn resolve_authors_via_feed(base: &str, posts: &[Post]) -> HashMap<u64, String> 
         } else {
             format!("{base}/feed/?paged={page}")
         };
-        let body = match ureq::get(&url).call() {
+        let body = match agent().get(&url).call() {
             Ok(resp) => match resp.into_string() {
                 Ok(b) => b,
                 Err(_) => break,
@@ -418,7 +502,7 @@ fn fetch_authors(base: &str) -> HashMap<u64, String> {
     let mut page = 1;
     loop {
         let url = format!("{base}/wp-json/wp/v2/users?per_page=100&page={page}");
-        let body = match ureq::get(&url).call() {
+        let body = match agent().get(&url).call() {
             Ok(resp) => match resp.into_string() {
                 Ok(b) => b,
                 Err(_) => break,
