@@ -98,14 +98,42 @@ jobs:
         if: matrix.target != ''
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - run: npm ci
+      # `createUpdaterArtifacts` is on, and Tauri signs those artifacts with a
+      # key only the repo owner can generate. It does that *after* writing the
+      # installer, so a missing key used to fail the job with the .dmg/.msi
+      # already sitting on disk — and the upload step never ran. An unsigned
+      # test build is worth having, so detect the key and drop the updater
+      # artifacts when it is absent. Cutting a release still needs it: the
+      # release job below refuses to publish without the signatures.
+      - name: Check for an updater signing key
+        id: signing
+        shell: bash
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -n "$KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not set. Building installers only — this run cannot feed the in-app updater. See the Auto-update section of the README."
+          fi
       - name: Build desktop app
+        shell: bash
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: >
-          npm run tauri build --
-          --bundles ${{ matrix.bundles }}
-          ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
+          BUNDLES: ${{ matrix.bundles }}
+          TARGET: ${{ matrix.target }}
+          HAVE_KEY: ${{ steps.signing.outputs.present }}
+        run: |
+          args=(--bundles "$BUNDLES")
+          if [ -n "$TARGET" ]; then
+            args+=(--target "$TARGET")
+          fi
+          if [ "$HAVE_KEY" != "true" ]; then
+            args+=(--config '{"bundle":{"createUpdaterArtifacts":false}}')
+          fi
+          npm run tauri build -- "${args[@]}"
       - name: Upload desktop bundle
         uses: actions/upload-artifact@v4
         with:
@@ -148,7 +176,14 @@ jobs:
           def one(pattern):
               matches = sorted(root.glob(pattern))
               if not matches:
-                  raise SystemExit(f"missing release artifact: {pattern}")
+                  raise SystemExit(
+                      f"missing release artifact: {pattern}\n"
+                      "The bundle job builds updater artifacts only when "
+                      "TAURI_SIGNING_PRIVATE_KEY is set. Generate the key "
+                      "(see the README's Auto-update section), add it as a "
+                      "repository secret, and re-run — a release without the "
+                      "signatures is one the in-app updater cannot use."
+                  )
               return matches[0]
 
           mac = one("**/*.app.tar.gz")
