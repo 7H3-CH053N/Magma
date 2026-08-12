@@ -149,7 +149,7 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "graph.conceptsHint":
       "Terms that keep appearing near each other. This counts words, it does not read meaning.",
     "graph.conceptsOmitted": "{n} rarer terms left out.",
-    "graph.conceptsOffline": "{n} notes are not on this Mac — iCloud has not downloaded them, so their terms are missing.",
+    "graph.conceptsOffline": "{n} notes could not be read: their contents are not on this disk. Their terms are missing from the map.",
     "graph.conceptNotes": "in {notes} notes · written {times} times",
     "graph.conceptMore": "and {n} more.",
     "graph.conceptNoNotes": "No notes came back for this term.",
@@ -415,7 +415,7 @@ const STRINGS: Record<Lang, Record<string, string>> = {
     "graph.conceptsHint":
       "Begriffe, die immer wieder nebeneinander auftauchen. Gezählt werden Wörter, gelesen wird keine Bedeutung.",
     "graph.conceptsOmitted": "{n} seltenere Begriffe weggelassen.",
-    "graph.conceptsOffline": "{n} Notizen liegen nicht auf diesem Mac — iCloud hat sie nicht geladen, ihre Begriffe fehlen.",
+    "graph.conceptsOffline": "{n} Notizen konnten nicht gelesen werden: ihr Inhalt liegt nicht auf dieser Festplatte. Ihre Begriffe fehlen in der Karte.",
     "graph.conceptNotes": "in {notes} Notizen · {times}× geschrieben",
     "graph.conceptMore": "und {n} weitere.",
     "graph.conceptNoNotes": "Zu diesem Begriff kamen keine Notizen zurück.",
