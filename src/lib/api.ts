@@ -458,6 +458,8 @@ export interface ConceptGraph {
   edges: ConceptEdge[];
   /** Terms frequent enough to qualify that did not fit the node cap. */
   omitted: number;
+  /** Notes whose contents are not on this disk — an un-downloaded cloud file. */
+  offline: number;
   /** One name per cluster, by index: the heaviest term in it. */
   clusterNames: string[];
 }

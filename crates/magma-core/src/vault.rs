@@ -120,14 +120,19 @@ fn is_dataless(meta: &fs::Metadata) -> bool {
 #[cfg(windows)]
 fn is_dataless(meta: &fs::Metadata) -> bool {
     use std::os::windows::fs::MetadataExt as _;
-    // OneDrive Files On-Demand and Dropbox mark placeholders with these.
-    const FILE_ATTRIBUTE_OFFLINE: u32 = 0x0000_1000;
+    // The two flags that actually mean "this file is a placeholder": OneDrive
+    // Files On-Demand and anything else built on the Cloud Filter API set them
+    // when a file is dehydrated.
     const FILE_ATTRIBUTE_RECALL_ON_OPEN: u32 = 0x0004_0000;
     const FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS: u32 = 0x0040_0000;
-    meta.file_attributes()
-        & (FILE_ATTRIBUTE_OFFLINE
-            | FILE_ATTRIBUTE_RECALL_ON_OPEN
-            | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS)
+    // Deliberately *not* FILE_ATTRIBUTE_OFFLINE (0x1000). That is the old
+    // Remote Storage flag, it says nothing reliable about a cloud file, and
+    // backup software sets it on files that are perfectly local. Treating it
+    // as "do not read" would make a note vanish from search and the graph on a
+    // machine where nothing is wrong — OneDrive stopped setting it for exactly
+    // that reason. A missed placeholder only costs a slow read; a false one
+    // costs the note.
+    meta.file_attributes() & (FILE_ATTRIBUTE_RECALL_ON_OPEN | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS)
         != 0
 }
 
@@ -181,6 +186,16 @@ pub fn read_for_scan(path: &Path) -> String {
         Ok(_) => fs::read_to_string(path).unwrap_or_default(),
         Err(_) => String::new(),
     }
+}
+
+/// True when this note is a cloud placeholder whose contents are not on disk.
+///
+/// [`read_for_scan`] reads such a note as empty, which is how a scan avoids
+/// hanging on it. This is how a caller tells that apart from a note that is
+/// genuinely empty — the difference is the whole reason a result looks thin,
+/// and worth saying out loud rather than leaving the user to guess.
+pub fn is_offline(path: &Path) -> bool {
+    fs::metadata(path).map(|m| is_dataless(&m)).unwrap_or(false)
 }
 
 fn rel_path(root: &Path, path: &Path) -> String {
