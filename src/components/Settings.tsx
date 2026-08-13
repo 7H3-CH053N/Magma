@@ -1,17 +1,23 @@
 import { useEffect, useState } from "react";
-import FlameIcon from "./FlameIcon";
+import { MagmaMark } from "./MagmaMark";
 import { useI18n, type Lang } from "../lib/i18n";
 import { useTheme, FONT_PRESETS, type ThemeMode } from "../lib/theme";
 import { usePrefs } from "../lib/prefs";
 import {
   codexMcpConfig,
   hasTauri,
+  checkForAppUpdate,
   importWordpress,
+  onImportProgress,
+  type ImportProgress,
+  installAppUpdate,
   installCodexMcp,
   installMcp,
   mcpConfig,
+  type AppUpdate,
   type NoteMeta,
   type RemoteConfig,
+  type UpdateProgress,
 } from "../lib/api";
 
 interface SettingsProps {
@@ -35,6 +41,18 @@ function savedRemote(): { url: string; username: string } {
     /* ignore */
   }
   return { url: "", username: "" };
+}
+
+function updateErrorKey(error: unknown): string {
+  const text = String(error).toLowerCase();
+  if (
+    text.includes("valid release json") ||
+    text.includes("status code: 404") ||
+    text.includes("not found")
+  ) {
+    return "settings.updateNoManifest";
+  }
+  return "settings.updateFailed";
 }
 
 /**
@@ -69,6 +87,10 @@ export default function Settings({
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<string | null>(null);
+  const [updateErr, setUpdateErr] = useState<string | null>(null);
+  const [availableUpdate, setAvailableUpdate] = useState<AppUpdate | null>(null);
 
   // MCP setup state.
   const [mcpBusy, setMcpBusy] = useState(false);
@@ -101,15 +123,28 @@ export default function Settings({
   const [impWarn, setImpWarn] = useState<string | null>(null);
   const [impInfo, setImpInfo] = useState<string | null>(null);
   const [impErr, setImpErr] = useState<string | null>(null);
+  const [impProgress, setImpProgress] = useState<ImportProgress | null>(null);
 
   const runImport = async () => {
-    if (!vault || !impUrl.trim()) return;
+    // Saying nothing at all is what makes an import look broken. If there is
+    // nothing to import from, say which half is missing.
+    if (!vault) {
+      setImpErr(t("settings.importNoVault"));
+      return;
+    }
+    if (!impUrl.trim()) {
+      setImpErr(t("settings.importNoUrl"));
+      return;
+    }
     setImpErr(null);
     setImpDone(null);
     setImpWarn(null);
     setImpInfo(null);
+    setImpProgress(null);
     setImpBusy(true);
+    let unlisten: (() => void) | null = null;
     try {
+      unlisten = await onImportProgress(setImpProgress);
       const res = await importWordpress(
         vault,
         impFolder.trim(),
@@ -138,7 +173,9 @@ export default function Settings({
     } catch (e) {
       setImpErr(String(e));
     } finally {
+      unlisten?.();
       setImpBusy(false);
+      setImpProgress(null);
     }
   };
 
@@ -211,6 +248,48 @@ export default function Settings({
       setErr(String(e));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const renderUpdateProgress = (progress: UpdateProgress) => {
+    if (progress.status === "checking") setUpdateInfo(t("settings.updateChecking"));
+    else if (progress.status === "available") {
+      setAvailableUpdate(progress.update);
+      setUpdateInfo(t("settings.updateFound", { version: progress.update.version }));
+    } else if (progress.status === "none") setUpdateInfo(t("settings.updateNone"));
+    else if (progress.status === "downloading") {
+      const mb = (progress.downloaded / 1024 / 1024).toFixed(1);
+      const total = progress.total ? ` / ${(progress.total / 1024 / 1024).toFixed(1)} MB` : " MB";
+      setUpdateInfo(t("settings.updateDownloading", { progress: `${mb}${total}` }));
+    } else if (progress.status === "installing") setUpdateInfo(t("settings.updateInstalling"));
+    else setUpdateInfo(t("settings.updateRelaunching"));
+  };
+
+  const checkUpdates = async () => {
+    setUpdateErr(null);
+    setUpdateInfo(t("settings.updateChecking"));
+    setUpdateBusy(true);
+    try {
+      const update = await checkForAppUpdate();
+      setAvailableUpdate(update);
+      setUpdateInfo(update ? t("settings.updateFound", { version: update.version }) : t("settings.updateNone"));
+    } catch (e) {
+      setUpdateErr(t(updateErrorKey(e)));
+      setUpdateInfo(null);
+    } finally {
+      setUpdateBusy(false);
+    }
+  };
+
+  const installUpdate = async () => {
+    setUpdateErr(null);
+    setUpdateBusy(true);
+    try {
+      await installAppUpdate(renderUpdateProgress);
+    } catch (e) {
+      setUpdateErr(t(updateErrorKey(e)));
+    } finally {
+      setUpdateBusy(false);
     }
   };
 
@@ -548,6 +627,36 @@ export default function Settings({
               >
                 {impBusy ? t("settings.importing") : t("settings.importRun")}
               </button>
+              {/* Fetching has no denominator — WordPress only reveals the total
+                  when pagination runs out — so that half is an indeterminate
+                  bar with a live count, and writing is a real one. Either way
+                  something moves, which is the whole point. */}
+              {impBusy && (
+                <div className="flex flex-col gap-1">
+                  <div className="h-1 w-full overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+                    {impProgress?.total ? (
+                      <div
+                        className="h-full rounded-full bg-magma-accent transition-[width] duration-300"
+                        style={{
+                          width: `${Math.round((impProgress.done / impProgress.total) * 100)}%`,
+                        }}
+                      />
+                    ) : (
+                      <div className="h-full w-1/3 animate-pulse rounded-full bg-magma-accent" />
+                    )}
+                  </div>
+                  <p className="text-xs text-magma-muted">
+                    {impProgress
+                      ? impProgress.stage === "writing"
+                        ? t("settings.importWriting", {
+                            done: String(impProgress.done),
+                            total: String(impProgress.total ?? 0),
+                          })
+                        : t("settings.importFetching", { done: String(impProgress.done) })
+                      : t("settings.importConnecting")}
+                  </p>
+                </div>
+              )}
               {impDone && (
                 <p className="text-xs text-green-600 dark:text-green-400">{impDone}</p>
               )}
@@ -654,7 +763,7 @@ export default function Settings({
         {tab === "about" && (
         /* About */
         <section className="flex flex-col items-center gap-2 rounded-xl bg-black/[0.03] p-6 text-center dark:bg-white/[0.04]">
-          <FlameIcon size={56} />
+          <MagmaMark size={56} />
           <div className="text-lg font-semibold tracking-tight">Magma</div>
           <div className="text-sm text-magma-muted">
             {t("settings.version", { version: __APP_VERSION__, build: __BUILD_ID__ })}
@@ -673,6 +782,38 @@ export default function Settings({
               vibecraft.rocks
             </a>
             <div className="mt-1 opacity-80">{t("settings.license")}</div>
+          </div>
+          <div className="mt-3 w-full max-w-md border-t border-black/10 pt-4 dark:border-white/10">
+            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-magma-muted">
+              {t("settings.updateTitle")}
+            </div>
+            <p className="mb-3 text-xs leading-relaxed text-magma-muted">
+              {t("settings.updateBody")}
+            </p>
+            <div className="flex justify-center gap-2">
+              <button
+                onClick={checkUpdates}
+                disabled={updateBusy}
+                className="rounded-lg border border-black/10 px-3 py-1.5 text-sm text-magma-muted transition hover:border-black/20 hover:text-magma-ink disabled:opacity-50 dark:border-white/15 dark:hover:border-white/30"
+              >
+                {updateBusy ? t("settings.updateBusy") : t("settings.updateCheck")}
+              </button>
+              <button
+                onClick={installUpdate}
+                disabled={updateBusy || !hasTauri}
+                className="rounded-lg bg-magma-accent px-3 py-1.5 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+              >
+                {availableUpdate
+                  ? t("settings.updateInstall", { version: availableUpdate.version })
+                  : t("settings.updateInstallLatest")}
+              </button>
+            </div>
+            {updateInfo && (
+              <p className="mt-2 whitespace-pre-line text-xs text-green-600 dark:text-green-400">
+                {updateInfo}
+              </p>
+            )}
+            {updateErr && <p className="mt-2 text-xs text-red-500">{updateErr}</p>}
           </div>
         </section>
         )}

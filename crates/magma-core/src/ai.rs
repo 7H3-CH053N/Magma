@@ -43,7 +43,7 @@ pub fn find_link_candidates(
     let notes = vault::list_notes(vault)?;
     let mut scored: Vec<LinkCandidate> = Vec::new();
     for note in notes {
-        let content = std::fs::read_to_string(vault.join(&note.path)).unwrap_or_default();
+        let content = vault::read_for_scan(&vault.join(&note.path));
         let mut haystack = note.title.clone();
         haystack.push(' ');
         haystack.push_str(&content);

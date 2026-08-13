@@ -353,7 +353,7 @@ fn collect_pages(root: &Path, dir: &Path, pages: &mut Vec<Page>) -> std::io::Res
         if path.is_dir() {
             collect_pages(root, &path, pages)?;
         } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
-            let content = fs::read_to_string(&path).unwrap_or_default();
+            let content = crate::vault::read_for_scan(&path);
             let rel = path
                 .strip_prefix(root)
                 .unwrap_or(&path)

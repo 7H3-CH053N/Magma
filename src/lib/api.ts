@@ -2,6 +2,8 @@
 // Kept isolated so the UI can be developed (and tested) against a mock
 // when the desktop shell is not available.
 import { invoke } from "@tauri-apps/api/core";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check, type DownloadEvent } from "@tauri-apps/plugin-updater";
 
 export interface NoteMeta {
   /** Path relative to the vault root, e.g. "ideas/second-brain.md". */
@@ -100,6 +102,23 @@ export interface ImportSummary {
   merged: string[];
   /** Author notes the import created itself, as "Name → path". */
   created: string[];
+}
+
+/** How far the blog import has got. `total` is unknown while posts are still
+ *  being fetched — WordPress does not say how many there are until pagination
+ *  runs out. */
+export interface ImportProgress {
+  stage: "fetching" | "writing";
+  done: number;
+  total: number | null;
+}
+
+/** Listen for import progress. Returns the unlisten function. */
+export async function onImportProgress(
+  handler: (p: ImportProgress) => void
+): Promise<() => void> {
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<ImportProgress>("import-progress", (e) => handler(e.payload));
 }
 
 export async function importWordpress(
@@ -456,6 +475,8 @@ export interface ConceptGraph {
   edges: ConceptEdge[];
   /** Terms frequent enough to qualify that did not fit the node cap. */
   omitted: number;
+  /** Notes whose contents are not on this disk — an un-downloaded cloud file. */
+  offline: number;
   /** One name per cluster, by index: the heaviest term in it. */
   clusterNames: string[];
 }
@@ -469,6 +490,71 @@ export async function conceptGraph(
   exclude?: string[]
 ): Promise<ConceptGraph> {
   return invoke("concept_graph", { vault, exclude });
+}
+
+export interface AppUpdate {
+  currentVersion: string;
+  version: string;
+  date?: string;
+  body?: string;
+}
+
+export type UpdateProgress =
+  | { status: "checking" }
+  | { status: "available"; update: AppUpdate }
+  | { status: "none" }
+  | { status: "downloading"; downloaded: number; total?: number }
+  | { status: "installing" }
+  | { status: "relaunching" };
+
+export async function checkForAppUpdate(): Promise<AppUpdate | null> {
+  if (!hasTauri) return null;
+  const update = await check();
+  if (!update) return null;
+  return {
+    currentVersion: update.currentVersion,
+    version: update.version,
+    date: update.date,
+    body: update.body,
+  };
+}
+
+export async function installAppUpdate(
+  onProgress: (progress: UpdateProgress) => void
+): Promise<void> {
+  if (!hasTauri) return;
+  onProgress({ status: "checking" });
+  const update = await check();
+  if (!update) {
+    onProgress({ status: "none" });
+    return;
+  }
+  onProgress({
+    status: "available",
+    update: {
+      currentVersion: update.currentVersion,
+      version: update.version,
+      date: update.date,
+      body: update.body,
+    },
+  });
+
+  let downloaded = 0;
+  let total: number | undefined;
+  await update.downloadAndInstall((event: DownloadEvent) => {
+    if (event.event === "Started") {
+      downloaded = 0;
+      total = event.data.contentLength;
+      onProgress({ status: "downloading", downloaded, total });
+    } else if (event.event === "Progress") {
+      downloaded += event.data.chunkLength;
+      onProgress({ status: "downloading", downloaded, total });
+    } else {
+      onProgress({ status: "installing" });
+    }
+  });
+  onProgress({ status: "relaunching" });
+  await relaunch();
 }
 
 export { hasTauri };

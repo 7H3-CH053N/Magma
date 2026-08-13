@@ -424,6 +424,11 @@ pub struct ConceptGraph {
     /// rather than dropped quietly, so a trimmed graph never passes for a
     /// complete one.
     pub omitted: usize,
+    /// Notes that could not be read because the contents are not on this disk
+    /// — an iCloud Drive or OneDrive placeholder. Reported for the same reason
+    /// as `omitted`: a graph built from half the vault must not pass for one
+    /// built from all of it.
+    pub offline: usize,
     /// A name for each cluster, by index: its heaviest term.
     ///
     /// "Thema 1" through "Thema 7" is a legend that tells you nothing. The
@@ -458,6 +463,8 @@ pub fn concept_graph(
     // Capitalisation evidence, counted only away from sentence starts.
     let mut mid_total: Vec<usize> = Vec::new();
     let mut mid_caps: Vec<usize> = Vec::new();
+    // Notes the cloud has not put back on the disk, and so could not be read.
+    let mut offline = 0usize;
 
     for meta in vault::list_notes(vault)? {
         let lower = meta.path.to_lowercase();
@@ -467,12 +474,26 @@ pub fn concept_graph(
         {
             continue;
         }
-        let Ok(note) = vault::read_note(vault, &meta.path) else {
+        // A vault-wide read: this must not be `read_note`, which downloads a
+        // cloud placeholder and blocks until it lands. Building the term map is
+        // not a good enough reason to pull a whole iCloud vault over the wire —
+        // that is what made the graph sit on "reading notes" forever.
+        let content = vault::read_for_scan(&vault.join(&meta.path));
+        if content.is_empty() {
+            // An empty read is either a note with nothing in it or one that is
+            // not on this disk. Only the second is worth reporting.
+            if vault::is_offline(&vault.join(&meta.path)) {
+                offline += 1;
+            }
+            // Either way it carries no evidence, so it stays out of the note
+            // count as well — `doc_ceiling` is a share of the notes actually
+            // read, and padding it with blanks would weaken the filter that
+            // drops grammar words.
             continue;
-        };
+        }
         let mut stream = Vec::new();
         let mut seen_here: Vec<u32> = Vec::new();
-        for term in terms(&note.content) {
+        for term in terms(&content) {
             let id = match ids.get(&term.folded) {
                 Some(id) => *id,
                 None => {
@@ -627,6 +648,7 @@ pub fn concept_graph(
         nodes,
         edges,
         omitted,
+        offline,
         cluster_names,
     })
 }
@@ -909,6 +931,39 @@ mod tests {
             "{:?}",
             g.edges
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The graph used to read every note with `read_note`, which downloads a
+    /// cloud placeholder and waits. On an iCloud vault that meant it never
+    /// finished — it sat on "reading notes" while the whole vault came down the
+    /// wire. It reads through the scan path now, so a note it cannot get is
+    /// skipped instead of blocked on.
+    ///
+    /// The eviction flag cannot be set on Linux, so what is pinned here is the
+    /// rest of the contract: an unreadable note does not stop the graph, and it
+    /// is not miscounted as offline when it is merely empty.
+    #[test]
+    fn a_note_that_cannot_be_read_does_not_stop_the_graph() {
+        let dir = tmp_vault("unreadable");
+        write(
+            &dir,
+            "a.md",
+            "Die Zinsberechnung der Hypothek ist komplex. Zinsberechnung und Hypothek gehören zusammen. Eine Hypothek braucht Zinsberechnung.",
+        );
+        write(
+            &dir,
+            "b.md",
+            "Hypothek und Zinsberechnung wieder. Die Hypothek der Zinsberechnung.",
+        );
+        // Empty, not evicted — carries no terms and is nobody's fault.
+        write(&dir, "leer.md", "");
+
+        let g = concept_graph(&dir, &[], ConceptOptions::default()).unwrap();
+
+        let labels: Vec<&str> = g.nodes.iter().map(|n| n.label.as_str()).collect();
+        assert!(labels.contains(&"Hypothek"), "{labels:?}");
+        assert_eq!(g.offline, 0, "an empty note is not an offline one");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

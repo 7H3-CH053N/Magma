@@ -210,6 +210,9 @@ export default function GraphView({
   const [details, setDetails] = useState<Map<string, ConceptNode>>(new Map());
   const [picked, setPicked] = useState<ConceptNode | null>(null);
   const [conceptOmitted, setConceptOmitted] = useState(0);
+  // Notes iCloud has not put back on the disk. A graph built without them
+  // looks thin for a reason the user cannot otherwise see.
+  const [conceptOffline, setConceptOffline] = useState(0);
   const [conceptBusy, setConceptBusy] = useState(false);
   const [conceptError, setConceptError] = useState<string | null>(null);
 
@@ -229,6 +232,7 @@ export default function GraphView({
         setConcepts(view.graph);
         setDetails(view.details);
         setConceptOmitted(result.omitted);
+        setConceptOffline(result.offline);
       })
       .catch((e) => !cancelled && setConceptError(String(e)))
       .finally(() => !cancelled && setConceptBusy(false));
@@ -797,7 +801,13 @@ export default function GraphView({
           {mode === "concepts"
             ? conceptBusy
               ? t("graph.conceptsBusy")
-              : (conceptError ?? t("graph.conceptsEmpty"))
+              : (conceptError ??
+                // A vault whose notes are all still in the cloud produces an
+                // empty graph. Saying "no terms found" there would blame the
+                // notes for something the sync did.
+                (conceptOffline > 0
+                  ? t("graph.conceptsOffline", { n: String(conceptOffline) })
+                  : t("graph.conceptsEmpty")))
             : t("graph.empty")}
         </div>
       )}
@@ -958,6 +968,7 @@ export default function GraphView({
           <span className="max-w-[24rem] text-right">
             {t("graph.conceptsHint")}
             {conceptOmitted > 0 && ` ${t("graph.conceptsOmitted", { n: String(conceptOmitted) })}`}
+            {conceptOffline > 0 && ` ${t("graph.conceptsOffline", { n: String(conceptOffline) })}`}
           </span>
         )}
         {/* Why the dots differ in size — otherwise it reads as decoration. */}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import FlameIcon from "./FlameIcon";
+import { MagmaMark } from "./MagmaMark";
 import { useI18n } from "../lib/i18n";
 
 /**
@@ -30,7 +30,7 @@ export default function Splash() {
     >
       <div className="flex flex-col items-center gap-4">
         <div className="animate-pulse">
-          <FlameIcon size={72} />
+          <MagmaMark size={72} />
         </div>
         <div className="text-2xl font-semibold tracking-tight text-[#f3ede4]">Magma</div>
         <div className="text-xs text-[#9a8f82]">{t("app.tagline")}</div>

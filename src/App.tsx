@@ -11,7 +11,7 @@ import Onboarding, { onboardingSeen } from "./components/Onboarding";
 import AiReview from "./components/AiReview";
 import Splash from "./components/Splash";
 import Settings from "./components/Settings";
-import FlameIcon from "./components/FlameIcon";
+import { MagmaMark } from "./components/MagmaMark";
 import PromptDialog from "./components/PromptDialog";
 import ConfirmDialog from "./components/ConfirmDialog";
 import NodePreview from "./components/NodePreview";
@@ -935,7 +935,7 @@ function EmptyState({
   const { t } = useI18n();
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 px-8 text-center text-magma-muted">
-      <FlameIcon size={44} />
+      <MagmaMark size={44} />
       <h1 className="text-xl font-semibold tracking-tight text-magma-ink dark:text-[#ece9e4]">
         {t("app.tagline")}
       </h1>

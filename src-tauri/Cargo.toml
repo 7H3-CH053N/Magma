@@ -1,6 +1,6 @@
 [package]
 name = "magma"
-version = "0.1.4"
+version = "0.1.5"
 description = "A beautiful, LLM-native second brain"
 authors = ["Magma contributors"]
 edition = "2021"
@@ -23,6 +23,8 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml_edit = "0.25"
+tauri-plugin-updater = "2.10.1"
+tauri-plugin-process = "2.3.1"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

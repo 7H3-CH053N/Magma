@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/magma-dark.svg" />
+    <img src="assets/magma-light.svg" alt="" width="88" height="84" />
+  </picture>
+</p>
+
 # Magma
 
 [English](README.md) · **Deutsch**
@@ -266,6 +273,34 @@ npm run tauri build      # erzeugt das DMG (macOS) / MSI (Windows)
 
 Das Installationsprogramm liegt danach in `src-tauri/target/release/bundle/`.
 
+### Updates veröffentlichen
+
+Die installierte App prüft
+`https://github.com/7H3-CH053N/Magma/releases/latest/download/latest.json` und
+installiert nur, was mit dem Updater-Schlüssel signiert wurde. Dieser Schlüssel
+ist **nicht** das Code-Signing-Zertifikat — Tauris Updater nutzt ein eigenes
+Minisign-Schlüsselpaar, das nichts kostet und selbst erzeugt wird.
+
+**Vor dem ersten signierten Release** muss der Repository-Inhaber dieses Paar
+anlegen und den Platzhalter ersetzen:
+
+```bash
+npm run tauri signer generate -- -w ~/.tauri/magma-updater.key
+```
+
+Die öffentliche Hälfte kommt als `pubkey` in `src-tauri/tauri.conf.json`, die
+private als Secret `TAURI_SIGNING_PRIVATE_KEY` in GitHub Actions; hat der
+Schlüssel kein Passwort, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` als leeren Secret
+setzen. Der `pubkey`, der aktuell in der Datei steht, kam mit dem beigesteuerten
+Patch herein und ist ein Platzhalter: Wer dessen private Hälfte besitzt, könnte
+ein Update signieren, das jede installierte Magma akzeptiert. Er gehört also
+ersetzt, bevor ein Release herausgeht — sobald Updates öffentlich sind, lässt
+sich der Schlüssel nicht mehr wechseln, ohne bereits installierte Apps
+abzuschneiden.
+
+Ein Update veröffentlichen heißt dann: App-Version erhöhen und über den
+GitHub-Workflow einen `vX.Y.Z`-Release bauen.
+
 Zum Entwickeln:
 
 ```bash
@@ -295,9 +330,11 @@ MCP-Server arbeiten damit immer auf demselben Modell deiner Notizen.
 ## Stand
 
 Die Meilensteine **M0–M4** und **M7** sind fertig; **M5** (Packaging) liefert
-unsignierte Installationsprogramme, Signierung und Auto-Update stehen noch aus;
-**M6** (Remote-Vault) hat eine funktionierende erste Version. Die Roadmap steht
-in [`docs/PLAN.md`](docs/PLAN.md).
+unsignierte Installationsprogramme, die Signierung steht noch aus. Das
+Auto-Update ist eingebaut, aber noch nicht aktiv: Es greift, sobald der
+Repository-Inhaber den oben beschriebenen Updater-Schlüssel erzeugt und damit
+einen Release baut. **M6** (Remote-Vault) hat eine funktionierende erste
+Version. Die Roadmap steht in [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Danke
 

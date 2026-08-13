@@ -51,13 +51,20 @@ fn collect(root: &Path, dir: &Path, out: &mut Vec<NoteMeta>) -> std::io::Result<
         if path.is_dir() {
             collect(root, &path, out)?;
         } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
-            let content = fs::read_to_string(&path).unwrap_or_default();
+            let meta = entry.metadata().ok();
+            // Title and frontmatter both sit at the very top of a note, so the
+            // head is all this needs — and on a placeholder it reads nothing
+            // at all rather than pulling the file down from the cloud.
+            let content = meta
+                .as_ref()
+                .map(|m| read_head(&path, m))
+                .unwrap_or_default();
             out.push(NoteMeta {
                 path: rel_path(root, &path),
                 title: title_of(&path, &content),
                 ai_authored: is_ai_authored(&content),
                 ai_client: ai_client(&content),
-                modified: modified_ms(&entry),
+                modified: meta.as_ref().map(modified_ms).unwrap_or(0),
             });
         }
     }
@@ -84,14 +91,111 @@ pub fn write_note(vault: &Path, rel: &str, content: &str) -> std::io::Result<()>
     fs::write(full, content)
 }
 
-fn modified_ms(entry: &fs::DirEntry) -> u64 {
-    entry
-        .metadata()
-        .and_then(|m| m.modified())
+fn modified_ms(meta: &fs::Metadata) -> u64 {
+    meta.modified()
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// True when a file is a cloud placeholder: it appears in the folder, but its
+/// contents are not on this disk. iCloud Drive's "Optimise Mac Storage" leaves
+/// these behind, as do Dropbox Smart Sync and OneDrive Files On-Demand.
+///
+/// Reading a single byte of one makes the kernel fetch the whole file and block
+/// the calling thread until it arrives — and if the sync daemon is asleep or
+/// offline, that wait has no end. A scan that touches every note in a vault
+/// must therefore never read one, or it hangs the app on a vault it has no
+/// business downloading in the first place.
+#[cfg(target_os = "macos")]
+fn is_dataless(meta: &fs::Metadata) -> bool {
+    use std::os::macos::fs::MetadataExt as _;
+    /// `SF_DATALESS` from `<sys/stat.h>`: this file's data lives elsewhere.
+    /// It is what iCloud Drive sets when it evicts a file to free up disk.
+    const SF_DATALESS: u32 = 0x4000_0000;
+    meta.st_flags() & SF_DATALESS != 0
+}
+
+#[cfg(windows)]
+fn is_dataless(meta: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt as _;
+    // The two flags that actually mean "this file is a placeholder": OneDrive
+    // Files On-Demand and anything else built on the Cloud Filter API set them
+    // when a file is dehydrated.
+    const FILE_ATTRIBUTE_RECALL_ON_OPEN: u32 = 0x0004_0000;
+    const FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS: u32 = 0x0040_0000;
+    // Deliberately *not* FILE_ATTRIBUTE_OFFLINE (0x1000). That is the old
+    // Remote Storage flag, it says nothing reliable about a cloud file, and
+    // backup software sets it on files that are perfectly local. Treating it
+    // as "do not read" would make a note vanish from search and the graph on a
+    // machine where nothing is wrong — OneDrive stopped setting it for exactly
+    // that reason. A missed placeholder only costs a slow read; a false one
+    // costs the note.
+    meta.file_attributes() & (FILE_ATTRIBUTE_RECALL_ON_OPEN | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS)
+        != 0
+}
+
+/// Linux has no single cross-provider marker for this, and Magma does not ship
+/// there — treat every file as present.
+#[cfg(not(any(target_os = "macos", windows)))]
+fn is_dataless(_meta: &fs::Metadata) -> bool {
+    false
+}
+
+/// How much of a note to read when only its title and frontmatter are wanted.
+/// Both live at the top; pulling a whole megabyte-sized note off disk for them
+/// is work the sidebar never uses. Generous enough that no plausible frontmatter
+/// block gets cut in half, small enough that a long note costs one read.
+const HEAD_BYTES: u64 = 64 * 1024;
+
+/// Read the first [`HEAD_BYTES`] of a note. Cloud placeholders read as empty —
+/// see [`is_dataless`] — and so fall back to their filename for a title.
+fn read_head(path: &Path, meta: &fs::Metadata) -> String {
+    use std::io::Read as _;
+    if is_dataless(meta) {
+        return String::new();
+    }
+    let Ok(file) = fs::File::open(path) else {
+        return String::new();
+    };
+    let mut buf = Vec::new();
+    if file.take(HEAD_BYTES).read_to_end(&mut buf).is_err() {
+        return String::new();
+    }
+    // The cut lands mid-character on a multi-byte boundary often enough to
+    // matter in a German vault; drop the stub rather than mangling the title.
+    match String::from_utf8(buf) {
+        Ok(s) => s,
+        Err(e) => {
+            let valid = e.utf8_error().valid_up_to();
+            String::from_utf8_lossy(&e.into_bytes()[..valid]).into_owned()
+        }
+    }
+}
+
+/// Read a note in full for a vault-wide scan (search, links, graph, ...).
+///
+/// Unlike [`read_note`], this never forces a cloud placeholder to download: a
+/// background sweep across the whole vault is not a good enough reason to pull
+/// gigabytes over the network and freeze on every file. Such notes read as
+/// empty, so they simply contribute nothing to the scan.
+pub fn read_for_scan(path: &Path) -> String {
+    match fs::metadata(path) {
+        Ok(meta) if is_dataless(&meta) => String::new(),
+        Ok(_) => fs::read_to_string(path).unwrap_or_default(),
+        Err(_) => String::new(),
+    }
+}
+
+/// True when this note is a cloud placeholder whose contents are not on disk.
+///
+/// [`read_for_scan`] reads such a note as empty, which is how a scan avoids
+/// hanging on it. This is how a caller tells that apart from a note that is
+/// genuinely empty — the difference is the whole reason a result looks thin,
+/// and worth saying out loud rather than leaving the user to guess.
+pub fn is_offline(path: &Path) -> bool {
+    fs::metadata(path).map(|m| is_dataless(&m)).unwrap_or(false)
 }
 
 fn rel_path(root: &Path, path: &Path) -> String {
@@ -532,6 +636,62 @@ mod tests {
     fn plain_note_is_not_ai() {
         assert!(!is_ai_authored("# Just a heading\n\ntext"));
         assert!(!is_ai_authored("---\nauthor: human\n---\ntext"));
+    }
+
+    /// The whole point of reading only the head: a note far bigger than
+    /// [`HEAD_BYTES`] must still list correctly, because everything the sidebar
+    /// shows sits in the first few lines.
+    #[test]
+    fn a_huge_note_still_lists_by_its_title() {
+        let v = tmp_vault();
+        let body = "x".repeat(HEAD_BYTES as usize * 3);
+        write_note(
+            &v,
+            "Riese.md",
+            &format!("---\nauthor: ai\n---\n\n# Riesennotiz\n\n{body}"),
+        )
+        .unwrap();
+        let notes = list_notes(&v).unwrap();
+        assert_eq!(notes[0].title, "Riesennotiz");
+        assert!(notes[0].ai_authored);
+        fs::remove_dir_all(&v).ok();
+    }
+
+    /// The head is cut at a byte count, and in a German vault that cut lands
+    /// inside a multi-byte character sooner or later. It must not produce
+    /// replacement characters in the sidebar.
+    #[test]
+    fn cutting_the_head_never_mangles_an_umlaut() {
+        let v = tmp_vault();
+        // Pad so the boundary falls in the middle of one of these "ü"s.
+        let filler = "ü".repeat(HEAD_BYTES as usize);
+        write_note(&v, "Umlaute.md", &format!("# Überschrift\n\n{filler}")).unwrap();
+        let meta = fs::metadata(v.join("Umlaute.md")).unwrap();
+        let head = read_head(&v.join("Umlaute.md"), &meta);
+        assert!(head.starts_with("# Überschrift"));
+        assert!(!head.contains('\u{fffd}'), "head was cut mid-character");
+        assert_eq!(list_notes(&v).unwrap()[0].title, "Überschrift");
+        fs::remove_dir_all(&v).ok();
+    }
+
+    /// An ordinary note is not a cloud placeholder, so a scan reads it whole.
+    #[test]
+    fn an_ordinary_note_is_read_in_full_by_a_scan() {
+        let v = tmp_vault();
+        let body = format!("# A\n\n{}", "wort ".repeat(HEAD_BYTES as usize));
+        write_note(&v, "A.md", &body).unwrap();
+        assert!(!is_dataless(&fs::metadata(v.join("A.md")).unwrap()));
+        assert_eq!(read_for_scan(&v.join("A.md")), body);
+        fs::remove_dir_all(&v).ok();
+    }
+
+    /// A scan asked for a note that is not there gets nothing, not a panic —
+    /// vault sweeps run while files are being renamed underneath them.
+    #[test]
+    fn a_scan_of_a_missing_note_is_empty() {
+        let v = tmp_vault();
+        assert_eq!(read_for_scan(&v.join("weg.md")), "");
+        fs::remove_dir_all(&v).ok();
     }
 
     #[test]

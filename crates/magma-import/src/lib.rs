@@ -116,7 +116,31 @@ pub fn import_wordpress(
     author_override: &str,
     author_note: &str,
 ) -> Result<ImportSummary, String> {
-    let mut posts = fetch_posts(site_url)?;
+    import_wordpress_reporting(
+        vault,
+        folder,
+        site_url,
+        author_override,
+        author_note,
+        &|_| {},
+    )
+}
+
+/// `import_wordpress`, reporting how far it has got.
+///
+/// A blog import is minutes of silence otherwise: fetching a large site with
+/// `_embed=1` is slow, and a button reading "importing" cannot tell a working
+/// import from a stuck one. The callback runs on the calling thread — the
+/// desktop shell turns it into an event for the window.
+pub fn import_wordpress_reporting(
+    vault: &Path,
+    folder: &str,
+    site_url: &str,
+    author_override: &str,
+    author_note: &str,
+    on_progress: &dyn Fn(ImportProgress),
+) -> Result<ImportSummary, String> {
+    let mut posts = fetch_posts_reporting(site_url, on_progress)?;
     if posts.is_empty() {
         return Err("no posts found — is this a WordPress site with the REST API enabled?".into());
     }
@@ -224,8 +248,12 @@ pub fn import_wordpress(
         merged,
         created,
     };
-    for note in built.notes {
+    // Past this point the total is known, so the bar can stop guessing and
+    // start filling.
+    let total = built.notes.len();
+    for (i, note) in built.notes.into_iter().enumerate() {
         magma_core::write_note(vault, &note.rel, &note.markdown).map_err(|e| e.to_string())?;
+        on_progress(ImportProgress::new("writing", i + 1, Some(total)));
     }
 
     // Notes the vault already had (your author profile, a category you'd written
@@ -247,8 +275,102 @@ pub fn import_wordpress(
     Ok(summary)
 }
 
+/// Every HTTP call the import makes goes through this.
+///
+/// `ureq::get` on its own has no read timeout: a server that accepts the
+/// connection and then says nothing leaves the import waiting forever, and the
+/// only thing the user sees is a button that stays on "importing". A stall has
+/// to become an error message, and these are the bounds that make it one.
+fn agent() -> &'static ureq::Agent {
+    static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+    AGENT.get_or_init(build_agent)
+}
+
+/// How Magma introduces itself to the site it is importing from.
+///
+/// `ureq` would otherwise send `ureq/2.x`, and a WordPress site behind
+/// Wordfence, Cloudflare or Sucuri routinely blocks or tarpits a request that
+/// does not look like a browser. That is the usual reason an endpoint opens
+/// fine in a browser and returns nothing to the app.
+///
+/// Deliberately honest rather than a copied Chrome string: a site owner who
+/// wants to let Magma through should be able to see what to allow, and one who
+/// wants to keep it out is entitled to.
+const USER_AGENT: &str = concat!(
+    "Magma/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://github.com/7H3-CH053N/Magma)"
+);
+
+fn build_agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .user_agent(USER_AGENT)
+        .timeout_connect(std::time::Duration::from_secs(15))
+        // Generous, because one page of 100 posts with `_embed=1` is genuinely
+        // slow for a big site to assemble — but finite.
+        .timeout_read(std::time::Duration::from_secs(120))
+        .timeout_write(std::time::Duration::from_secs(30))
+        .build()
+}
+
+/// Turn a failed request into something the user can act on.
+///
+/// "could not reach <url>: status code 403" tells nobody what to do next. The
+/// status is the whole diagnosis here: these endpoints fail in a small number
+/// of recognisable ways, and each has a different fix.
+fn explain(url: &str, e: ureq::Error) -> String {
+    match &e {
+        ureq::Error::Status(403 | 406 | 429, _) => format!(
+            "{url} refused the request ({e}). The site opens in a browser but blocks \
+             Magma — a security plugin (Wordfence, Cloudflare, Sucuri) is filtering by \
+             user agent. Allow \"{USER_AGENT}\" in that plugin, then try again."
+        ),
+        ureq::Error::Status(401, _) => {
+            format!("{url} requires a login ({e}). Magma imports public posts only.")
+        }
+        ureq::Error::Status(404, _) => format!(
+            "{url} does not exist ({e}). The WordPress REST API is switched off on this \
+             site, or it is not a WordPress site."
+        ),
+        // A timeout arrives as a transport error, not a status.
+        ureq::Error::Transport(_) => format!(
+            "{url} did not answer in time ({e}). The site may be very slow, or blocking \
+             Magma without saying so."
+        ),
+        _ => format!("could not reach {url}: {e}"),
+    }
+}
+
+/// How far along the import is, for the progress bar.
+///
+/// WordPress does not say how many posts there are until pagination runs out,
+/// so `total` stays `None` until it is actually known rather than guessing a
+/// denominator and jumping about.
+#[derive(serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportProgress {
+    /// `fetching`, `writing`, or `linking` — named so the UI can translate it
+    /// rather than display an English string from the core.
+    pub stage: String,
+    pub done: usize,
+    pub total: Option<usize>,
+}
+
+impl ImportProgress {
+    fn new(stage: &str, done: usize, total: Option<usize>) -> Self {
+        Self {
+            stage: stage.to_string(),
+            done,
+            total,
+        }
+    }
+}
+
 /// Fetch all posts from `<site>/wp-json/wp/v2/posts`, following pagination.
-fn fetch_posts(site_url: &str) -> Result<Vec<Post>, String> {
+fn fetch_posts_reporting(
+    site_url: &str,
+    on_progress: &dyn Fn(ImportProgress),
+) -> Result<Vec<Post>, String> {
     let base = normalize_base(site_url);
     // Resolve author id -> name up front. Embedding the author per-post relies
     // on the /users endpoint, which many security plugins block; a single list
@@ -261,11 +383,11 @@ fn fetch_posts(site_url: &str) -> Result<Vec<Post>, String> {
         // (categories/tags); the `authors` map is the fallback when the author
         // relation isn't embeddable.
         let url = format!("{base}/wp-json/wp/v2/posts?per_page=100&page={page}&_embed=1");
-        let body = match ureq::get(&url).call() {
+        let body = match agent().get(&url).call() {
             Ok(resp) => resp.into_string().map_err(|e| e.to_string())?,
             // WP returns 400 once the page number exceeds the total pages.
             Err(ureq::Error::Status(400, _)) => break,
-            Err(e) => return Err(format!("could not reach {url}: {e}")),
+            Err(e) => return Err(explain(&url, e)),
         };
         let json: Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
         let arr = match json.as_array() {
@@ -275,6 +397,9 @@ fn fetch_posts(site_url: &str) -> Result<Vec<Post>, String> {
         for item in &arr {
             posts.push(extract_post(item, &authors));
         }
+        // Posts found so far. The total is unknown until pagination ends, so
+        // this counts up without a denominator rather than inventing one.
+        on_progress(ImportProgress::new("fetching", posts.len(), None));
         if arr.len() < 100 {
             break;
         }
@@ -384,7 +509,7 @@ fn resolve_authors_via_feed(base: &str, posts: &[Post]) -> HashMap<u64, String> 
         } else {
             format!("{base}/feed/?paged={page}")
         };
-        let body = match ureq::get(&url).call() {
+        let body = match agent().get(&url).call() {
             Ok(resp) => match resp.into_string() {
                 Ok(b) => b,
                 Err(_) => break,
@@ -418,7 +543,7 @@ fn fetch_authors(base: &str) -> HashMap<u64, String> {
     let mut page = 1;
     loop {
         let url = format!("{base}/wp-json/wp/v2/users?per_page=100&page={page}");
-        let body = match ureq::get(&url).call() {
+        let body = match agent().get(&url).call() {
             Ok(resp) => match resp.into_string() {
                 Ok(b) => b,
                 Err(_) => break,
@@ -966,6 +1091,36 @@ mod tests {
         authors.insert(1u64, "Alex Januschewsky".to_string());
         let p = extract_post(&item, &authors);
         assert_eq!(p.author, "Alex Januschewsky");
+    }
+
+    /// The failure this importer actually hits in the wild: the endpoint opens
+    /// in a browser and returns 403 to the app, because a security plugin is
+    /// filtering by user agent. The message has to name that, and name the
+    /// string to allow — otherwise it sends the user hunting for a bug in
+    /// Magma that is not there.
+    #[test]
+    fn a_blocked_request_says_what_to_allow() {
+        let msg = explain(
+            "https://example.test/wp-json/wp/v2/posts",
+            ureq::Error::Status(403, ureq::Response::new(403, "Forbidden", "").unwrap()),
+        );
+        assert!(msg.contains("browser"), "{msg}");
+        assert!(msg.contains(USER_AGENT), "{msg}");
+        // And it must not be the old shrug.
+        assert!(!msg.starts_with("could not reach"), "{msg}");
+    }
+
+    #[test]
+    fn a_missing_rest_api_is_not_reported_as_a_block() {
+        let msg = explain(
+            "https://example.test/wp-json/wp/v2/posts",
+            ureq::Error::Status(404, ureq::Response::new(404, "Not Found", "").unwrap()),
+        );
+        assert!(
+            msg.contains("switched off") || msg.contains("not a WordPress site"),
+            "{msg}"
+        );
+        assert!(!msg.contains(USER_AGENT), "{msg}");
     }
 
     #[test]
