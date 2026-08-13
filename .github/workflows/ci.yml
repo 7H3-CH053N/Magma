@@ -173,37 +173,53 @@ jobs:
           repo = os.environ["GITHUB_REPOSITORY"]
           version = tag[1:] if tag.startswith("v") else tag
 
-          def one(pattern):
+          def first(pattern):
               matches = sorted(root.glob(pattern))
-              if not matches:
-                  raise SystemExit(
-                      f"missing release artifact: {pattern}\n"
-                      "The bundle job builds updater artifacts only when "
-                      "TAURI_SIGNING_PRIVATE_KEY is set. Generate the key "
-                      "(see the README's Auto-update section), add it as a "
-                      "repository secret, and re-run — a release without the "
-                      "signatures is one the in-app updater cannot use."
-                  )
-              return matches[0]
+              return matches[0] if matches else None
 
-          mac = one("**/*.app.tar.gz")
-          win = one("**/*.msi")
-          mac_sig = pathlib.Path(str(mac) + ".sig").read_text().strip()
-          win_sig = pathlib.Path(str(win) + ".sig").read_text().strip()
+          def signature(artifact):
+              if artifact is None:
+                  return None
+              sig = pathlib.Path(str(artifact) + ".sig")
+              return sig.read_text().strip() if sig.exists() else None
+
+          # The installers are the release. The updater manifest is an extra
+          # that only exists when the bundle job had a signing key — without
+          # one there is nothing to sign the update with, and publishing a
+          # latest.json the app cannot verify would be worse than none at all.
+          mac = first("**/*.app.tar.gz")
+          win = first("**/*.msi")
+          mac_sig = signature(mac)
+          win_sig = signature(win)
 
           def url(path):
               return f"https://github.com/{repo}/releases/download/{tag}/{urllib.parse.quote(path.name)}"
 
-          latest = {
-              "version": version,
-              "notes": f"Magma {tag}",
-              "platforms": {
-                  "darwin-aarch64": {"signature": mac_sig, "url": url(mac)},
-                  "darwin-x86_64": {"signature": mac_sig, "url": url(mac)},
-                  "windows-x86_64": {"signature": win_sig, "url": url(win)},
-              },
-          }
-          pathlib.Path("latest.json").write_text(json.dumps(latest, indent=2) + "\n")
+          if mac and win and mac_sig and win_sig:
+              latest = {
+                  "version": version,
+                  "notes": f"Magma {tag}",
+                  "platforms": {
+                      "darwin-aarch64": {"signature": mac_sig, "url": url(mac)},
+                      "darwin-x86_64": {"signature": mac_sig, "url": url(mac)},
+                      "windows-x86_64": {"signature": win_sig, "url": url(win)},
+                  },
+              }
+              pathlib.Path("latest.json").write_text(json.dumps(latest, indent=2) + "\n")
+              print("wrote latest.json — the in-app updater will see this release")
+          else:
+              print(
+                  "::warning::No updater manifest: TAURI_SIGNING_PRIVATE_KEY was "
+                  "not set, so the bundle job built installers only. The release "
+                  "is published and installable; the in-app updater will not see "
+                  "it. Generate the key (README, Auto-update) to enable updates."
+              )
+
+          # The installers themselves must be there either way — a release with
+          # nothing to download is not a release.
+          missing = [n for n, a in (("dmg", first("**/*.dmg")), ("msi", win)) if a is None]
+          if missing:
+              raise SystemExit(f"no installer to publish: {', '.join(missing)} missing")
           PY
 
       # On a version tag the installers go to a Release as well: artifacts
