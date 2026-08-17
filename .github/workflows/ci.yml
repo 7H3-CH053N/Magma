@@ -39,6 +39,10 @@ jobs:
       - run: npm ci
       - name: Build frontend
         run: npm run build
+      # `npm test` existed as a script but nothing ever called it, so a frontend
+      # test could have been written and silently never run.
+      - name: Frontend tests
+        run: npm test
       - name: Rust tests (core + MCP + WebDAV)
         run: cargo test -p magma-core -p magma-mcp -p magma-webdav -p magma-import --locked
 
