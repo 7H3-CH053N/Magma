@@ -1,7 +1,15 @@
 import { useEffect, useState } from "react";
 import { MagmaMark } from "./MagmaMark";
 import { useI18n, type Lang } from "../lib/i18n";
-import { useTheme, FONT_PRESETS, type ThemeMode } from "../lib/theme";
+import {
+  useTheme,
+  DEFAULT_DARK,
+  DEFAULT_LIGHT,
+  FONT_PRESETS,
+  PALETTE_KEYS,
+  type Palette,
+  type ThemeMode,
+} from "../lib/theme";
 import { usePrefs } from "../lib/prefs";
 import {
   codexMcpConfig,
@@ -71,6 +79,18 @@ export default function Settings({
   const [tab, setTab] = useState<Tab>("vault");
   const { t, lang, setLang, saveLang, revertLang, langDirty } = useI18n();
   const { theme, setTheme, save, revert, resetDefaults, dirty: themeDirty } = useTheme();
+  /** Patch one colour of one mode, leaving the other mode alone. */
+  const setPalette = (m: "light" | "dark", patch: Partial<Palette>) =>
+    setTheme(
+      m === "light"
+        ? { light: { ...theme.light, ...patch } }
+        : { dark: { ...theme.dark, ...patch } }
+    );
+  // Which palette is on screen. Read from the class the theme provider sets,
+  // so it is right under "system" too without duplicating that logic here.
+  const shownMode = document.documentElement.classList.contains("dark")
+    ? "dark"
+    : "light";
   const {
     prefs,
     setPrefs,
@@ -432,23 +452,43 @@ export default function Settings({
             ))}
           </div>
 
-          {/* Colors */}
-          <div className="mb-3 flex flex-wrap gap-4">
-            <ColorField
-              label={t("settings.accent")}
-              value={theme.accent}
-              onChange={(accent) => setTheme({ accent })}
-            />
-            <ColorField
-              label={t("settings.aiColor")}
-              value={theme.ai}
-              onChange={(ai) => setTheme({ ai })}
-            />
-            <ColorField
-              label={t("settings.highlightColor")}
-              value={theme.highlight}
-              onChange={(highlight) => setTheme({ highlight })}
-            />
+          {/* Colors — one scheme per mode. Both are shown at once rather than
+              following the mode switch, so the two can be kept coherent
+              without flipping back and forth to compare them. */}
+          <p className="mb-2 text-xs text-magma-muted">{t("settings.colorsHint")}</p>
+          <div className="mb-3 grid grid-cols-2 gap-x-6 gap-y-2">
+            {(["light", "dark"] as const).map((m) => (
+              <div key={m}>
+                <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                  <span className="text-xs font-medium uppercase tracking-wide text-magma-muted">
+                    {t(`theme.${m}`)}
+                    {m === shownMode && ` · ${t("settings.colorsActive")}`}
+                  </span>
+                  <button
+                    onClick={() =>
+                      setTheme(
+                        m === "light"
+                          ? { light: DEFAULT_LIGHT }
+                          : { dark: DEFAULT_DARK }
+                      )
+                    }
+                    className="shrink-0 text-xs text-magma-muted underline-offset-2 hover:text-magma-accent hover:underline"
+                  >
+                    {t("settings.resetMode")}
+                  </button>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  {PALETTE_KEYS.map((key) => (
+                    <ColorField
+                      key={key}
+                      label={t(`settings.color.${key}`)}
+                      value={theme[m][key]}
+                      onChange={(v) => setPalette(m, { [key]: v })}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
 
           {/* Fonts */}

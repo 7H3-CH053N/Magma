@@ -26,6 +26,9 @@
   --magma-reading-width: 720px;
 }
 
+/* The first paint, before React mounts and writes the saved palette as inline
+   custom properties on :root. Keep these in step with DEFAULT_LIGHT and
+   DEFAULT_DARK in src/lib/theme.tsx — they are the same two schemes. */
 .dark {
   --magma-bg: #181614;
   --magma-panel: #201c19;
