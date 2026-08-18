@@ -49,17 +49,32 @@ export function hexToHsl(hex: string): Hsl | null {
   return { h, s: s * 100, l: l * 100 };
 }
 
+/** The lightness range subfolder shades live in — legible on both canvases. */
+const BAND_MIN = 30;
+const BAND_MAX = 72;
+const BAND = BAND_MAX - BAND_MIN;
 /**
- * Lightness for the `step`-th folder in a family, fanned out around the
- * family's own lightness rather than a fixed ladder — so the first folder is
- * exactly the colour that was picked and the rest stay recognisably related.
- * Clamped to what still reads on both a light and a dark canvas.
+ * The golden ratio, used the same way the layout uses the golden angle: step
+ * through a range by an irrational fraction of it and every prefix of the
+ * sequence is about as evenly spread as it can be.
+ */
+const PHI_FRACTION = 0.6180339887;
+
+/**
+ * Lightness for the `step`-th folder in a family. The folder itself keeps
+ * exactly the colour that was picked; its subfolders walk the legible band.
+ *
+ * Two earlier attempts are worth naming, because both looked fine in a unit
+ * test and failed on a real vault. Clamping a widening fan put every step past
+ * the fourth on one of the two band edges, so a folder with a dozen subfolders
+ * came out as two flat blocks. Wrapping that same fan collided instead: a
+ * symmetric ladder is congruent at ±half the band, so steps 5 and 6 landed on
+ * the same value. A low-discrepancy walk has neither failure.
  */
 export function shadeLightness(base: number, step: number): number {
   if (step <= 0) return base;
-  const magnitude = 12 * Math.ceil(step / 2);
-  const offset = step % 2 === 1 ? -magnitude : magnitude;
-  return Math.max(24, Math.min(80, base + offset));
+  const from = ((((base - BAND_MIN) % BAND) + BAND) % BAND) + step * BAND * PHI_FRACTION;
+  return Math.round(BAND_MIN + (from % BAND));
 }
 
 /** `hsl(h s% l%)` -> `#rrggbb`, so the colour input can show the current value. */
@@ -86,6 +101,20 @@ export function hslToHex(hsl: string): string {
  * reads as one family of colours whose categories are still told apart, rather
  * than a flat wall of one colour.
  */
+/**
+ * The paths among `nodes` that are actually files.
+ *
+ * A ghost node — a link target with no note behind it — carries a synthetic
+ * `missing:<target>` id rather than a path. When the target is itself a
+ * markdown link the id contains a URL, and the slash in `http://` reads as a
+ * folder boundary: the legend filled up with entries like
+ * `missing:[ai.rs](http:`, each claiming a colour, for nodes that are drawn
+ * hollow and never use one.
+ */
+export function notePaths(nodes: { path: string; missing?: boolean }[]): string[] {
+  return nodes.filter((n) => !n.missing).map((n) => n.path);
+}
+
 export function folderColors(
   paths: string[],
   custom: Record<string, string> = {}

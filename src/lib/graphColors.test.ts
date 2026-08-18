@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { folderColors, hexToHsl, hslToHex, shadeLightness } from "./graphColors";
+import {
+  folderColors,
+  hexToHsl,
+  hslToHex,
+  notePaths,
+  shadeLightness,
+} from "./graphColors";
 
 /** The colour the graph actually paints for the notes directly in `folder`. */
 function colorOf(folder: string, picked: string): string {
@@ -58,12 +64,23 @@ describe("subfolders stay a family", () => {
     expect(shadeLightness(31, 0)).toBe(31);
   });
 
-  it("fans subfolders out around the picked lightness, not away from it", () => {
-    const base = 56;
-    const shades = [1, 2, 3, 4].map((n) => shadeLightness(base, n));
-    // Alternating below and above, so the family brackets the chosen colour
-    // instead of drifting off in one direction.
-    expect(shades).toEqual([44, 68, 32, 80]);
+  it("walks the band instead of drifting off in one direction", () => {
+    expect([1, 2, 3, 4].map((n) => shadeLightness(56, n))).toEqual([40, 66, 50, 34]);
+  });
+
+  // The failure this replaced: a widening fan clamped to the band edges put
+  // every step past the fourth on one of two values, so a folder with a dozen
+  // subfolders — which is what a real vault has — came out as two flat blocks.
+  it("keeps a dozen subfolders a dozen different shades", () => {
+    const shades = Array.from({ length: 12 }, (_, i) => shadeLightness(56, i + 1));
+    expect(new Set(shades).size).toBe(12);
+  });
+
+  it("does that from any starting lightness, including the extremes", () => {
+    for (const base of [0, 12, 45, 88, 100]) {
+      const shades = Array.from({ length: 10 }, (_, i) => shadeLightness(base, i + 1));
+      expect(new Set(shades).size, `base ${base}`).toBe(10);
+    }
   });
 
   it("keeps shades legible on both a light and a dark canvas", () => {
@@ -71,8 +88,8 @@ describe("subfolders stay a family", () => {
       for (let n = 0; n <= 12; n++) {
         const l = shadeLightness(base, n);
         if (n > 0) {
-          expect(l, `base ${base} step ${n}`).toBeGreaterThanOrEqual(24);
-          expect(l, `base ${base} step ${n}`).toBeLessThanOrEqual(80);
+          expect(l, `base ${base} step ${n}`).toBeGreaterThanOrEqual(30);
+          expect(l, `base ${base} step ${n}`).toBeLessThanOrEqual(72);
         }
       }
     }
@@ -108,5 +125,32 @@ describe("untouched folders keep the generated palette", () => {
     const { legend } = folderColors(["Blog/a.md"], { Blog: "#ff9999" });
     const entry = legend.find((l) => l.name === "Blog");
     expect(hslToHex(entry!.color)).toBe("#ff9999");
+  });
+});
+
+describe("ghost nodes are not folders", () => {
+  // Straight from a real vault: a wikilink whose target is itself a markdown
+  // link. The slash in `http://` used to read as a folder boundary, so the
+  // legend grew an entry called `missing:[ai.rs](http:` with a colour of its
+  // own — for a node that is drawn hollow and never uses one.
+  const nodes = [
+    { path: "Blog/a.md" },
+    { path: "missing:[ai.rs](http://example.test/ai.rs)", missing: true },
+    { path: "missing:[history.rs](http://example.test/history.rs)", missing: true },
+  ];
+
+  it("leaves them out of the paths the palette is built from", () => {
+    expect(notePaths(nodes)).toEqual(["Blog/a.md"]);
+  });
+
+  it("keeps them out of the legend", () => {
+    const { legend } = folderColors(notePaths(nodes));
+    expect(legend.map((l) => l.name)).toEqual(["Blog"]);
+  });
+
+  it("would otherwise invent a folder from a URL", () => {
+    // Kept as the reason the filter exists: without it, this is the legend.
+    const { legend } = folderColors(nodes.map((n) => n.path));
+    expect(legend.map((l) => l.name)).toContain("missing:[ai.rs](http:");
   });
 });

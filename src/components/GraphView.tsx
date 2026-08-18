@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { conceptGraph, type ConceptNode, type Graph } from "../lib/api";
 import { conceptGraphToGraph, noteLabel } from "../lib/conceptView";
-import { dirOf, folderColors, hslToHex } from "../lib/graphColors";
+import { dirOf, folderColors, hslToHex, notePaths } from "../lib/graphColors";
 import { useI18n } from "../lib/i18n";
 
 interface GraphViewProps {
@@ -261,8 +261,13 @@ export default function GraphView({
     const ensureColors = () => {
       if (colorsBuiltAt === colorVersion.current) return;
       colorsBuiltAt = colorVersion.current;
+      // Ghost nodes are excluded. Their "path" is a synthetic `missing:<target>`
+      // id, not a file — and when the target is itself a markdown link the id
+      // contains a URL, whose slash `dirOf` read as a folder boundary. That put
+      // entries like `missing:[ai.rs](http:` in the legend with a colour of
+      // their own, for nodes that are drawn hollow and never use it.
       const { colorOf, legend: folderLegend } = folderColors(
-        graph.nodes.map((n) => n.path),
+        notePaths(graph.nodes),
         customRef.current
       );
       setLegend(folderLegend);
