@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { MagmaMark } from "./MagmaMark";
 import { useI18n, type Lang } from "../lib/i18n";
+import { contrastIssues } from "../lib/contrast";
 import {
   useTheme,
   DEFAULT_DARK,
@@ -487,6 +488,17 @@ export default function Settings({
                     />
                   ))}
                 </div>
+                {/* Only text against its background. A scheme can be any taste;
+                    it just should not end up unreadable without saying so. */}
+                {contrastIssues(theme[m]).map((issue) => (
+                  <p
+                    key={issue.pair}
+                    className="mt-1.5 text-xs text-amber-600 dark:text-amber-400"
+                  >
+                    {t(`settings.contrast.${issue.pair}`)}{" "}
+                    {t("settings.contrastRatio", { ratio: issue.ratio.toFixed(1) })}
+                  </p>
+                ))}
               </div>
             ))}
           </div>
