@@ -366,12 +366,23 @@ MCP-Server arbeiten damit immer auf demselben Modell deiner Notizen.
 
 ## Stand
 
-Die Meilensteine **M0–M4** und **M7** sind fertig; **M5** (Packaging) signiert
-und notarisiert den macOS-Build, die Windows-Signierung steht noch aus. Das
-Auto-Update ist eingebaut, aber noch nicht aktiv: Es greift, sobald der
-Repository-Inhaber den oben beschriebenen Updater-Schlüssel erzeugt und damit
-einen Release baut. **M6** (Remote-Vault) hat eine funktionierende erste
-Version. Die Roadmap steht in [`docs/PLAN.md`](docs/PLAN.md).
+**1.0.0** ist das erste Release, das sich auf einem Mac installieren lässt,
+ohne dass jemand an einer Warnung vorbeigelotst werden muss: Der macOS-Build ist
+mit einer Developer ID signiert und von Apple notarisiert. Die Meilensteine
+**M0–M5** und **M7** sind fertig, **M6** (Remote-Vault) hat eine funktionierende
+erste Version.
+
+Zwei Punkte sind bewusst offen, und keiner davon betrifft den Mac:
+
+- **Windows ist nicht signiert.** SmartScreen hat beim Installer weiterhin
+  etwas anzumerken. Dafür braucht es ein eigenes Zertifikat, das separat
+  gekauft und jährlich verlängert wird, und der Fokus liegt auf macOS.
+- **Das Auto-Update ist eingebaut, aber inaktiv.** Es greift, sobald der
+  Repository-Inhaber den oben beschriebenen Updater-Schlüssel erzeugt und damit
+  einen Release baut. Bis dahin wird ein installiertes Magma aktualisiert,
+  indem man das nächste Release herunterlädt.
+
+Die Roadmap steht in [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Danke
 

@@ -334,12 +334,21 @@ server always act on the same model of your notes.
 
 ## Status
 
-Milestones **M0–M4** and **M7** are done; **M5** (packaging) signs and
-notarises the macOS build, and Windows code signing is still open.
-Auto-update is built in but not live:
-it starts working once the repository owner generates the updater key described
-above and cuts a release with it. **M6** (remote vault) has a working first
-version. The roadmap lives in [`docs/PLAN.md`](docs/PLAN.md).
+**1.0.0** is the first release you can install on a Mac without being talked
+past a warning: the macOS build is signed with a Developer ID and notarised by
+Apple. Milestones **M0–M5** and **M7** are done, and **M6** (remote vault) has a
+working first version.
+
+Two things are deliberately still open, and neither is a Mac problem:
+
+- **Windows is not code-signed.** SmartScreen still has something to say about
+  the installer. That needs a certificate of its own, bought separately and
+  renewed yearly, and the focus is macOS.
+- **Auto-update is built in but inert.** It starts working once the repository
+  owner generates the updater key described above and cuts a release with it.
+  Until then an installed Magma is updated by downloading the next release.
+
+The roadmap lives in [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Thanks
 
