@@ -90,6 +90,11 @@ jobs:
             bundles: msi
             target: ""
     runs-on: ${{ matrix.os }}
+    # Notarisation blocks on Apple's service, and the wait has no ceiling of its
+    # own. The default six hours on a macOS runner, billed at ten times the
+    # Linux rate, is an expensive way to find out the queue is stuck. An hour is
+    # far more than a cached universal build plus a healthy notarisation needs.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
