@@ -1,6 +1,6 @@
 [package]
 name = "magma"
-version = "0.1.5"
+version = "1.0.0"
 description = "A beautiful, LLM-native second brain"
 authors = ["Magma contributors"]
 edition = "2021"

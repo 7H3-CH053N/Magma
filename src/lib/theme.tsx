@@ -10,11 +10,36 @@ import {
 
 export type ThemeMode = "system" | "light" | "dark";
 
-export interface ThemeSettings {
-  mode: ThemeMode;
+/**
+ * One colour scheme. Light and dark each get their own, because an accent that
+ * carries on a near-white page is often too dark on a near-black one — and the
+ * two schemes were never the same thing to begin with.
+ */
+export interface Palette {
+  bg: string;
+  panel: string;
+  ink: string;
+  muted: string;
   accent: string;
   ai: string;
   highlight: string;
+}
+
+/** The colour tokens, in the order Settings shows them. */
+export const PALETTE_KEYS = [
+  "bg",
+  "panel",
+  "ink",
+  "muted",
+  "accent",
+  "ai",
+  "highlight",
+] as const;
+
+export interface ThemeSettings {
+  mode: ThemeMode;
+  light: Palette;
+  dark: Palette;
   uiFont: string;
   editorFont: string;
   fontSize: number; // px
@@ -38,11 +63,30 @@ export const FONT_PRESETS: { label: string; value: string }[] = [
   },
 ];
 
-export const DEFAULT_THEME: ThemeSettings = {
-  mode: "system",
+export const DEFAULT_LIGHT: Palette = {
+  bg: "#faf9f7",
+  panel: "#f3f1ee",
+  ink: "#1c1a17",
+  muted: "#6b6b6b",
   accent: "#e0533d",
   ai: "#7c5cff",
   highlight: "#d7d323",
+};
+
+export const DEFAULT_DARK: Palette = {
+  bg: "#181614",
+  panel: "#201c19",
+  ink: "#ece9e4",
+  muted: "#9a8f82",
+  accent: "#e0533d",
+  ai: "#7c5cff",
+  highlight: "#d7d323",
+};
+
+export const DEFAULT_THEME: ThemeSettings = {
+  mode: "system",
+  light: DEFAULT_LIGHT,
+  dark: DEFAULT_DARK,
   uiFont: FONT_PRESETS[1].value, // Inter / Sans
   editorFont: FONT_PRESETS[0].value, // System
   fontSize: 16,
@@ -51,24 +95,53 @@ export const DEFAULT_THEME: ThemeSettings = {
 
 const STORAGE_KEY = "magma.theme";
 
+/**
+ * Settings saved before the split had one set of colours for both modes.
+ * Those three are carried into *both* palettes, so an upgrade looks like
+ * nothing happened — the two schemes only diverge once someone edits them.
+ */
+export function migrate(stored: Record<string, unknown>): ThemeSettings {
+  const shared = ["accent", "ai", "highlight"] as const;
+  const carried: Partial<Palette> = {};
+  for (const key of shared) {
+    if (typeof stored[key] === "string") carried[key] = stored[key] as string;
+  }
+  return {
+    ...DEFAULT_THEME,
+    ...stored,
+    light: { ...DEFAULT_LIGHT, ...carried, ...(stored.light as Palette | undefined) },
+    dark: { ...DEFAULT_DARK, ...carried, ...(stored.dark as Palette | undefined) },
+  } as ThemeSettings;
+}
+
 function load(): ThemeSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return { ...DEFAULT_THEME, ...JSON.parse(raw) };
+    if (raw) return migrate(JSON.parse(raw));
   } catch {
     /* ignore */
   }
   return DEFAULT_THEME;
 }
 
+/** Which palette is on screen right now. */
+export function activeMode(s: ThemeSettings, systemDark: boolean): "light" | "dark" {
+  return s.mode === "dark" || (s.mode === "system" && systemDark) ? "dark" : "light";
+}
+
 /** Apply theme settings to the document root (CSS vars + the .dark class). */
 function apply(s: ThemeSettings, systemDark: boolean) {
   const root = document.documentElement;
-  const dark = s.mode === "dark" || (s.mode === "system" && systemDark);
-  root.classList.toggle("dark", dark);
-  root.style.setProperty("--magma-accent", s.accent);
-  root.style.setProperty("--magma-ai", s.ai);
-  root.style.setProperty("--magma-highlight", s.highlight);
+  const mode = activeMode(s, systemDark);
+  const palette = s[mode];
+  root.classList.toggle("dark", mode === "dark");
+  // Every token is written on every apply. The stylesheet still carries the
+  // same values for the first paint, but once these inline properties exist
+  // they outrank it — so a token left unset would keep the *other* mode's
+  // colour instead of falling back to the sheet.
+  for (const key of PALETTE_KEYS) {
+    root.style.setProperty(`--magma-${key}`, palette[key]);
+  }
   root.style.setProperty("--magma-font-ui", s.uiFont);
   root.style.setProperty("--magma-font-editor", s.editorFont);
   root.style.setProperty("--magma-font-size", `${s.fontSize}px`);

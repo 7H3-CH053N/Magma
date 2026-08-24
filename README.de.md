@@ -35,18 +35,22 @@ dein System aus dem
 > Das allererste Release (v0.1.0) hatte ein DMG nur für Apple Silicon; jedes
 > Release seither ist ein Universal-Binary und läuft auf beidem.
 
-**Die Builds sind noch nicht signiert**, deshalb warnen beide Systeme beim
-ersten Start. Das ist bei einer App ohne Zertifikat normal – kein Zeichen
-dafür, dass etwas nicht stimmt, aber vertrauen solltest du dem nur aus einer
-Quelle, der du vertraust:
+**Die macOS-Builds sind signiert und notarisiert**; der Windows-Installer ist
+noch nicht signiert, deshalb hat SmartScreen dort weiterhin etwas anzumerken.
 
-- **macOS** – beim ersten Start heißt es, Magma stamme „von einem nicht
-  verifizierten Entwickler". Rechtsklick auf die App in *Programme* →
-  **Öffnen** → **Öffnen**. Danach startet sie für immer normal. Wenn macOS die
-  App stattdessen als „beschädigt" bezeichnet, muss die Quarantäne-Markierung
-  weg: `xattr -dr com.apple.quarantine /Applications/Magma.app`
+- **macOS** – nichts zu tun. Die App trägt eine Developer-ID-Signatur und
+  Apples Notarisierungszettel und startet wie jede andere App. Releases bis
+  einschließlich **v0.1.5** sind älter als das und unsigniert: Dort heißt es
+  beim ersten Start, Magma stamme „von einem nicht verifizierten Entwickler",
+  und der Weg daran vorbei ist Rechtsklick auf die App in *Programme* →
+  **Öffnen** → **Öffnen**. Wenn macOS die App stattdessen als „beschädigt"
+  bezeichnet, muss die Quarantäne-Markierung weg:
+  `xattr -dr com.apple.quarantine /Applications/Magma.app`
 - **Windows** – SmartScreen zeigt „Der Computer wurde durch Windows
-  geschützt". Auf **Weitere Informationen** → **Trotzdem ausführen**.
+  geschützt". Auf **Weitere Informationen** → **Trotzdem ausführen**. Das ist
+  bei einem Installer ohne Zertifikat normal, kein Zeichen dafür, dass etwas
+  nicht stimmt, aber vertrauen solltest du dem nur aus einer Quelle, der du
+  vertraust.
 
 Lieber selbst bauen? Siehe [Aus dem Quellcode bauen](#aus-dem-quellcode-bauen) –
 zwei Befehle, und es kommen genau diese Installationsprogramme heraus.
@@ -273,6 +277,39 @@ npm run tauri build      # erzeugt das DMG (macOS) / MSI (Windows)
 
 Das Installationsprogramm liegt danach in `src-tauri/target/release/bundle/`.
 
+### Den macOS-Build signieren
+
+Die macOS-Builds werden mit einem Developer-ID-Application-Zertifikat signiert
+und zur Notarisierung an Apple geschickt. Beides läuft ausschließlich über
+Repository-Secrets und beides ist optional: Ist keines gesetzt, entsteht
+trotzdem ein installierbares DMG, eben das unsignierte, mit dem Gatekeeper
+diskutiert. Ein Fork braucht davon nichts, um bauen zu können.
+
+| Secret | Inhalt |
+| --- | --- |
+| `APPLE_CERTIFICATE` | die Developer-ID-`.p12`, base64-kodiert (`base64 -i cert.p12`) |
+| `APPLE_CERTIFICATE_PASSWORD` | das Passwort, das beim Export dieser `.p12` vergeben wurde |
+| `APPLE_SIGNING_IDENTITY` | die Identity-Zeile, z. B. `Developer ID Application: Name (TEAMID)` |
+| `APPLE_API_KEY` | die **Key ID** aus App Store Connect |
+| `APPLE_API_ISSUER` | die **Issuer ID** aus App Store Connect |
+| `APPLE_API_KEY_P8` | die einmalig ladbare `AuthKey_*.p8`, base64-kodiert |
+
+Die `.p12` muss aus der Identity unter *Meine Zertifikate* in der
+Schlüsselbundverwaltung exportiert werden, nicht aus dem Zertifikat allein: Nur
+dort hängt der private Schlüssel mit dran. Die Probe ist
+`security find-identity -v -p codesigning`, und dieser Befehl liefert auch die
+exakte Zeichenkette für `APPLE_SIGNING_IDENTITY`. Meldet er
+`0 valid identities found`, obwohl das Zertifikat sichtbar installiert ist,
+fehlt Apples Zwischenzertifikat *Developer ID - G2* im Schlüsselbund: Ohne das
+lässt sich die Kette nicht prüfen und die Identity gilt als ungültig.
+
+Für die Notarisierung genügt ein App-Store-Connect-Teamschlüssel mit der Rolle
+**Entwickler**. Die `.p8` lässt sich genau einmal herunterladen.
+
+Die Notarisierung wartet auf Apple, und die Warteschlange ist nicht immer kurz:
+Der erste Lauf brauchte 36 Minuten zwischen Absenden und `Accepted`. Der Job hat
+eine Stunde Zeit, danach bricht er ab.
+
 ### Updates veröffentlichen
 
 Die installierte App prüft
@@ -329,8 +366,8 @@ MCP-Server arbeiten damit immer auf demselben Modell deiner Notizen.
 
 ## Stand
 
-Die Meilensteine **M0–M4** und **M7** sind fertig; **M5** (Packaging) liefert
-unsignierte Installationsprogramme, die Signierung steht noch aus. Das
+Die Meilensteine **M0–M4** und **M7** sind fertig; **M5** (Packaging) signiert
+und notarisiert den macOS-Build, die Windows-Signierung steht noch aus. Das
 Auto-Update ist eingebaut, aber noch nicht aktiv: Es greift, sobald der
 Repository-Inhaber den oben beschriebenen Updater-Schlüssel erzeugt und damit
 einen Release baut. **M6** (Remote-Vault) hat eine funktionierende erste

@@ -32,17 +32,20 @@ from the [latest release](https://github.com/7H3-CH053N/Magma/releases/latest):
 > The very first release (v0.1.0) shipped an Apple-Silicon-only DMG; every
 > release since is a universal binary that runs on both.
 
-**The builds are not code-signed yet**, so both systems will warn you the first
-time. This is expected for an app that has no certificate — not a sign that
-anything is wrong, but you should only trust that from a source you trust:
+**macOS builds are signed and notarised**; the Windows installer is not signed
+yet, so SmartScreen still has something to say about it.
 
-- **macOS** — the first launch says Magma "cannot be opened because it is from
-  an unidentified developer". Right-click the app in *Applications* → **Open** →
-  **Open**. Once done, it starts normally forever after. If macOS instead calls
-  the app "damaged", the quarantine flag needs clearing:
-  `xattr -dr com.apple.quarantine /Applications/Magma.app`
+- **macOS** — nothing to do. The app carries a Developer ID signature and an
+  Apple notarisation ticket, so it opens like any other app. Releases up to and
+  including **v0.1.5** predate this and are unsigned: for those, the first
+  launch says Magma "cannot be opened because it is from an unidentified
+  developer", and the way past it is right-click the app in *Applications* →
+  **Open** → **Open**. If macOS instead calls the app "damaged", the quarantine
+  flag needs clearing: `xattr -dr com.apple.quarantine /Applications/Magma.app`
 - **Windows** — SmartScreen shows "Windows protected your PC". Click **More
-  info** → **Run anyway**.
+  info** → **Run anyway**. This is expected for an installer without a
+  certificate. It is not a sign that anything is wrong, but you should only
+  trust that from a source you trust.
 
 Prefer to build it yourself? See [Build from source](#build-from-source) — it
 takes two commands and produces exactly these installers.
@@ -245,6 +248,37 @@ npm run tauri build      # produces the DMG (macOS) / MSI (Windows)
 
 The installer lands in `src-tauri/target/release/bundle/`.
 
+### Signing the macOS build
+
+macOS builds are signed with a Developer ID Application certificate and sent to
+Apple for notarisation. Both are driven entirely by repository secrets, and both
+are optional: with none of them set the build still produces an installable DMG,
+it is just the unsigned one Gatekeeper argues with. A fork does not need any of
+this to build.
+
+| Secret | What goes in it |
+| --- | --- |
+| `APPLE_CERTIFICATE` | the Developer ID `.p12`, base64-encoded (`base64 -i cert.p12`) |
+| `APPLE_CERTIFICATE_PASSWORD` | the password set when exporting that `.p12` |
+| `APPLE_SIGNING_IDENTITY` | the identity string, e.g. `Developer ID Application: Name (TEAMID)` |
+| `APPLE_API_KEY` | the App Store Connect **Key ID** |
+| `APPLE_API_ISSUER` | the App Store Connect **Issuer ID** |
+| `APPLE_API_KEY_P8` | the one-time `AuthKey_*.p8`, base64-encoded |
+
+The `.p12` has to be exported from the identity under *My Certificates* in
+Keychain Access, not from the certificate alone: only that carries the private
+key. `security find-identity -v -p codesigning` is the check that it worked, and
+it lists the exact string for `APPLE_SIGNING_IDENTITY`. If it reports
+`0 valid identities found` while the certificate is clearly installed, Apple's
+*Developer ID - G2* intermediate is missing from the keychain — without it the
+chain cannot be verified and the identity does not count as valid.
+
+An App Store Connect team key with the **Developer** role is enough to notarise.
+The `.p8` can be downloaded exactly once.
+
+Notarisation waits on Apple and the queue is not always quick: the first run
+took 36 minutes between submitting and `Accepted`. The job is capped at an hour.
+
 ### Publishing updates
 
 The installed app checks
@@ -300,8 +334,9 @@ server always act on the same model of your notes.
 
 ## Status
 
-Milestones **M0–M4** and **M7** are done; **M5** (packaging) ships unsigned
-installers, with code signing still open. Auto-update is built in but not live:
+Milestones **M0–M4** and **M7** are done; **M5** (packaging) signs and
+notarises the macOS build, and Windows code signing is still open.
+Auto-update is built in but not live:
 it starts working once the repository owner generates the updater key described
 above and cuts a release with it. **M6** (remote vault) has a working first
 version. The roadmap lives in [`docs/PLAN.md`](docs/PLAN.md).

@@ -108,7 +108,7 @@ export interface ImportSummary {
  *  being fetched — WordPress does not say how many there are until pagination
  *  runs out. */
 export interface ImportProgress {
-  stage: "fetching" | "writing";
+  stage: "fetching" | "authors" | "preparing" | "writing";
   done: number;
   total: number | null;
 }

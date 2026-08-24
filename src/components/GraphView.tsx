@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { conceptGraph, type ConceptNode, type Graph } from "../lib/api";
 import { conceptGraphToGraph, noteLabel } from "../lib/conceptView";
+import { dirOf, folderColors, hslToHex, notePaths } from "../lib/graphColors";
 import { useI18n } from "../lib/i18n";
 
 interface GraphViewProps {
@@ -97,90 +98,7 @@ const radiusFor = (inLinks: number) => {
   return r;
 };
 
-/** Distinct hues, one per top-level folder. */
-const HUES = [205, 145, 332, 40, 265, 190, 355, 95, 22, 240, 170, 300];
-
-function dirOf(path: string): string {
-  const i = path.lastIndexOf("/");
-  return i === -1 ? "" : path.slice(0, i);
-}
-
-/** Hue of a #rrggbb colour, so a picked colour still drives the subfolder shades. */
-function hueFromHex(hex: string): number {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
-  if (!m) return 205;
-  const v = parseInt(m[1], 16);
-  const r = ((v >> 16) & 255) / 255;
-  const g = ((v >> 8) & 255) / 255;
-  const b = (v & 255) / 255;
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const d = max - min;
-  if (d === 0) return 0;
-  let h: number;
-  if (max === r) h = ((g - b) / d) % 6;
-  else if (max === g) h = (b - r) / d + 2;
-  else h = (r - g) / d + 4;
-  h *= 60;
-  return h < 0 ? h + 360 : h;
-}
-
 const COLOR_KEY = "magma.folderColors";
-
-/** `hsl(h s% l%)` -> `#rrggbb`, so the colour input can show the current value. */
-function hslToHex(hsl: string): string {
-  const m = /hsl\(\s*([\d.]+)\s+([\d.]+)%\s+([\d.]+)%/.exec(hsl);
-  if (!m) return "#4aa8ff";
-  const h = Number(m[1]) / 360;
-  const s = Number(m[2]) / 100;
-  const l = Number(m[3]) / 100;
-  const f = (n: number) => {
-    const k = (n + h * 12) % 12;
-    const a = s * Math.min(l, 1 - l);
-    const v = l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
-    return Math.round(v * 255)
-      .toString(16)
-      .padStart(2, "0");
-  };
-  return `#${f(0)}${f(8)}${f(4)}`;
-}
-
-/**
- * Colour every note by the folder it lives in. Notes sharing a top-level folder
- * share a hue, and each subfolder shifts the lightness — so an imported blog
- * reads as one family of colours whose categories are still told apart, rather
- * than a flat wall of one colour.
- */
-function folderColors(
-  paths: string[],
-  custom: Record<string, string> = {}
-): {
-  colorOf: Map<string, string>;
-  legend: { name: string; color: string }[];
-} {
-  const dirs = Array.from(new Set(paths.map(dirOf))).sort();
-  const tops = Array.from(new Set(dirs.map((d) => d.split("/")[0]))).sort();
-  const hueOf = new Map(
-    tops.map((t, i) => [t, custom[t] !== undefined ? hueFromHex(custom[t]) : HUES[i % HUES.length]])
-  );
-  const seenPerTop = new Map<string, number>();
-  const colorOf = new Map<string, string>();
-  for (const dir of dirs) {
-    const top = dir.split("/")[0];
-    const hue = hueOf.get(top) ?? 205;
-    const n = seenPerTop.get(top) ?? 0;
-    seenPerTop.set(top, n + 1);
-    // Root notes stay neutral; subfolders fan out in lightness.
-    const light = dir === "" ? 62 : 46 + ((n * 9) % 30);
-    const sat = dir === "" ? 8 : 66;
-    colorOf.set(dir, `hsl(${hue} ${sat}% ${light}%)`);
-  }
-  const legend = tops.map((t) => ({
-    name: t === "" ? "—" : t,
-    color: `hsl(${hueOf.get(t) ?? 205} ${t === "" ? 8 : 66}% 56%)`,
-  }));
-  return { colorOf, legend };
-}
 
 /**
  * The graph — Magma's headline view. A Fruchterman-Reingold force layout on a
@@ -343,8 +261,13 @@ export default function GraphView({
     const ensureColors = () => {
       if (colorsBuiltAt === colorVersion.current) return;
       colorsBuiltAt = colorVersion.current;
+      // Ghost nodes are excluded. Their "path" is a synthetic `missing:<target>`
+      // id, not a file — and when the target is itself a markdown link the id
+      // contains a URL, whose slash `dirOf` read as a folder boundary. That put
+      // entries like `missing:[ai.rs](http:` in the legend with a colour of
+      // their own, for nodes that are drawn hollow and never use it.
       const { colorOf, legend: folderLegend } = folderColors(
-        graph.nodes.map((n) => n.path),
+        notePaths(graph.nodes),
         customRef.current
       );
       setLegend(folderLegend);
