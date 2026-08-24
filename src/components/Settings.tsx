@@ -698,14 +698,23 @@ export default function Settings({
                     )}
                   </div>
                   <p className="text-xs text-magma-muted">
-                    {impProgress
-                      ? impProgress.stage === "writing"
+                    {!impProgress
+                      ? t("settings.importConnecting")
+                      : impProgress.stage === "writing"
                         ? t("settings.importWriting", {
                             done: String(impProgress.done),
                             total: String(impProgress.total ?? 0),
                           })
-                        : t("settings.importFetching", { done: String(impProgress.done) })
-                      : t("settings.importConnecting")}
+                        : impProgress.stage === "authors"
+                          ? t("settings.importAuthorLookup", {
+                              done: String(impProgress.done),
+                              total: String(impProgress.total ?? 0),
+                            })
+                          : impProgress.stage === "preparing"
+                            ? t("settings.importPreparing", {
+                                done: String(impProgress.done),
+                              })
+                            : t("settings.importFetching", { done: String(impProgress.done) })}
                   </p>
                 </div>
               )}

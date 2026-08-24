@@ -140,16 +140,24 @@ pub fn import_wordpress_reporting(
     author_note: &str,
     on_progress: &dyn Fn(ImportProgress),
 ) -> Result<ImportSummary, String> {
-    let mut posts = fetch_posts_reporting(site_url, on_progress)?;
+    // Decided before the fetch, not after: with a byline supplied there is no
+    // reason to go looking for one. The RSS fallback walks up to 30 feed pages
+    // one request at a time, and every name it finds would be overwritten on
+    // the next line — minutes of silent work thrown away.
+    let forced = author_override.trim();
+    let mut posts = fetch_posts_reporting(site_url, forced.is_empty(), on_progress)?;
     if posts.is_empty() {
         return Err("no posts found — is this a WordPress site with the REST API enabled?".into());
     }
-    let forced = author_override.trim();
     if !forced.is_empty() {
         for p in &mut posts {
             p.author = forced.to_string();
         }
     }
+    // Everything from here to the first write is local work with no natural
+    // counter — the vault scan and building the notes. Without this the bar
+    // sat still through all of it and the import looked stuck.
+    on_progress(ImportProgress::new("preparing", posts.len(), None));
     let mut authors: Vec<String> = posts
         .iter()
         .filter(|p| !p.author.is_empty())
@@ -349,8 +357,8 @@ fn explain(url: &str, e: ureq::Error) -> String {
 #[derive(serde::Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportProgress {
-    /// `fetching`, `writing`, or `linking` — named so the UI can translate it
-    /// rather than display an English string from the core.
+    /// `fetching`, `authors`, `preparing` or `writing` — named so the UI can
+    /// translate it rather than display an English string from the core.
     pub stage: String,
     pub done: usize,
     pub total: Option<usize>,
@@ -369,6 +377,7 @@ impl ImportProgress {
 /// Fetch all posts from `<site>/wp-json/wp/v2/posts`, following pagination.
 fn fetch_posts_reporting(
     site_url: &str,
+    resolve_authors: bool,
     on_progress: &dyn Fn(ImportProgress),
 ) -> Result<Vec<Post>, String> {
     let base = normalize_base(site_url);
@@ -409,8 +418,12 @@ fn fetch_posts_reporting(
         }
     }
     // Last resort for the author name: the public RSS feed. Runs only for posts
-    // the REST API left without one.
-    let by_feed = resolve_authors_via_feed(&base, &posts);
+    // the REST API left without one, and only when a byline was not supplied.
+    let by_feed = if resolve_authors {
+        resolve_authors_via_feed(&base, &posts, on_progress)
+    } else {
+        HashMap::new()
+    };
     if !by_feed.is_empty() {
         for p in &mut posts {
             if p.author.is_empty() {
@@ -490,7 +503,11 @@ fn tag_text(xml: &str, tag: &str) -> String {
 /// `<dc:creator>` per item. We match feed items to posts by URL to recover the
 /// id -> name mapping, and stop as soon as every author is resolved — a
 /// single-author blog costs exactly one request.
-fn resolve_authors_via_feed(base: &str, posts: &[Post]) -> HashMap<u64, String> {
+fn resolve_authors_via_feed(
+    base: &str,
+    posts: &[Post],
+    on_progress: &dyn Fn(ImportProgress),
+) -> HashMap<u64, String> {
     let mut link_to_id: HashMap<String, u64> = HashMap::new();
     let mut needed: std::collections::HashSet<u64> = std::collections::HashSet::new();
     for p in posts {
@@ -503,7 +520,11 @@ fn resolve_authors_via_feed(base: &str, posts: &[Post]) -> HashMap<u64, String> 
     if needed.is_empty() {
         return out;
     }
-    for page in 1..=30 {
+    const FEED_PAGES: usize = 30;
+    for page in 1..=FEED_PAGES {
+        // Up to thirty sequential requests. Silent, this is the longest an
+        // import can appear to be doing nothing.
+        on_progress(ImportProgress::new("authors", page, Some(FEED_PAGES)));
         let url = if page == 1 {
             format!("{base}/feed/")
         } else {
@@ -1098,6 +1119,30 @@ mod tests {
     /// filtering by user agent. The message has to name that, and name the
     /// string to allow — otherwise it sends the user hunting for a bug in
     /// Magma that is not there.
+    /// A supplied byline must be decided *before* the fetch, not after.
+    ///
+    /// It was after: the RSS fallback walked up to thirty feed pages, one
+    /// request at a time, hunting for names that the next line then
+    /// overwrote. On a 593-post blog that is minutes of silent work whose
+    /// result is thrown away — the import looked frozen, and was.
+    #[test]
+    fn a_supplied_byline_skips_the_author_hunt() {
+        let src = include_str!("lib.rs");
+        let body = &src[src
+            .find("pub fn import_wordpress_reporting(")
+            .expect("the reporting entry point")..];
+        let forced_at = body.find("let forced = author_override.trim();").unwrap();
+        let fetch_at = body.find("fetch_posts_reporting(site_url").unwrap();
+        assert!(
+            forced_at < fetch_at,
+            "the byline is read after the fetch, so the feed walk still runs"
+        );
+        assert!(
+            body[fetch_at..fetch_at + 80].contains("forced.is_empty()"),
+            "the fetch is not told whether a byline was supplied"
+        );
+    }
+
     #[test]
     fn a_blocked_request_says_what_to_allow() {
         let msg = explain(
