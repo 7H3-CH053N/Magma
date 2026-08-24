@@ -121,6 +121,49 @@ jobs:
             echo "present=false" >> "$GITHUB_OUTPUT"
             echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not set. Building installers only — this run cannot feed the in-app updater. See the Auto-update section of the README."
           fi
+      # macOS code signing and notarisation. Both are optional in exactly the
+      # same way the updater key is: without them the build still produces an
+      # installable .dmg, it is just the unsigned one that Gatekeeper argues
+      # with. Variable names are Tauri's own — anything else is ignored.
+      #
+      # They are exported through GITHUB_ENV rather than the step's `env:` so
+      # that when the secrets are absent the variables do not exist at all.
+      # An empty APPLE_CERTIFICATE would make the CLI try to sign with nothing.
+      - name: Prepare Apple signing
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY }}
+          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          if [ -z "$CERT" ]; then
+            echo "::warning::No APPLE_CERTIFICATE — building an unsigned .dmg. First launch will need right-click → Open. See the Signing section of the README."
+            exit 0
+          fi
+          # Heredoc form: a base64 certificate can carry newlines, and a plain
+          # KEY=value line would truncate at the first one.
+          {
+            echo "APPLE_CERTIFICATE<<__CERT__"
+            echo "$CERT"
+            echo "__CERT__"
+            echo "APPLE_CERTIFICATE_PASSWORD=$CERT_PASSWORD"
+            echo "APPLE_SIGNING_IDENTITY=$IDENTITY"
+          } >> "$GITHUB_ENV"
+          if [ -n "$API_KEY_P8" ]; then
+            # Tauri wants a *path* to the .p8; the secret holds its contents.
+            printf '%s' "$API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/asc.p8"
+            {
+              echo "APPLE_API_KEY=$API_KEY_ID"
+              echo "APPLE_API_ISSUER=$API_ISSUER"
+              echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/asc.p8"
+            } >> "$GITHUB_ENV"
+          else
+            echo "::warning::Certificate present but no APPLE_API_KEY_P8 — the app will be signed but not notarised, and Gatekeeper still warns on a machine that has not seen it before."
+          fi
       - name: Build desktop app
         shell: bash
         env:
