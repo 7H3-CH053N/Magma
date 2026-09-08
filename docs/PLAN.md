@@ -130,6 +130,140 @@ statt Waisen-Notizen abzuladen:
 | M7 | Zweites Gehirn im Alltag | Tagesnotizen + Kalender ✅, Vorlagen mit Platzhaltern ✅, Versionsverlauf mit Diff und Wiederherstellen ✅, ausgehende Links + unverlinkte Erwähnungen ✅, ähnliche Notizen (TF-IDF) ✅ | ✅ |
 | M5 | Packaging | Installer (DMG/MSI), CI-Download-Artefakte ✅, Auto-Update, Code Signing | 🟡 |
 | M6 | Online-/Remote-Vault | Vault auf Webserver (WebDAV): Sync in lokalen Cache, Write-Through beim Speichern, Settings-UI, https-Pflicht | 🟡 erste Version |
+| M8 | Lokales RAG | Index + Watcher, Passagen statt ganzer Notizen, hybride Rangliste, lokale Embeddings, `retrieve` über MCP. Bleibt vollständig lokal. | ⬜ geplant |
+
+## M8 — Lokales RAG
+
+Ziel: Der Vault wird zur Wissensquelle, aus der ein Modell antworten kann, ohne
+dass ein einziges Byte den Rechner verlässt.
+
+**Die Grundentscheidung steht vorab und ist nicht verhandelbar: Magma bleibt
+lokal.** Kein Cloud-Dienst, kein Tunnel, keine Einbettungs-API, kein Endpunkt,
+der über den eigenen Rechner hinaus erreichbar ist. Jede Anforderung unten ist
+daran gemessen.
+
+### Was schon da ist, und was daran fehlt
+
+`links::search` sucht Volltext (wörtlich oder Regex), `related::related_notes`
+macht TF-IDF mit Kosinus, der MCP-Server reicht beides durch. Ein Modell kann
+den Vault also heute schon durchsuchen. Vier Dinge trennen das von RAG:
+
+1. **Die Einheit ist die Notiz, nicht die Passage.** `search_notes` liefert
+   einen Treffer je Datei mit Ausschnitt. Eine lange Notiz kommt ganz oder gar
+   nicht. Ein Modell braucht Abschnitte mit Herkunftsangabe.
+2. **Es findet nur, was wörtlich dasteht.** `related.rs` sagt es selbst: es
+   weiß nicht, dass „Auto" und „Fahrzeug" dasselbe meinen. Bei einem deutschen
+   Vault ist das die größte Einzellücke, Komposita verschärfen sie.
+3. **Es gibt keinen Index.** Jede Suche liest den ganzen Vault von der Platte
+   (Issue #18). Heute unangenehm, für RAG ein Ausschlusskriterium: Embeddings
+   bei jeder Anfrage neu zu rechnen ist nicht machbar.
+4. **Es gibt kein gemeinsames Ranking.** Volltext- und Ähnlichkeitstreffer
+   stehen nebeneinander, nie in einer Rangliste.
+
+### Die eine echte Entscheidung: womit gerechnet wird
+
+Alles andere ist Handwerk. Zwei ernsthafte Wege für die Embeddings:
+
+- **ONNX Runtime (`ort`).** Schnell und ausgereift, bindet aber eine
+  C++-Bibliothek ein. Für den Universal-Build muss sie für beide Architekturen
+  vorliegen, und sie braucht beim Signieren ihre eigene Signatur. Das macht die
+  Kette aus M5 sofort komplizierter.
+- **`candle`, reines Rust.** Kein C++-Runtime, keine zweite Binärdatei, der
+  Build bleibt wie er ist. Langsamer, und die Modellauswahl ist enger.
+
+**Gewählt: `candle`**, und zwar nicht aus Geschwindigkeitsgründen, sondern weil
+Geschwindigkeit hier kein Problem ist. Bei einem Vault dieser Größe dauert der
+einmalige Durchlauf Minuten, danach werden nur geänderte Notizen neu gerechnet.
+Dafür eine C++-Abhängigkeit und eine zweite zu signierende Datei einzuhandeln,
+wäre schlecht getauscht.
+
+Das Modell muss mehrsprachig sein, sonst nützt es einem deutschen Vault nichts.
+Es wird **nicht mitgeliefert**, sondern beim ersten Einschalten geladen und im
+App-Datenordner abgelegt: Der Installer bleibt bei rund 12 MB, und wer den
+Download ablehnt, behält TF-IDF, das ja funktioniert. Konkrete Modellgröße und
+Auswahl gehören in Phase 3 gemessen statt hier geraten.
+
+### Ablage
+
+Der Index liegt im **App-Datenordner**, nach Vault-Pfad getrennt, nicht im
+Vault. Der Vault bleibt reines Markdown, das ist das Versprechen des Projekts,
+und ein Indexordner darin würde bei WebDAV (M6) und bei fremden Editoren sofort
+Ärger machen. Ein Neuaufbau muss jederzeit möglich sein: Der Index ist
+abgeleitete Information, nie die Quelle.
+
+### Phasen
+
+Jede Phase ist für sich nützlich. Wer nach Phase 2 aufhört, hat trotzdem etwas
+Besseres als heute.
+
+**Phase 1 — Index, Watcher, Messlatte.** Das ist Issue #18 und die
+Voraussetzung für alles Weitere: In-Memory-Index plus `notify`-Watcher auf
+Dateiänderungen, Notizen werden über einen Hash nur bei echter Änderung neu
+verarbeitet. Schon ohne Embeddings werden Suche und Ähnlichkeit dadurch
+spürbar schneller.
+
+In dieselbe Phase gehört die **Prüfsammlung** (siehe unten), bevor irgendetwas
+am Ranking gedreht wird.
+
+Erste Aufgabe, weil davon abhängt, ob der Index überhaupt dringend ist:
+
+```bash
+find <vault> -name '*.md' | wc -l
+find <vault> -name '*.md' -print0 | xargs -0 cat | wc -c
+```
+
+**Phase 2 — Passagen und hybride Rangliste, noch ohne Embeddings.** Notizen an
+Überschriften und Absätzen entlang zerlegen, nicht stur nach Zeichenzahl, mit
+Überlappung an den Schnittstellen. BM25 statt reinem Substring-Match. Neues
+MCP-Werkzeug `retrieve`, das eine Rangliste von Passagen mit Pfad und Position
+zurückgibt statt einer Liste von Dateien. Das allein ist deutlich brauchbarer
+als heute, weil das Modell Kontext bekommt statt Dateinamen.
+
+**Phase 3 — Embeddings.** Jetzt erst, und hinter einer Schnittstelle, die es
+noch gar nicht gibt: Der Kommentar in `related.rs` nennt sie `Similarity`, M7
+oben nennt sie `RelatedNote`, tatsächlich existiert keine von beiden. Diese
+Phase legt sie an. Semantische Treffer **ergänzen** die lexikalischen, sie
+ersetzen sie nicht: Reine Vektorsuche ist bei Eigennamen, Codebezeichnern und
+exakten Begriffen schlechter als Volltext, und beides steht in echten Notizen.
+
+**Phase 4 — Zugang für beliebige Modelle, lokal.** Über stdio funktioniert das
+heute schon mit allem, was MCP spricht und auf demselben Rechner läuft, also
+auch mit einem lokalen Modell in LM Studio oder Ollama. Ergänzend ein
+HTTP-Transport, **gebunden an `127.0.0.1`**, mit einem Token, das Magma erzeugt
+und anzeigt, für lokale Programme ohne stdio-Unterstützung. Standard bleibt
+**nur lesend**; der Schalter dafür existiert bereits als
+`MAGMA_MCP_ALLOW_WRITE=0`.
+
+Ausdrücklich nicht Teil davon: Erreichbarkeit über den eigenen Rechner hinaus.
+Es gab in diesem Projekt bereits einen Fehler dieser Klasse (`safe_join` prüfte
+nur auf `..`, absolute Pfade gingen durch, in v0.1.0 und v0.1.1 war damit über
+MCP jede Datei der Platte les- und überschreibbar). Lokal kostet so etwas
+wenig, über Netz alles.
+
+### Was bewusst nicht gebaut wird
+
+Keine Vektordatenbank als Abhängigkeit und kein ANN-Index wie HNSW: Bei dieser
+Größenordnung passt der ganze Vektorsatz in den Arbeitsspeicher, und ein
+linearer Durchlauf dauert Millisekunden. Kein zweites Modell zum Nachsortieren,
+bevor gemessen ist, dass es fehlt. Keine Zusammenfassung von Passagen durch ein
+LLM beim Indizieren, das erfindet Fehler, die später niemand mehr findet.
+
+### Die Prüfsammlung, und warum sie nicht ans Ende gehört
+
+RAG ist die perfekte Umgebung für genau die Fehlerklasse, die dieses Projekt am
+häufigsten getroffen hat: **Es macht nie etwas kaputt, was auffällt.** Eine
+Suche liefert immer Treffer, ein Modell antwortet immer, und ob die richtigen
+Passagen dabei waren, sieht man der Antwort nicht an. Ein Test, der prüft, dass
+`retrieve` fünf Ergebnisse zurückgibt, ist ein Freispruch, den man sich selbst
+ausstellt, genau wie der Test, der nur die ersten vier Schattierungsschritte
+ansah.
+
+Deshalb in Phase 1, nicht am Schluss: zwanzig bis dreißig Fragen aus dem echten
+Vault, zu denen bekannt ist, welche Notiz die Antwort enthält. Daraus eine Zahl,
+wie oft die richtige Notiz unter den ersten fünf Treffern steht. Dann ist jede
+Änderung an Zerlegung, Ranking oder Modell eine Zahl, die steigt oder fällt,
+statt eines Gefühls. Ohne das lassen sich Wochen in Feintuning stecken, ohne je
+zu erfahren, ob es besser geworden ist.
 
 ## M7 — Notizen, die sich selbst vernetzen
 
