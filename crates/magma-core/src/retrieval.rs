@@ -83,9 +83,19 @@ const RRF_K: f32 = 60.0;
 pub trait Similarity: Send + Sync {
     fn id(&self) -> &str;
 
-    /// Embed a batch. One call per batch rather than per text, because the cost
-    /// of a forward pass is dominated by setup at these sizes.
-    fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String>;
+    /// Embed the question.
+    ///
+    /// Separate from [`Self::embed_passages`] because the leading models for
+    /// this job are asymmetric: E5 and its relatives are trained with "query:"
+    /// and "passage:" prefixes and lose accuracy when both sides are embedded
+    /// the same way. That loss is invisible — results still come back, just
+    /// worse — so the distinction belongs in the interface where an
+    /// implementation cannot forget it, rather than in a comment.
+    fn embed_query(&self, text: &str) -> Result<Vec<f32>, String>;
+
+    /// Embed passages, as one batch: at these sizes a forward pass costs mostly
+    /// setup, so one call for many beats many calls for one.
+    fn embed_passages(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String>;
 }
 
 /// One retrievable piece of a note.
@@ -490,20 +500,18 @@ fn semantic_ranking(
     query: &str,
     texts: &[String],
 ) -> Option<Vec<(f32, usize)>> {
-    let mut batch = Vec::with_capacity(texts.len() + 1);
-    batch.push(query.to_string());
-    batch.extend(texts.iter().cloned());
-    let vectors = model.embed(&batch).ok()?;
+    let q = model.embed_query(query).ok()?;
+    let vectors = model.embed_passages(texts).ok()?;
     // A model that returns the wrong number of vectors is broken in a way that
     // would silently misalign every passage with someone else's meaning.
-    if vectors.len() != batch.len() {
+    if vectors.len() != texts.len() {
         return None;
     }
-    let (q, rest) = vectors.split_first()?;
     Some(
-        rest.iter()
+        vectors
+            .iter()
             .enumerate()
-            .map(|(i, v)| (cosine(q, v), i))
+            .map(|(i, v)| (cosine(&q, v), i))
             .collect(),
     )
 }
@@ -833,20 +841,22 @@ mod tests {
         &["import", "feed", "autor"],
     ];
 
+    fn toy_vector(text: &str) -> Vec<f32> {
+        let lower = text.to_lowercase();
+        AXES.iter()
+            .map(|axis| axis.iter().filter(|w| lower.contains(**w)).count() as f32)
+            .collect()
+    }
+
     impl Similarity for ToyModel {
         fn id(&self) -> &str {
             "toy-v1"
         }
-        fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
-            Ok(texts
-                .iter()
-                .map(|t| {
-                    let lower = t.to_lowercase();
-                    AXES.iter()
-                        .map(|axis| axis.iter().filter(|w| lower.contains(**w)).count() as f32)
-                        .collect()
-                })
-                .collect())
+        fn embed_query(&self, text: &str) -> Result<Vec<f32>, String> {
+            Ok(toy_vector(text))
+        }
+        fn embed_passages(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+            Ok(texts.iter().map(|t| toy_vector(t)).collect())
         }
     }
 
@@ -889,7 +899,10 @@ mod tests {
             fn id(&self) -> &str {
                 "broken"
             }
-            fn embed(&self, _: &[String]) -> Result<Vec<Vec<f32>>, String> {
+            fn embed_query(&self, _: &str) -> Result<Vec<f32>, String> {
+                Err("weights not loaded".into())
+            }
+            fn embed_passages(&self, _: &[String]) -> Result<Vec<Vec<f32>>, String> {
                 Err("weights not loaded".into())
             }
         }
@@ -911,7 +924,10 @@ mod tests {
             fn id(&self) -> &str {
                 "short"
             }
-            fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+            fn embed_query(&self, _: &str) -> Result<Vec<f32>, String> {
+                Ok(vec![1.0, 0.0])
+            }
+            fn embed_passages(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
                 Ok(vec![vec![1.0, 0.0]; texts.len().saturating_sub(1)])
             }
         }
