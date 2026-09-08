@@ -208,6 +208,12 @@ jobs:
           BUNDLES: ${{ matrix.bundles }}
           TARGET: ${{ matrix.target }}
           HAVE_KEY: ${{ steps.signing.outputs.present }}
+          # The About panel falls back to a date stamp, which cannot tell two
+          # builds of the same day apart — exactly the confusion that cost a
+          # debugging round when a test build carried the released version
+          # number. The run number can, and it leads back to the run that
+          # produced the installer.
+          BUILD_NUMBER: ${{ github.run_number }}
         run: |
           args=(--bundles "$BUNDLES")
           if [ -n "$TARGET" ]; then

@@ -44,6 +44,23 @@ const K1: f32 = 1.2;
 /// length, but not as harshly as full normalisation would.
 const B: f32 = 0.75;
 
+/// How often a passage's context — the note's name and folders, and the heading
+/// it sits under — counts alongside its own words.
+///
+/// Not cosmetic. A note called `Alexander Mut.md` describing a person may never
+/// repeat the name in its body, and a note's title falls back to its first line
+/// of text, so the name can live *only* in the file name. Scoring the passage
+/// text alone made that note unreachable by the person's name, while ordinary
+/// notes using "Mut" in its everyday sense filled the results. Headings had the
+/// same hole: the chunker lifts a heading out of the text to hand back as
+/// provenance, so a passage under `## Notarisierung` could not be reached by
+/// that word unless the body happened to repeat it.
+///
+/// Once, not more. Context should break a tie and rescue a note whose subject
+/// is only in its name; it should not outrank a passage that actually discusses
+/// the thing.
+const CONTEXT_REPEATS: usize = 1;
+
 /// One retrievable piece of a note.
 #[derive(Serialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -275,8 +292,15 @@ pub fn retrieve(vault: &Path, query: &str, limit: usize) -> std::io::Result<Retr
             continue;
         }
         notes_scanned += 1;
+        // The note's own name and its folders, which carry subject matter a
+        // body often leaves implicit ("Blog/KI-Wissen/…", "Alexander Mut").
+        let name_tokens = tokenize(note.path.trim_end_matches(".md"));
         for chunk in chunk_note(&content) {
-            let tokens = tokenize(&chunk.text);
+            let mut tokens = tokenize(&chunk.text);
+            for _ in 0..CONTEXT_REPEATS {
+                tokens.extend(name_tokens.iter().cloned());
+                tokens.extend(tokenize(&chunk.heading));
+            }
             let mut freq: HashMap<String, usize> = HashMap::new();
             for t in &tokens {
                 *freq.entry(t.clone()).or_insert(0) += 1;
@@ -625,6 +649,61 @@ mod tests {
             CASES.len() - missed.len(),
             CASES.len(),
             missed.join("\n")
+        );
+    }
+
+    // Straight from a real vault, and a case the fixture above could never
+    // catch. "Alexander Mut.md" describes a person and never repeats the name
+    // in its body, so the name exists only as the file's name. Meanwhile "Mut"
+    // is an ordinary German word, so notes about courage crowd the results.
+    // Scoring passage text alone left the person out entirely.
+    #[test]
+    fn a_note_is_findable_by_its_own_name() {
+        let dir = tmp_vault("byname");
+        write(
+            &dir,
+            "Alexander Mut.md",
+            "Developer, der am Magma Projekt mitarbeitet.\n",
+        );
+        write(
+            &dir,
+            "KI-Strategie.md",
+            "# Strategie\n\nEs braucht Mut, eine Strategie zu aendern.\n",
+        );
+        write(
+            &dir,
+            "EU-Whitepaper.md",
+            "# Whitepaper\n\nDer Entwurf fordert Mut zur Regulierung.\n",
+        );
+        write(
+            &dir,
+            "Fussball.md",
+            "# Schlager\n\nDer Torhueter zeigte Mut im Strafraum.\n",
+        );
+
+        let got = retrieve(&dir, "alexander mut", 5).unwrap();
+        let paths: Vec<&str> = got.passages.iter().map(|p| p.path.as_str()).collect();
+        assert_eq!(paths.first(), Some(&"Alexander Mut.md"), "{paths:?}");
+    }
+
+    // The other half of the same blind spot: a heading is lifted out of the
+    // text and handed back as provenance, so a passage under "## Notarisierung"
+    // was unreachable by that word unless the body happened to repeat it. Every
+    // note in the fixture above does repeat it, which is why nothing caught this.
+    #[test]
+    fn a_heading_makes_its_own_passage_findable() {
+        let dir = tmp_vault("byheading");
+        write(
+            &dir,
+            "Signieren.md",
+            "# Signieren\n\n## Notarisierung\n\nApple laesst sich damit Zeit.\n\n## Zertifikat\n\nKommt aus dem Schluesselbund.\n",
+        );
+        let got = retrieve(&dir, "notarisierung", 5).unwrap();
+        assert_eq!(
+            got.passages.first().map(|p| p.heading.as_str()),
+            Some("Notarisierung"),
+            "{:#?}",
+            got.passages
         );
     }
 
