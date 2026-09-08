@@ -61,6 +61,33 @@ const B: f32 = 0.75;
 /// the thing.
 const CONTEXT_REPEATS: usize = 1;
 
+/// How far down each ranking the fusion looks. Beyond this a hit is noise in
+/// one list and absent from the other, and letting it in only dilutes.
+const FUSION_DEPTH: usize = 50;
+
+/// Reciprocal-rank-fusion constant. 60 is the value the method was published
+/// with and the one search systems use: large enough that the top few ranks are
+/// not wildly more valuable than the next few, small enough that rank still
+/// decides.
+const RRF_K: f32 = 60.0;
+
+/// The seam an embedding model plugs into.
+///
+/// Deliberately narrow: text in, vectors out. Everything else — which model,
+/// where its weights live, whether a vector is cached or computed — belongs to
+/// the implementation, so `magma-core` keeps its three dependencies and stays
+/// testable without a model on disk.
+///
+/// `id` names the model. A vector produced by one model means nothing to
+/// another, so anything caching vectors keys them by this.
+pub trait Similarity: Send + Sync {
+    fn id(&self) -> &str;
+
+    /// Embed a batch. One call per batch rather than per text, because the cost
+    /// of a forward pass is dominated by setup at these sizes.
+    fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String>;
+}
+
 /// One retrievable piece of a note.
 #[derive(Serialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -100,6 +127,11 @@ pub struct Retrieval {
     /// placeholders). Reported rather than swallowed: a result built from half
     /// a vault must not pass for one built from all of it.
     pub offline: usize,
+    /// True when meaning was ranked alongside words. False means the answer is
+    /// word overlap only — either no model was given, or it failed and the
+    /// search carried on without it. Worth saying out loud: the same query
+    /// answers differently, and a caller should not have to guess which it got.
+    pub semantic: bool,
 }
 
 /// Split text into comparable terms for retrieval.
@@ -264,6 +296,31 @@ impl Chunker {
 /// so a cloud placeholder is counted and reported rather than downloaded and
 /// waited on.
 pub fn retrieve(vault: &Path, query: &str, limit: usize) -> std::io::Result<Retrieval> {
+    retrieve_with(vault, query, limit, None)
+}
+
+/// Retrieve, optionally ranking meaning alongside words.
+///
+/// With a model, two rankings are built over the same passages — BM25 over
+/// words, cosine over embeddings — and fused by reciprocal rank. Fusion by rank
+/// rather than by score is the point: a BM25 score has no fixed range and means
+/// nothing across two queries, a cosine sits in [-1, 1], and any formula
+/// weighing one against the other would be a guess dressed up as arithmetic.
+/// Ranks are comparable by construction.
+///
+/// The two halves cover different failures. Words find names, identifiers and
+/// exact terms, where a vector is weak. Meaning finds the note that says the
+/// same thing in other words, which word overlap cannot reach at all. Neither
+/// replaces the other, which is why this fuses instead of choosing.
+///
+/// A model that fails does not fail the search: the result comes back lexical
+/// with `semantic: false`. A broken model should cost quality, not answers.
+pub fn retrieve_with(
+    vault: &Path,
+    query: &str,
+    limit: usize,
+    model: Option<&dyn Similarity>,
+) -> std::io::Result<Retrieval> {
     let terms = tokenize(query);
     let notes = vault::list_notes(vault)?;
 
@@ -319,6 +376,7 @@ pub fn retrieve(vault: &Path, query: &str, limit: usize) -> std::io::Result<Retr
         passages: Vec::new(),
         notes_scanned,
         offline,
+        semantic: false,
     };
     if terms.is_empty() || candidates.is_empty() {
         return Ok(out);
@@ -360,16 +418,39 @@ pub fn retrieve(vault: &Path, query: &str, limit: usize) -> std::io::Result<Retr
         }
     }
 
-    scored.sort_by(|a, b| {
+    // Ties by path and line, so the same query gives the same order twice.
+    // Vault order comes from the file system otherwise.
+    let tie = |a: &(f32, usize), b: &(f32, usize)| {
         b.0.partial_cmp(&a.0)
             .unwrap_or(std::cmp::Ordering::Equal)
-            // Ties by path and line, so the same query gives the same order
-            // twice. Vault order depends on the file system otherwise.
             .then_with(|| candidates[a.1].path.cmp(&candidates[b.1].path))
             .then_with(|| candidates[a.1].chunk.line.cmp(&candidates[b.1].chunk.line))
-    });
+    };
+    scored.sort_by(tie);
 
-    out.passages = scored
+    let semantic = match model {
+        Some(m) => {
+            let texts: Vec<String> = candidates
+                .iter()
+                .map(|c| embedding_text(&c.path, &c.chunk))
+                .collect();
+            semantic_ranking(m, query, &texts).map(|mut sem| {
+                sem.sort_by(tie);
+                sem
+            })
+        }
+        None => None,
+    };
+
+    let ranked: Vec<(f32, usize)> = match &semantic {
+        Some(sem) => {
+            out.semantic = true;
+            fuse(&scored, sem)
+        }
+        None => scored,
+    };
+
+    out.passages = ranked
         .into_iter()
         .take(limit)
         .map(|(score, i)| {
@@ -385,6 +466,83 @@ pub fn retrieve(vault: &Path, query: &str, limit: usize) -> std::io::Result<Retr
         })
         .collect();
     Ok(out)
+}
+
+/// What actually goes to the model for a passage.
+///
+/// Not the passage text alone. The note's name and the heading above it carry
+/// subject matter a body often leaves implicit, and leaving them out here would
+/// reopen on the semantic side the hole that scoring text alone opened on the
+/// lexical one.
+fn embedding_text(path: &str, chunk: &Chunk) -> String {
+    let name = path.trim_end_matches(".md").replace('/', " / ");
+    if chunk.heading.is_empty() {
+        format!("{name}\n{}", chunk.text)
+    } else {
+        format!("{name} / {}\n{}", chunk.heading, chunk.text)
+    }
+}
+
+/// Cosine of every passage against the query, as a ranking. `None` when the
+/// model could not answer, which leaves the search lexical rather than empty.
+fn semantic_ranking(
+    model: &dyn Similarity,
+    query: &str,
+    texts: &[String],
+) -> Option<Vec<(f32, usize)>> {
+    let mut batch = Vec::with_capacity(texts.len() + 1);
+    batch.push(query.to_string());
+    batch.extend(texts.iter().cloned());
+    let vectors = model.embed(&batch).ok()?;
+    // A model that returns the wrong number of vectors is broken in a way that
+    // would silently misalign every passage with someone else's meaning.
+    if vectors.len() != batch.len() {
+        return None;
+    }
+    let (q, rest) = vectors.split_first()?;
+    Some(
+        rest.iter()
+            .enumerate()
+            .map(|(i, v)| (cosine(q, v), i))
+            .collect(),
+    )
+}
+
+fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() {
+        return 0.0;
+    }
+    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if na == 0.0 || nb == 0.0 {
+        0.0
+    } else {
+        dot / (na * nb)
+    }
+}
+
+/// Reciprocal rank fusion of two rankings over the same passages.
+///
+/// A passage scores `1 / (k + rank)` in each list it appears in, summed. A hit
+/// both halves agree on rises above one that only either found, which is the
+/// whole reason to run two.
+fn fuse(lexical: &[(f32, usize)], semantic: &[(f32, usize)]) -> Vec<(f32, usize)> {
+    let mut fused: HashMap<usize, f32> = HashMap::new();
+    for list in [lexical, semantic] {
+        for (rank, (_, idx)) in list.iter().take(FUSION_DEPTH).enumerate() {
+            *fused.entry(*idx).or_insert(0.0) += 1.0 / (RRF_K + rank as f32 + 1.0);
+        }
+    }
+    let mut out: Vec<(f32, usize)> = fused.into_iter().map(|(i, s)| (s, i)).collect();
+    // Ties broken by index so the order is the same twice, as in the lexical
+    // path. A HashMap hands them back in whatever order it likes.
+    out.sort_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.1.cmp(&b.1))
+    });
+    out
 }
 
 /// The last paragraphs of a passage, totalling at least `want` words, to open
@@ -657,6 +815,132 @@ mod tests {
     // in its body, so the name exists only as the file's name. Meanwhile "Mut"
     // is an ordinary German word, so notes about courage crowd the results.
     // Scoring passage text alone left the person out entirely.
+    // ---- The hybrid path ----
+
+    /// A stand-in for a real model: a hand-built space just big enough to test
+    /// the plumbing. Words that mean the same thing sit on the same axis, so
+    /// "Beglaubigung" is close to "Notarisierung" without sharing a letter.
+    ///
+    /// This tests the fusion, the fallback and the wiring. It says nothing
+    /// about whether real embeddings help a German vault: only a real model on
+    /// a real vault answers that.
+    struct ToyModel;
+
+    const AXES: &[&[&str]] = &[
+        &["notarisierung", "beglaubigung", "apple", "freigabe"],
+        &["zertifikat", "signatur", "schluessel", "p12"],
+        &["farbe", "rot", "schattierung"],
+        &["import", "feed", "autor"],
+    ];
+
+    impl Similarity for ToyModel {
+        fn id(&self) -> &str {
+            "toy-v1"
+        }
+        fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+            Ok(texts
+                .iter()
+                .map(|t| {
+                    let lower = t.to_lowercase();
+                    AXES.iter()
+                        .map(|axis| axis.iter().filter(|w| lower.contains(**w)).count() as f32)
+                        .collect()
+                })
+                .collect())
+        }
+    }
+
+    #[test]
+    fn meaning_reaches_what_words_cannot() {
+        // The same query as the lexical-only test above, which misses.
+        let dir = fixture("hybrid");
+        let got = retrieve_with(
+            &dir,
+            "beglaubigung durch den hersteller",
+            5,
+            Some(&ToyModel),
+        )
+        .unwrap();
+        let paths: Vec<&str> = got.passages.iter().map(|p| p.path.as_str()).collect();
+        assert!(paths.contains(&"Signieren.md"), "{paths:?}");
+        assert!(got.semantic);
+    }
+
+    #[test]
+    fn the_hybrid_does_not_lose_what_words_already_found() {
+        // Adding meaning must not cost precision. Every evaluation case has to
+        // survive the fusion, or the second half is making things worse.
+        let dir = fixture("hybrideval");
+        let mut missed = Vec::new();
+        for (question, expected) in CASES {
+            let got = retrieve_with(&dir, question, 5, Some(&ToyModel)).unwrap();
+            let paths: Vec<&str> = got.passages.iter().map(|p| p.path.as_str()).collect();
+            if !paths.contains(expected) {
+                missed.push(format!("{question:?} -> {paths:?}, wanted {expected:?}"));
+            }
+        }
+        assert!(missed.is_empty(), "{}", missed.join("\n"));
+    }
+
+    #[test]
+    fn a_broken_model_costs_quality_not_answers() {
+        struct Broken;
+        impl Similarity for Broken {
+            fn id(&self) -> &str {
+                "broken"
+            }
+            fn embed(&self, _: &[String]) -> Result<Vec<Vec<f32>>, String> {
+                Err("weights not loaded".into())
+            }
+        }
+        let dir = fixture("broken");
+        let got = retrieve_with(&dir, "notarisierung warteschlange", 5, Some(&Broken)).unwrap();
+        assert!(!got.semantic, "a failed model must say so");
+        assert_eq!(
+            got.passages[0].path, "Signieren.md",
+            "lexical must still work"
+        );
+    }
+
+    #[test]
+    fn a_model_returning_the_wrong_count_is_refused() {
+        // The dangerous failure, because it does not look like one: too few
+        // vectors and every passage silently takes someone else's meaning.
+        struct Short;
+        impl Similarity for Short {
+            fn id(&self) -> &str {
+                "short"
+            }
+            fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+                Ok(vec![vec![1.0, 0.0]; texts.len().saturating_sub(1)])
+            }
+        }
+        let dir = fixture("short");
+        let got = retrieve_with(&dir, "notarisierung", 5, Some(&Short)).unwrap();
+        assert!(!got.semantic);
+        assert_eq!(got.passages[0].path, "Signieren.md");
+    }
+
+    #[test]
+    fn the_hybrid_order_is_the_same_twice() {
+        let dir = fixture("hybridstable");
+        let key = |r: &Retrieval| -> Vec<(String, usize)> {
+            r.passages
+                .iter()
+                .map(|p| (p.path.clone(), p.line))
+                .collect()
+        };
+        let a = retrieve_with(&dir, "zertifikat exportieren", 10, Some(&ToyModel)).unwrap();
+        let b = retrieve_with(&dir, "zertifikat exportieren", 10, Some(&ToyModel)).unwrap();
+        assert_eq!(key(&a), key(&b));
+    }
+
+    #[test]
+    fn without_a_model_nothing_claims_to_be_semantic() {
+        let dir = fixture("nomodel");
+        assert!(!retrieve(&dir, "notarisierung", 3).unwrap().semantic);
+    }
+
     #[test]
     fn a_note_is_findable_by_its_own_name() {
         let dir = tmp_vault("byname");
@@ -771,12 +1055,13 @@ mod tests {
         assert!(retrieve(&dir, "   ", 5).unwrap().passages.is_empty());
     }
 
-    // This is the gap embeddings close, pinned so it is visible rather than
-    // discovered. "Bezahlbeglaubigung" is a synonym nobody wrote down, so word
-    // overlap cannot reach the notarisation note. M8 phase 3 should flip this
-    // test; when it does, that is the signal it worked, not a regression.
+    // The gap that word overlap cannot close, pinned so it stays visible.
+    // "Beglaubigung" is a synonym nobody wrote down, so no amount of stemming
+    // reaches the notarisation note. The sibling test below shows the hybrid
+    // path finding it; this one exists to show that the lexical half alone
+    // still cannot, which is the reason both halves are run.
     #[test]
-    fn a_synonym_is_out_of_reach_until_embeddings_land() {
+    fn a_synonym_is_out_of_reach_for_words_alone() {
         let dir = fixture("synonym");
         let got = retrieve(&dir, "beglaubigung durch den hersteller", 5).unwrap();
         let paths: Vec<&str> = got.passages.iter().map(|p| p.path.as_str()).collect();
