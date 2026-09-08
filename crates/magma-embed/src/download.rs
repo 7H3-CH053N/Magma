@@ -75,7 +75,8 @@ impl ModelFiles {
 }
 
 /// How far along a download is, for a progress bar.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DownloadProgress {
     /// The file being fetched, e.g. `model.safetensors`.
     pub file: String,

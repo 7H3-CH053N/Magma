@@ -2233,6 +2233,7 @@ name = "magma"
 version = "1.0.0"
 dependencies = [
  "magma-core",
+ "magma-embed",
  "magma-import",
  "magma-mcp",
  "magma-webdav",

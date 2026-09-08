@@ -158,6 +158,54 @@ async fn list_folders(vault: String) -> Result<Vec<String>, String> {
 /// draws the bar; a blog import is otherwise minutes of nothing.
 const IMPORT_PROGRESS_EVENT: &str = "import-progress";
 
+/// The event the model download reports on. Half a gigabyte with no bar is
+/// indistinguishable from a hang, which this project has already learned once.
+const MODEL_PROGRESS_EVENT: &str = "model-progress";
+
+/// What the settings panel needs to know about semantic search.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelStatus {
+    /// True when the weights are on disk and retrieval can rank meaning.
+    ready: bool,
+    /// Which encoder, so the panel can name it rather than say "the model".
+    model: String,
+    /// Roughly what downloading it costs. Shown *before* the button, because
+    /// this is not a decision to spring on someone over a phone connection.
+    approx_bytes: u64,
+}
+
+#[tauri::command]
+async fn model_status() -> Result<ModelStatus, String> {
+    let dir = app_data_dir().ok_or("no application data folder")?;
+    Ok(ModelStatus {
+        ready: magma_embed::is_ready(&dir),
+        model: magma_embed::DEFAULT_MODEL.id.to_string(),
+        approx_bytes: magma_embed::DEFAULT_MODEL.approx_bytes,
+    })
+}
+
+/// Download the embedding model, then prove it works before calling it ready.
+#[tauri::command]
+async fn download_model(app: tauri::AppHandle, vault: String) -> Result<(), String> {
+    let dir = app_data_dir().ok_or("no application data folder")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        magma_embed::fetch(&dir, &mut |p| {
+            // Best-effort: a progress event that cannot be delivered must never
+            // abort the download it is only describing.
+            let _ = app.emit(MODEL_PROGRESS_EVENT, p);
+        })?;
+        // Half a gigabyte that loads and returns noise would just make search
+        // quietly worse, so it does not count as ready until it has shown it
+        // can tell two meanings apart.
+        let model = magma_embed::open(&dir, &PathBuf::from(&vault))?
+            .ok_or("the model is still not on disk after downloading")?;
+        magma_embed::self_check(&model)
+    })
+    .await
+    .map_err(|e| format!("download task failed: {e}"))?
+}
+
 /// Import a WordPress blog into a folder, returning how many notes were written.
 #[tauri::command]
 async fn import_wordpress(
@@ -466,6 +514,14 @@ fn djb2(s: &str) -> u64 {
 // localStorage: clearing the app's web data (or a WebView reset on update)
 // would otherwise dump you back on the "open a vault" screen with no idea
 // which folder it was.
+
+/// The folder Magma keeps its own files in: settings, and everything derived
+/// from a vault — the embedding model and its vectors. Never inside the vault:
+/// a folder of markdown has to stay a folder of markdown, and a WebDAV vault or
+/// a second editor would trip over anything else in there.
+fn app_data_dir() -> Option<PathBuf> {
+    app_settings_path().and_then(|p| p.parent().map(|d| d.to_path_buf()))
+}
 
 /// Magma's own config file: `<config dir>/Magma/settings.json`.
 fn app_settings_path() -> Option<PathBuf> {
@@ -951,7 +1007,15 @@ pub fn run() {
             std::env::var("MAGMA_MCP_ALLOW_WRITE").ok().as_deref(),
             Some("0") | Some("false") | Some("no")
         );
-        magma_mcp::serve_stdio(PathBuf::from(vault), allow_write);
+        let vault = PathBuf::from(vault);
+        // Rank meaning alongside words when the user has downloaded the model.
+        // A failure here is not fatal: an MCP server that refuses to start is
+        // far worse than one whose retrieval is lexical, and the result says
+        // which it was through `semantic` on every answer.
+        let model = app_data_dir()
+            .and_then(|dir| magma_embed::open(&dir, &vault).ok().flatten())
+            .map(|m| Box::new(m) as Box<dyn vault::Similarity>);
+        magma_mcp::serve_stdio_with(vault, allow_write, model);
         return;
     }
 
@@ -981,6 +1045,8 @@ pub fn run() {
             move_folder,
             list_folders,
             import_wordpress,
+            model_status,
+            download_model,
             save_asset,
             build_graph,
             concept_graph,

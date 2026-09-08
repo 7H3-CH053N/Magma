@@ -557,4 +557,35 @@ export async function installAppUpdate(
   await relaunch();
 }
 
+/** What the settings panel knows about semantic search. */
+export type ModelStatus = {
+  /** True when the weights are on disk and retrieval can rank meaning. */
+  ready: boolean;
+  model: string;
+  /** Roughly what the download costs, shown before the button rather than after. */
+  approxBytes: number;
+};
+
+export type ModelProgress = {
+  file: string;
+  done: number;
+  /** Absent when the server did not say how large the file is. */
+  total?: number;
+};
+
+export async function modelStatus(): Promise<ModelStatus> {
+  return invoke<ModelStatus>("model_status");
+}
+
+export async function downloadModel(vault: string): Promise<void> {
+  return invoke<void>("download_model", { vault });
+}
+
+export async function onModelProgress(
+  handler: (p: ModelProgress) => void
+): Promise<() => void> {
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<ModelProgress>("model-progress", (e) => handler(e.payload));
+}
+
 export { hasTauri };

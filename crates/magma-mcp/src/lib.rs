@@ -23,12 +23,26 @@ struct Server {
     vault: PathBuf,
     allow_write: bool,
     client: Option<String>,
+    /// The embedding model, when one is loaded. `None` keeps retrieval lexical,
+    /// which is the ordinary state of a fresh install.
+    model: Option<Box<dyn core::Similarity>>,
 }
 
 /// Serve the MCP protocol over stdio until stdin closes. Shared by the
 /// `magma-mcp` binary and the Magma desktop app (`magma --mcp <vault>`), so a
 /// user never has to install a separate server to connect Claude.
 pub fn serve_stdio(vault: PathBuf, allow_write: bool) {
+    serve_stdio_with(vault, allow_write, None)
+}
+
+/// As [`serve_stdio`], with an embedding model for `retrieve` to rank meaning
+/// alongside words. The desktop app passes one when the user has downloaded it;
+/// the standalone binary never does, so it stays free of that dependency.
+pub fn serve_stdio_with(
+    vault: PathBuf,
+    allow_write: bool,
+    model: Option<Box<dyn core::Similarity>>,
+) {
     let client = std::env::var("MAGMA_MCP_CLIENT")
         .ok()
         .map(|c| c.trim().to_lowercase())
@@ -37,6 +51,7 @@ pub fn serve_stdio(vault: PathBuf, allow_write: bool) {
         vault,
         allow_write,
         client,
+        model,
     };
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
@@ -143,7 +158,7 @@ impl Server {
                     .and_then(|l| l.as_u64())
                     .unwrap_or(8)
                     .clamp(1, 50) as usize;
-                let found = core::retrieve(v, &q, limit).map_err(io)?;
+                let found = core::retrieve_with(v, &q, limit, self.model.as_deref()).map_err(io)?;
                 Ok(json!(found))
             }
             "read_note" => {
@@ -565,6 +580,7 @@ mod tests {
             vault: v,
             allow_write: true,
             client: Some("test".to_string()),
+            model: None,
         }
     }
 
@@ -711,6 +727,7 @@ mod tests {
             vault: v.clone(),
             allow_write: false,
             client: None,
+            model: None,
         };
         for tool in ["delete_note", "delete_folder", "rename_note"] {
             assert!(

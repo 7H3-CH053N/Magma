@@ -23,6 +23,11 @@ import {
   installCodexMcp,
   installMcp,
   mcpConfig,
+  modelStatus,
+  downloadModel,
+  onModelProgress,
+  type ModelStatus,
+  type ModelProgress,
   type AppUpdate,
   type NoteMeta,
   type RemoteConfig,
@@ -133,6 +138,37 @@ export default function Settings({
       codexMcpConfig(vault).then(setCodexConfigText).catch(() => {});
     }
   }, [vault]);
+
+  // Semantic search: the encoder is an opt-in download, so the panel has to say
+  // what it costs before the button and what it is doing during it.
+  const [model, setModel] = useState<ModelStatus | null>(null);
+  const [modelBusy, setModelBusy] = useState(false);
+  const [modelErr, setModelErr] = useState<string | null>(null);
+  const [modelProg, setModelProg] = useState<ModelProgress | null>(null);
+
+  useEffect(() => {
+    if (hasTauri) modelStatus().then(setModel).catch(() => {});
+  }, []);
+
+  async function fetchModel() {
+    if (!vault) return;
+    setModelBusy(true);
+    setModelErr(null);
+    setModelProg(null);
+    let stop: (() => void) | null = null;
+    try {
+      stop = await onModelProgress(setModelProg);
+      await downloadModel(vault);
+      setModel(await modelStatus());
+    } catch (e) {
+      setModelErr(String(e));
+    } finally {
+      // Unsubscribe whatever happened, or a second attempt stacks listeners.
+      if (stop) stop();
+      setModelBusy(false);
+      setModelProg(null);
+    }
+  }
 
   // WordPress import state.
   const [impUrl, setImpUrl] = useState("");
@@ -735,6 +771,63 @@ export default function Settings({
         {tab === "claude" && (
         /* Connect Claude and Codex through MCP */
         <>
+        <section className="mb-6">
+          <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-magma-muted">
+            {t("settings.semanticTitle")}
+          </label>
+          <p className="mb-2 text-xs leading-relaxed text-magma-muted">
+            {t("settings.semanticBody")}
+          </p>
+
+          {model?.ready ? (
+            <p className="text-xs text-green-600 dark:text-green-400">
+              {t("settings.semanticReady", { model: model.model })}
+            </p>
+          ) : !vault ? (
+            <p className="text-xs text-magma-muted opacity-80">{t("settings.codexMcpNoVault")}</p>
+          ) : (
+            <>
+              <button
+                onClick={fetchModel}
+                disabled={modelBusy || !hasTauri}
+                className="rounded-lg border border-black/10 px-3 py-1.5 text-sm text-magma-muted transition hover:border-black/20 hover:text-magma-ink disabled:opacity-50 dark:border-white/15 dark:hover:border-white/30"
+              >
+                {modelBusy
+                  ? t("settings.semanticBusy")
+                  : t("settings.semanticDownload", {
+                      size: model ? String(Math.round(model.approxBytes / 1_000_000)) : "?",
+                    })}
+              </button>
+              {modelProg && (
+                <div className="mt-2">
+                  <div className="h-1 w-full overflow-hidden rounded bg-black/10 dark:bg-white/10">
+                    <div
+                      className="h-full bg-magma-accent transition-all"
+                      style={{
+                        width: modelProg.total
+                          ? `${Math.round((modelProg.done / modelProg.total) * 100)}%`
+                          : "100%",
+                      }}
+                    />
+                  </div>
+                  <p className="mt-1 text-xs text-magma-muted">
+                    {t("settings.semanticProgress", {
+                      file: modelProg.file,
+                      done: String(Math.round(modelProg.done / 1_000_000)),
+                      total: modelProg.total
+                        ? String(Math.round(modelProg.total / 1_000_000))
+                        : "?",
+                    })}
+                  </p>
+                </div>
+              )}
+              {modelErr && (
+                <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">{modelErr}</p>
+              )}
+            </>
+          )}
+        </section>
+
         <section className="mb-6">
           <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-magma-muted">
             {t("settings.connectTitle")}
