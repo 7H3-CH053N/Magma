@@ -68,6 +68,65 @@ pub fn open(app_data: &Path, vault: &Path) -> Result<Option<Cached<Embedder>>, S
     Ok(Some(Cached::open(embedder, cache_path(app_data, vault))))
 }
 
+/// How far along indexing is, for a progress bar.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexProgress {
+    pub done: usize,
+    pub total: usize,
+}
+
+/// Encode every passage of a vault, so searching can be a lookup.
+///
+/// This is the work that must not happen inside a query. It takes minutes on a
+/// real vault, it reports as it goes, and the cache is written along the way —
+/// so a run that is cut short still leaves everything it finished, and running
+/// it again picks up where it stopped.
+pub fn index_vault(
+    app_data: &Path,
+    vault: &Path,
+    on_progress: &mut dyn FnMut(IndexProgress),
+) -> Result<usize, String> {
+    let model = open(app_data, vault)?.ok_or("the model has not been downloaded yet")?;
+    let texts = passage_texts(vault).map_err(|e| format!("cannot read the vault: {e}"))?;
+    let total = texts.len();
+
+    // Drop vectors for passages that no longer exist, or the file only grows.
+    model.retain_only(&texts);
+
+    for (done, group) in texts.chunks(INDEX_BATCH).enumerate() {
+        model.embed_passages(group)?;
+        on_progress(IndexProgress {
+            done: ((done + 1) * INDEX_BATCH).min(total),
+            total,
+        });
+    }
+    model.save()?;
+    Ok(total)
+}
+
+/// Passages per progress step. Small enough that a bar moves, large enough that
+/// the callback is not the expensive part.
+const INDEX_BATCH: usize = 16;
+
+/// Every passage of the vault, in the exact form retrieval will ask for.
+///
+/// It has to be the *same* text, or the cache keys will not match and the
+/// indexing run would leave a query no better off than before.
+fn passage_texts(vault: &Path) -> std::io::Result<Vec<String>> {
+    let mut out = Vec::new();
+    for note in magma_core::list_notes(vault)? {
+        let content = magma_core::vault::read_for_scan(&vault.join(&note.path));
+        if content.is_empty() {
+            continue;
+        }
+        for chunk in magma_core::chunk_note(&content) {
+            out.push(magma_core::embedding_text(&note.path, &chunk));
+        }
+    }
+    Ok(out)
+}
+
 /// Download the model if it is not there yet.
 pub fn fetch(app_data: &Path, on_progress: &mut dyn FnMut(DownloadProgress)) -> Result<(), String> {
     ensure_model(&model_dir(app_data), &DEFAULT_MODEL, on_progress).map(|_| ())

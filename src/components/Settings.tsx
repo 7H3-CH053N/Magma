@@ -26,6 +26,9 @@ import {
   modelStatus,
   downloadModel,
   onModelProgress,
+  indexVault,
+  onIndexProgress,
+  type IndexProgress,
   type ModelStatus,
   type ModelProgress,
   type AppUpdate,
@@ -149,6 +152,28 @@ export default function Settings({
   useEffect(() => {
     if (hasTauri) modelStatus().then(setModel).catch(() => {});
   }, []);
+
+  const [indexBusy, setIndexBusy] = useState(false);
+  const [indexProg, setIndexProg] = useState<IndexProgress | null>(null);
+  const [indexDone, setIndexDone] = useState<number | null>(null);
+
+  async function runIndex() {
+    if (!vault) return;
+    setIndexBusy(true);
+    setModelErr(null);
+    setIndexDone(null);
+    let stop: (() => void) | null = null;
+    try {
+      stop = await onIndexProgress(setIndexProg);
+      setIndexDone(await indexVault(vault));
+    } catch (e) {
+      setModelErr(String(e));
+    } finally {
+      if (stop) stop();
+      setIndexBusy(false);
+      setIndexProg(null);
+    }
+  }
 
   async function fetchModel() {
     if (!vault) return;
@@ -780,9 +805,49 @@ export default function Settings({
           </p>
 
           {model?.ready ? (
-            <p className="text-xs text-green-600 dark:text-green-400">
-              {t("settings.semanticReady", { model: model.model })}
-            </p>
+            <>
+              <p className="mb-2 text-xs text-green-600 dark:text-green-400">
+                {t("settings.semanticReady", { model: model.model })}
+              </p>
+              <p className="mb-2 text-xs leading-relaxed text-magma-muted">
+                {t("settings.indexBody")}
+              </p>
+              <button
+                onClick={runIndex}
+                disabled={indexBusy || !vault}
+                className="rounded-lg border border-black/10 px-3 py-1.5 text-sm text-magma-muted transition hover:border-black/20 hover:text-magma-ink disabled:opacity-50 dark:border-white/15 dark:hover:border-white/30"
+              >
+                {indexBusy ? t("settings.indexBusy") : t("settings.indexRun")}
+              </button>
+              {indexProg && (
+                <div className="mt-2">
+                  <div className="h-1 w-full overflow-hidden rounded bg-black/10 dark:bg-white/10">
+                    <div
+                      className="h-full bg-magma-accent transition-all"
+                      style={{
+                        width: indexProg.total
+                          ? `${Math.round((indexProg.done / indexProg.total) * 100)}%`
+                          : "0%",
+                      }}
+                    />
+                  </div>
+                  <p className="mt-1 text-xs text-magma-muted">
+                    {t("settings.indexProgress", {
+                      done: String(indexProg.done),
+                      total: String(indexProg.total),
+                    })}
+                  </p>
+                </div>
+              )}
+              {indexDone !== null && !indexBusy && (
+                <p className="mt-2 text-xs text-green-600 dark:text-green-400">
+                  {t("settings.indexDone", { count: String(indexDone) })}
+                </p>
+              )}
+              {modelErr && (
+                <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">{modelErr}</p>
+              )}
+            </>
           ) : !vault ? (
             <p className="text-xs text-magma-muted opacity-80">{t("settings.codexMcpNoVault")}</p>
           ) : (

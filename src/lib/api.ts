@@ -588,4 +588,18 @@ export async function onModelProgress(
   return listen<ModelProgress>("model-progress", (e) => handler(e.payload));
 }
 
+export type IndexProgress = { done: number; total: number };
+
+/** Encode every passage of the vault. Minutes on a real vault, once. */
+export async function indexVault(vault: string): Promise<number> {
+  return invoke<number>("index_vault", { vault });
+}
+
+export async function onIndexProgress(
+  handler: (p: IndexProgress) => void
+): Promise<() => void> {
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<IndexProgress>("index-progress", (e) => handler(e.payload));
+}
+
 export { hasTauri };

@@ -185,6 +185,23 @@ async fn model_status() -> Result<ModelStatus, String> {
     })
 }
 
+/// The event indexing reports on. Encoding a vault takes minutes, and this
+/// project has already learned twice what minutes of silence look like.
+const INDEX_PROGRESS_EVENT: &str = "index-progress";
+
+/// Encode every passage of the vault, so searching stays a lookup.
+#[tauri::command]
+async fn index_vault(app: tauri::AppHandle, vault: String) -> Result<usize, String> {
+    let dir = app_data_dir().ok_or("no application data folder")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        magma_embed::index_vault(&dir, &PathBuf::from(&vault), &mut |p| {
+            let _ = app.emit(INDEX_PROGRESS_EVENT, p);
+        })
+    })
+    .await
+    .map_err(|e| format!("indexing task failed: {e}"))?
+}
+
 /// Download the embedding model, then prove it works before calling it ready.
 #[tauri::command]
 async fn download_model(app: tauri::AppHandle, vault: String) -> Result<(), String> {
@@ -1014,7 +1031,11 @@ pub fn run() {
         // which it was through `semantic` on every answer.
         let model = app_data_dir()
             .and_then(|dir| magma_embed::open(&dir, &vault).ok().flatten())
-            .map(|m| Box::new(m) as Box<dyn vault::Similarity>);
+            // Lookup only. A search must never encode: doing it on demand made
+            // the first call after a restart run the whole vault through the
+            // model inside a tool call with a timeout, so the call died and
+            // nothing was kept. Filling the cache is what "index" is for.
+            .map(|m| Box::new(m.lookup_only(true)) as Box<dyn vault::Similarity>);
         magma_mcp::serve_stdio_with(vault, allow_write, model);
         return;
     }
@@ -1047,6 +1068,7 @@ pub fn run() {
             import_wordpress,
             model_status,
             download_model,
+            index_vault,
             save_asset,
             build_graph,
             concept_graph,

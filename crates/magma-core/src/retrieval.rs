@@ -484,7 +484,7 @@ pub fn retrieve_with(
 /// subject matter a body often leaves implicit, and leaving them out here would
 /// reopen on the semantic side the hole that scoring text alone opened on the
 /// lexical one.
-fn embedding_text(path: &str, chunk: &Chunk) -> String {
+pub fn embedding_text(path: &str, chunk: &Chunk) -> String {
     let name = path.trim_end_matches(".md").replace('/', " / ");
     if chunk.heading.is_empty() {
         format!("{name}\n{}", chunk.text)

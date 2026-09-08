@@ -51,6 +51,9 @@ pub struct Cached<S: Similarity> {
     /// Set when something was added since the last save, so an unchanged vault
     /// does not rewrite the file on every query.
     dirty: Mutex<bool>,
+    /// When set, unknown passages are answered with a zero vector instead of
+    /// being encoded. See [`Self::lookup_only`].
+    lookup_only: bool,
 }
 
 impl<S: Similarity> Cached<S> {
@@ -66,7 +69,33 @@ impl<S: Similarity> Cached<S> {
             entries: Mutex::new(entries),
             path,
             dirty: Mutex::new(false),
+            lookup_only: false,
         }
+    }
+
+    /// Answer only from what is already cached, and never encode.
+    ///
+    /// This is how a *query* must run. Encoding on demand means the first
+    /// search after a restart pays for the whole vault, one forward pass per
+    /// passage, inside a tool call that has a timeout — which is not slow, it
+    /// is broken: the call dies, nothing is kept, and the next one starts over.
+    ///
+    /// An unindexed passage comes back as a zero vector, so its cosine is zero
+    /// and it simply does not rank on meaning. It is still found by words.
+    /// Filling the cache is [`crate::index_vault`]'s job, where the work is
+    /// visible, interruptible and saved as it goes.
+    pub fn lookup_only(mut self, yes: bool) -> Self {
+        self.lookup_only = yes;
+        self
+    }
+
+    /// Width of the vectors held, for making a neutral one.
+    fn width(&self) -> usize {
+        self.entries
+            .lock()
+            .ok()
+            .and_then(|e| e.values().next().map(|v| v.len()))
+            .unwrap_or(1)
     }
 
     /// How many vectors are held. Mostly for tests and for telling a user
@@ -133,28 +162,37 @@ impl<S: Similarity> Similarity for Cached<S> {
             }
         }
 
-        if !missing.is_empty() {
+        if !missing.is_empty() && !self.lookup_only {
             let fresh = self.inner.embed_passages(&missing)?;
             if fresh.len() != missing.len() {
                 return Err("model returned the wrong number of vectors".into());
             }
-            let mut entries = self.entries.lock().map_err(|_| "cache poisoned")?;
-            for (text, vector) in missing.iter().zip(fresh) {
-                entries.insert(key_of(text), vector);
+            {
+                let mut entries = self.entries.lock().map_err(|_| "cache poisoned")?;
+                for (text, vector) in missing.iter().zip(fresh) {
+                    entries.insert(key_of(text), vector);
+                }
             }
             *self.dirty.lock().map_err(|_| "cache poisoned")? = true;
+            // Save as we go rather than at the end. Encoding a vault takes
+            // minutes and the process can be killed at any point in them; a
+            // cache written only on a clean finish would keep nothing at all
+            // from an interrupted run, and every attempt would start over.
+            // Writing costs milliseconds next to a forward pass.
+            self.save()?;
         }
 
+        let zero = vec![0f32; self.width()];
         let entries = self.entries.lock().map_err(|_| "cache poisoned")?;
-        texts
+        Ok(texts
             .iter()
             .map(|t| {
                 entries
                     .get(&key_of(t))
                     .cloned()
-                    .ok_or_else(|| "vector went missing after embedding".to_string())
+                    .unwrap_or_else(|| zero.clone())
             })
-            .collect()
+            .collect())
     }
 }
 
@@ -378,6 +416,53 @@ mod tests {
         assert_eq!(cache.len(), 3);
         cache.retain_only(&texts(&["eins", "drei"]));
         assert_eq!(cache.len(), 2);
+    }
+
+    // The bug this replaced: `save` existed, was tested, and nothing ever
+    // called it. Every process start re-encoded the whole vault, so the cache
+    // was a unit that worked inside a feature that did not.
+    #[test]
+    fn vectors_reach_the_disk_without_anyone_asking() {
+        let path = tmp("autosave");
+        {
+            let cache = Cached::open(Counting::new("m"), path.clone());
+            cache.embed_passages(&texts(&["eins", "zwei"])).unwrap();
+            // Deliberately no save() here, and no clean shutdown either.
+        }
+        let cache = Cached::open(Counting::new("m"), path);
+        assert_eq!(cache.len(), 2, "nothing was written");
+    }
+
+    // The other half: a query must never encode. Encoding on demand meant the
+    // first search after a restart ran the whole vault through the model inside
+    // a tool call with a timeout, which killed the call and kept nothing.
+    #[test]
+    fn a_lookup_only_cache_never_runs_the_model() {
+        let cache = Cached::open(Counting::new("m"), tmp("lookup")).lookup_only(true);
+        let out = cache.embed_passages(&texts(&["nie gesehen"])).unwrap();
+        assert_eq!(cache.inner.texts.load(Ordering::SeqCst), 0);
+        // A neutral vector, so an unindexed passage simply does not rank on
+        // meaning. It is still found by words.
+        assert!(out[0].iter().all(|f| *f == 0.0), "{:?}", out[0]);
+    }
+
+    #[test]
+    fn a_lookup_only_cache_still_answers_from_what_it_has() {
+        let path = tmp("lookupwarm");
+        {
+            let warm = Cached::open(Counting::new("m"), path.clone());
+            warm.embed_passages(&texts(&["bekannt"])).unwrap();
+        }
+        let cache = Cached::open(Counting::new("m"), path).lookup_only(true);
+        let out = cache
+            .embed_passages(&texts(&["bekannt", "unbekannt"]))
+            .unwrap();
+        assert!(
+            out[0].iter().any(|f| *f != 0.0),
+            "the cached vector was lost"
+        );
+        assert!(out[1].iter().all(|f| *f == 0.0));
+        assert_eq!(cache.inner.texts.load(Ordering::SeqCst), 0);
     }
 
     #[test]
