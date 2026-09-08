@@ -13,6 +13,15 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+/// How often the cache is allowed to hit the disk while it is filling.
+///
+/// Saving after every batch sounded safe and was quadratic: the whole file is
+/// rewritten each time, so a vault of a few thousand passages wrote hundreds of
+/// megabytes to keep a few. Five seconds bounds the loss from a kill to five
+/// seconds of encoding, which is the only thing the frequency was ever buying.
+const SAVE_EVERY: Duration = Duration::from_secs(5);
 
 /// File magic and format version. A format change bumps the digit, and an
 /// unrecognised file is treated as no cache rather than as an error: a stale
@@ -54,6 +63,7 @@ pub struct Cached<S: Similarity> {
     /// When set, unknown passages are answered with a zero vector instead of
     /// being encoded. See [`Self::lookup_only`].
     lookup_only: bool,
+    last_save: Mutex<Instant>,
 }
 
 impl<S: Similarity> Cached<S> {
@@ -70,7 +80,64 @@ impl<S: Similarity> Cached<S> {
             path,
             dirty: Mutex::new(false),
             lookup_only: false,
+            // Due immediately, so the very first batch is written rather
+            // than held back: a run killed in its first seconds should still
+            // leave something behind. Only the ones after it are throttled.
+            last_save: Mutex::new(
+                Instant::now()
+                    .checked_sub(SAVE_EVERY)
+                    .unwrap_or_else(Instant::now),
+            ),
         }
+    }
+
+    /// The encoder underneath, for a caller that wants to drive batches itself.
+    pub fn inner(&self) -> &S {
+        &self.inner
+    }
+
+    /// Which of these have no vector yet, deduplicated and in order.
+    pub fn missing(&self, texts: &[String]) -> Vec<String> {
+        let entries = match self.entries.lock() {
+            Ok(e) => e,
+            Err(_) => return texts.to_vec(),
+        };
+        let mut seen = std::collections::HashSet::new();
+        texts
+            .iter()
+            .filter(|t| {
+                let key = key_of(t);
+                !entries.contains_key(&key) && seen.insert(key)
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Take vectors computed elsewhere, in the same order as their texts.
+    pub fn insert_many(&self, texts: &[String], vectors: Vec<Vec<f32>>) -> Result<(), String> {
+        if texts.len() != vectors.len() {
+            return Err("vectors do not line up with their texts".into());
+        }
+        let mut entries = self.entries.lock().map_err(|_| "cache poisoned")?;
+        for (text, vector) in texts.iter().zip(vectors) {
+            entries.insert(key_of(text), vector);
+        }
+        *self.dirty.lock().map_err(|_| "cache poisoned")? = true;
+        Ok(())
+    }
+
+    /// Save, but not more often than [`SAVE_EVERY`].
+    pub fn save_if_due(&self) -> Result<(), String> {
+        let due = {
+            let last = self.last_save.lock().map_err(|_| "cache poisoned")?;
+            last.elapsed() >= SAVE_EVERY
+        };
+        if !due {
+            return Ok(());
+        }
+        self.save()?;
+        *self.last_save.lock().map_err(|_| "cache poisoned")? = Instant::now();
+        Ok(())
     }
 
     /// Answer only from what is already cached, and never encode.
@@ -178,8 +245,8 @@ impl<S: Similarity> Similarity for Cached<S> {
             // minutes and the process can be killed at any point in them; a
             // cache written only on a clean finish would keep nothing at all
             // from an interrupted run, and every attempt would start over.
-            // Writing costs milliseconds next to a forward pass.
-            self.save()?;
+            // Throttled, because the whole file is rewritten each time.
+            self.save_if_due()?;
         }
 
         let zero = vec![0f32; self.width()];
@@ -463,6 +530,26 @@ mod tests {
         );
         assert!(out[1].iter().all(|f| *f == 0.0));
         assert_eq!(cache.inner.texts.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn missing_reports_only_what_is_new_and_says_it_once() {
+        let cache = Cached::open(Counting::new("m"), tmp("missing"));
+        cache.embed_passages(&texts(&["bekannt"])).unwrap();
+        let todo = cache.missing(&texts(&["bekannt", "neu", "neu"]));
+        assert_eq!(todo, vec!["neu".to_string()]);
+    }
+
+    #[test]
+    fn insert_many_refuses_vectors_that_do_not_line_up() {
+        // The silent-corruption case: one vector short and every passage after
+        // it takes its neighbour's meaning.
+        let cache = Cached::open(Counting::new("m"), tmp("lineup"));
+        let err = cache
+            .insert_many(&texts(&["eins", "zwei"]), vec![vec![1.0, 0.0]])
+            .unwrap_err();
+        assert!(err.contains("line up"), "{err}");
+        assert_eq!(cache.len(), 0);
     }
 
     #[test]

@@ -156,6 +156,20 @@ export default function Settings({
   const [indexBusy, setIndexBusy] = useState(false);
   const [indexProg, setIndexProg] = useState<IndexProgress | null>(null);
   const [indexDone, setIndexDone] = useState<number | null>(null);
+  // Start time and where the bar stood then, so the estimate is built from this
+  // run's own rate rather than from passages already in the cache.
+  const [indexStart, setIndexStart] = useState<{ at: number; done: number } | null>(null);
+
+  /** Minutes still to go at the rate this run has managed, or null while unknown. */
+  function indexEta(p: IndexProgress): number | null {
+    if (!indexStart) return null;
+    const encoded = p.done - indexStart.done;
+    const seconds = (Date.now() - indexStart.at) / 1000;
+    // Ten seconds of data is not a rate worth quoting.
+    if (encoded <= 0 || seconds < 10) return null;
+    const left = p.total - p.done;
+    return Math.max(1, Math.round(left / (encoded / seconds) / 60));
+  }
 
   async function runIndex() {
     if (!vault) return;
@@ -164,7 +178,10 @@ export default function Settings({
     setIndexDone(null);
     let stop: (() => void) | null = null;
     try {
-      stop = await onIndexProgress(setIndexProg);
+      stop = await onIndexProgress((p) => {
+        setIndexStart((s) => s ?? { at: Date.now(), done: p.done });
+        setIndexProg(p);
+      });
       setIndexDone(await indexVault(vault));
     } catch (e) {
       setModelErr(String(e));
@@ -172,6 +189,7 @@ export default function Settings({
       if (stop) stop();
       setIndexBusy(false);
       setIndexProg(null);
+      setIndexStart(null);
     }
   }
 
@@ -836,6 +854,8 @@ export default function Settings({
                       done: String(indexProg.done),
                       total: String(indexProg.total),
                     })}
+                    {indexEta(indexProg) !== null &&
+                      " · " + t("settings.indexEta", { minutes: String(indexEta(indexProg)) })}
                   </p>
                 </div>
               )}

@@ -24,6 +24,7 @@ pub use download::{ensure_model, DownloadProgress, ModelFiles, ModelSpec, DEFAUL
 pub use model::Embedder;
 
 use magma_core::Similarity;
+use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 
 /// Where the model and its cache live under the app's data directory.
@@ -94,20 +95,39 @@ pub fn index_vault(
     // Drop vectors for passages that no longer exist, or the file only grows.
     model.retain_only(&texts);
 
-    for (done, group) in texts.chunks(INDEX_BATCH).enumerate() {
-        model.embed_passages(group)?;
-        on_progress(IndexProgress {
-            done: ((done + 1) * INDEX_BATCH).min(total),
-            total,
-        });
+    let mut todo = model.missing(&texts);
+    // Encode similar lengths together. A batch is padded to its longest member
+    // and attention costs the square of that length, so one long passage among
+    // fifteen short ones makes the other fifteen cost as much as it does.
+    todo.sort_by_key(|t| t.len());
+
+    let mut done = total - todo.len();
+    on_progress(IndexProgress { done, total });
+
+    // One forward pass does not keep a modern processor busy, so batches run
+    // side by side. This was the difference between three hours and a coffee
+    // break on the vault that prompted it.
+    let lanes = rayon::current_num_threads().max(1);
+    for group in todo.chunks(INDEX_BATCH * lanes) {
+        let vectors: Vec<Vec<f32>> = group
+            .par_chunks(INDEX_BATCH)
+            .map(|batch| model.inner().embed_passages(batch))
+            .collect::<Result<Vec<_>, String>>()?
+            .into_iter()
+            .flatten()
+            .collect();
+        model.insert_many(group, vectors)?;
+        done += group.len();
+        on_progress(IndexProgress { done, total });
+        model.save_if_due()?;
     }
     model.save()?;
     Ok(total)
 }
 
-/// Passages per progress step. Small enough that a bar moves, large enough that
-/// the callback is not the expensive part.
-const INDEX_BATCH: usize = 16;
+/// Passages per forward pass. Larger batches waste more on padding; smaller
+/// ones spend more of their time on setup.
+const INDEX_BATCH: usize = 8;
 
 /// Every passage of the vault, in the exact form retrieval will ask for.
 ///
