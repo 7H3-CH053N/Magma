@@ -130,7 +130,7 @@ statt Waisen-Notizen abzuladen:
 | M7 | Zweites Gehirn im Alltag | Tagesnotizen + Kalender ✅, Vorlagen mit Platzhaltern ✅, Versionsverlauf mit Diff und Wiederherstellen ✅, ausgehende Links + unverlinkte Erwähnungen ✅, ähnliche Notizen (TF-IDF) ✅ | ✅ |
 | M5 | Packaging | Installer (DMG/MSI), CI-Download-Artefakte ✅, Auto-Update, Code Signing | 🟡 |
 | M6 | Online-/Remote-Vault | Vault auf Webserver (WebDAV): Sync in lokalen Cache, Write-Through beim Speichern, Settings-UI, https-Pflicht | 🟡 erste Version |
-| M8 | Lokales RAG | Index + Watcher, Passagen statt ganzer Notizen, hybride Rangliste, lokale Embeddings, `retrieve` über MCP. Bleibt vollständig lokal. | ⬜ geplant |
+| M8 | Lokales RAG | Index + Watcher, Passagen statt ganzer Notizen, hybride Rangliste, lokale Embeddings, `retrieve` über MCP. Bleibt vollständig lokal. | 🟡 Phase 2 fertig |
 
 ## M8 — Lokales RAG
 
@@ -196,7 +196,10 @@ abgeleitete Information, nie die Quelle.
 Jede Phase ist für sich nützlich. Wer nach Phase 2 aufhört, hat trotzdem etwas
 Besseres als heute.
 
-**Phase 1 — Index, Watcher, Messlatte.** Das ist Issue #18 und die
+**Phase 1 — Index, Watcher, Messlatte.** Die Prüfsammlung steht (siehe unten)
+und läuft als Test in der CI mit; Index und Watcher warten auf die Messung des
+echten Vaults, weil davon abhängt, ob sie überhaupt dringend sind. Das ist
+Issue #18 und die
 Voraussetzung für alles Weitere: In-Memory-Index plus `notify`-Watcher auf
 Dateiänderungen, Notizen werden über einen Hash nur bei echter Änderung neu
 verarbeitet. Schon ohne Embeddings werden Suche und Ähnlichkeit dadurch
@@ -212,12 +215,27 @@ find <vault> -name '*.md' | wc -l
 find <vault> -name '*.md' -print0 | xargs -0 cat | wc -c
 ```
 
-**Phase 2 — Passagen und hybride Rangliste, noch ohne Embeddings.** Notizen an
-Überschriften und Absätzen entlang zerlegen, nicht stur nach Zeichenzahl, mit
-Überlappung an den Schnittstellen. BM25 statt reinem Substring-Match. Neues
-MCP-Werkzeug `retrieve`, das eine Rangliste von Passagen mit Pfad und Position
-zurückgibt statt einer Liste von Dateien. Das allein ist deutlich brauchbarer
-als heute, weil das Modell Kontext bekommt statt Dateinamen.
+**Phase 2 — Passagen und hybride Rangliste, noch ohne Embeddings.** ✅ Notizen
+werden an Überschriften und Absätzen entlang zerlegt, nicht stur nach
+Zeichenzahl, mit Überlappung an den Schnittstellen. BM25 statt reinem
+Substring-Match. Das MCP-Werkzeug `retrieve` gibt eine Rangliste von Passagen
+mit Notiz, Überschrift und Zeile zurück statt einer Liste von Dateien.
+Implementiert in `crates/magma-core/src/retrieval.rs`.
+
+Beim Bauen kam etwas dazu, das in diesem Plan fehlte und wichtiger ist als das
+Synonym-Problem: **deutsche Beugung**. Der Prüfsatz fiel sofort um, weil „wie
+exportiere ich das Zertifikat" eine Notiz mit „die p12 muss aus Meine
+Zertifikate exportiert werden" nicht erreichte. Kein einziges Wort der Frage
+passte. Handgeschriebene Endungsregeln wären dieselbe Falle gewesen wie die
+Stoppwortliste im Begriffsgraphen, also stemmt die Zerlegung jetzt mit Snowball
+(`rust-stemmers`, die vierte Abhängigkeit von `magma-core`).
+
+Was das nachweislich behebt und was nicht, gemessen statt angenommen:
+Substantivformen fallen zusammen (`Zertifikat`/`Zertifikate`/`Zertifikats`,
+`Farbe`/`Farben`), Partizipien auf `-iert` nicht (`exportiere` und
+`exportieren` werden beide zu `exporti`, `exportiert` bleibt stehen), und ein
+Substantiv trifft sein Verb nicht (`Import` gegen `importieren`). Beide Lücken
+sind als Tests festgehalten, damit sie niemand zufällig wiederfindet.
 
 **Phase 3 — Embeddings.** Jetzt erst, und hinter einer Schnittstelle, die es
 noch gar nicht gibt: Der Kommentar in `related.rs` nennt sie `Similarity`, M7

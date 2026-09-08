@@ -7,5 +7,6 @@ description = "Vault indexing and note operations for Magma — shared by the de
 
 [dependencies]
 regex = "1"
+rust-stemmers = "1.2"
 serde = { version = "1", features = ["derive"] }
 unicode-normalization = "0.1"

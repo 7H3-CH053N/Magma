@@ -17,6 +17,12 @@ on:
         description: "Publish a release under this tag (e.g. v0.1.0). Empty = build artifacts only."
         required: false
         default: ""
+      platforms:
+        description: "Which installers to build. A release always builds both."
+        required: false
+        type: choice
+        default: both
+        options: [both, windows, macos]
 
 # Cancel superseded runs on the same ref so pushes don't pile up duplicate runs.
 concurrency:
@@ -71,7 +77,41 @@ jobs:
   # push burns the monthly allowance fast. They only run on demand
   # (Actions tab -> Run workflow) or on a version tag — the Linux `checks` job
   # above still guards every push and PR.
+  # Which installers this run builds. A job-level `if` cannot see the matrix, so
+  # choosing legs means handing `bundle` its matrix rather than filtering one.
+  # Worth the extra job: a macOS runner bills at ten times the Linux rate and
+  # notarisation can add half an hour, so a Windows-only test build should not
+  # pay for a DMG nobody asked for.
+  targets:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        shell: bash
+        env:
+          WANT: ${{ inputs.platforms }}
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          # macOS runners are Apple Silicon, so a default build produces an
+          # arm64-only DMG that simply will not launch on an Intel Mac. The
+          # universal target covers both at the cost of compiling twice.
+          mac='{"os":"macos-latest","bundles":"dmg","target":"universal-apple-darwin"}'
+          win='{"os":"windows-latest","bundles":"msi","target":""}'
+          # A release ships both platforms whatever the box says, and a tag push
+          # has no inputs at all. Only a plain test build may narrow.
+          if [ -n "$TAG" ]; then WANT=both; fi
+          case "${WANT:-both}" in
+            windows) include="[$win]" ;;
+            macos)   include="[$mac]" ;;
+            *)       include="[$mac,$win]" ;;
+          esac
+          echo "building: $include"
+          echo "matrix=$include" >> "$GITHUB_OUTPUT"
+
   bundle:
+    needs: targets
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     # Needed to attach the installers to a GitHub Release on a version tag.
     permissions:
@@ -79,16 +119,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # macOS runners are Apple Silicon, so a default build produces an
-          # arm64-only DMG that simply will not launch on an Intel Mac. The
-          # universal target covers both at the cost of compiling twice.
-          - os: macos-latest
-            bundles: dmg
-            target: universal-apple-darwin
-          - os: windows-latest
-            bundles: msi
-            target: ""
+        include: ${{ fromJson(needs.targets.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     # Notarisation blocks on Apple's service, and the wait has no ceiling of its
     # own. The default six hours on a macOS runner, billed at ten times the

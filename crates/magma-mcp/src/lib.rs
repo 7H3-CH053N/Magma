@@ -133,6 +133,19 @@ impl Server {
                 let hits = core::search(v, &q).map_err(io)?;
                 Ok(json!(hits))
             }
+            // Retrieval, as opposed to search: passages ranked against each
+            // other across the vault, so an answer is built from the right few
+            // hundred words rather than from whole notes that merely match.
+            "retrieve" => {
+                let q = str_arg(args, "query")?;
+                let limit = args
+                    .get("limit")
+                    .and_then(|l| l.as_u64())
+                    .unwrap_or(8)
+                    .clamp(1, 50) as usize;
+                let found = core::retrieve(v, &q, limit).map_err(io)?;
+                Ok(json!(found))
+            }
             "read_note" => {
                 let path = str_arg(args, "path")?;
                 core::safe_join(v, &path).ok_or("invalid path")?;
@@ -325,6 +338,18 @@ fn tools_spec() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": { "query": { "type": "string" } },
+                "required": ["query"]
+            }
+        },
+        {
+            "name": "retrieve",
+            "description": "Retrieve the passages of the vault that best answer a question, ranked across every note. Prefer this over search_notes when you are about to answer from the vault: search_notes returns whole notes that contain a word, this returns the specific paragraphs that bear on the question, each with the note, heading and line it came from. Cite those. `offline` counts notes whose contents were not on disk and could not be read, so a low number of results can be explained rather than guessed at.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "The question, in the user's own words. Full sentences work better than keywords." },
+                    "limit": { "type": "integer", "description": "How many passages to return. Default 8, maximum 50." }
+                },
                 "required": ["query"]
             }
         },
@@ -702,6 +727,53 @@ mod tests {
     }
 
     #[test]
+    fn retrieve_returns_passages_with_provenance() {
+        let v = vault();
+        core::write_note(
+            &v,
+            "Signieren.md",
+            "# Signieren\n\n## Zertifikat\n\nDie p12 kommt aus Meine Zertifikate.\n\n## Notarisierung\n\nApple laesst sich Zeit damit.\n",
+        )
+        .unwrap();
+        let s = srv(v.clone());
+
+        let out = s
+            .call_tool(
+                "retrieve",
+                &json!({ "query": "wo kommt das zertifikat her" }),
+            )
+            .unwrap();
+        let first = &out["passages"][0];
+        assert_eq!(first["path"], "Signieren.md");
+        // Provenance travels with the passage, or a citation cannot be checked.
+        assert_eq!(first["heading"], "Zertifikat");
+        assert!(first["line"].as_u64().unwrap() > 1);
+        // A passage, not the note: the other section stays behind.
+        assert!(!first["text"].as_str().unwrap().contains("Apple"));
+
+        std::fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn retrieve_respects_its_limit() {
+        let v = vault();
+        for i in 0..12 {
+            core::write_note(
+                &v,
+                &format!("N{i}.md"),
+                &format!("# N{i}\n\nEine Notiz ueber Farben.\n"),
+            )
+            .unwrap();
+        }
+        let s = srv(v.clone());
+        let out = s
+            .call_tool("retrieve", &json!({ "query": "farben", "limit": 3 }))
+            .unwrap();
+        assert_eq!(out["passages"].as_array().unwrap().len(), 3);
+        std::fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
     fn structure_tools_are_advertised() {
         let names: Vec<String> = tools_spec()
             .as_array()
@@ -710,6 +782,7 @@ mod tests {
             .map(|t| t["name"].as_str().unwrap().to_string())
             .collect();
         for expected in [
+            "retrieve",
             "list_folders",
             "list_notes",
             "create_folder",
