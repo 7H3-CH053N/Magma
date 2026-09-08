@@ -10,14 +10,23 @@ use tokenizers::{PaddingParams, PaddingStrategy, Tokenizer, TruncationParams};
 
 use crate::download::ModelFiles;
 
-/// Longest passage the encoder sees, in tokens. The model's own limit is 512;
-/// a passage of ~220 words fits comfortably, and truncating rather than
-/// erroring means an unusually long one still contributes something.
-const MAX_TOKENS: usize = 512;
+/// Longest passage the encoder sees, in tokens.
+///
+/// The model allows 512, and 512 is what this used until a real vault showed
+/// what it costs. Attention is quadratic in length in *both* time and memory:
+/// one batch of eight at 512 tokens holds attention matrices of about a
+/// hundred megabytes per layer, and several lanes of that at once put a
+/// sixteen-gigabyte machine into swap, where it looks frozen rather than slow.
+///
+/// At 256 that cost falls to a quarter. The price is real and worth stating: a
+/// passage longer than 256 tokens has its tail ignored *for meaning*. Words
+/// still see all of it, and a passage is about 220 words, so it is the German
+/// compounds — which this tokenizer splits generously — that push past the cut.
+const MAX_TOKENS: usize = 256;
 
-/// Passages are embedded in batches of this many. Purely a memory ceiling: a
-/// whole vault at once would allocate a tensor the size of the vault.
-const BATCH: usize = 16;
+/// Passages per forward pass. Small, because the memory a batch needs grows
+/// with the batch and with the square of the length at the same time.
+const BATCH: usize = 4;
 
 /// E5 models are trained with these prefixes and lose accuracy without them.
 /// The loss is invisible — results still come back, only worse — which is why
@@ -89,6 +98,8 @@ impl Embedder {
     }
 
     fn encode_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+        // The lock covers tokenising only; the forward pass below runs
+        // unlocked, so lanes do not queue behind each other for it.
         let encodings = {
             let mut tok = self.tokenizer.lock().map_err(|_| "tokenizer poisoned")?;
             // Pad to the longest of this batch rather than to the model's

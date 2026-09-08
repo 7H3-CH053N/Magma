@@ -30,9 +30,20 @@ pub struct ModelSpec {
     /// unreachable there. Pin it on the first machine that downloads the model
     /// successfully — the value is in the response, and it is a one-line change.
     pub revision: &'static str,
-    /// What a cached vector is stamped with. Change this whenever the weights
-    /// change, or old vectors will be compared against new ones.
+    /// What a cached vector is stamped with.
+    ///
+    /// Separate from [`Self::weights_dir`] because these two identify different
+    /// things. This one says which *space* a vector lives in, and that depends
+    /// on how the text was cut as well as on the weights: truncating at 256
+    /// instead of 512 gives different vectors from the same model. Change it
+    /// whenever either changes.
     pub id: &'static str,
+    /// The folder the weights live in.
+    ///
+    /// Tied to the download, not to the vector space, so changing how text is
+    /// fed to the model does not make Magma fetch half a gigabyte it already
+    /// has.
+    pub weights_dir: &'static str,
     /// Roughly what the download costs, for telling the user before they start.
     pub approx_bytes: u64,
 }
@@ -43,7 +54,12 @@ pub struct ModelSpec {
 pub const DEFAULT_MODEL: ModelSpec = ModelSpec {
     repo: "intfloat/multilingual-e5-small",
     revision: "main",
-    id: "multilingual-e5-small",
+    // The suffix is not decoration. Vectors are stamped with this id, and
+    // truncating at a different length produces different vectors from the same
+    // model; mixing the two would compare passages measured two ways and look
+    // perfectly fine while doing it.
+    id: "multilingual-e5-small-t256",
+    weights_dir: "multilingual-e5-small",
     approx_bytes: 471_000_000,
 };
 

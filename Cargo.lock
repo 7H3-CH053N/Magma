@@ -2265,7 +2265,6 @@ dependencies = [
  "candle-nn",
  "candle-transformers",
  "magma-core",
- "rayon",
  "serde",
  "serde_json",
  "tokenizers",

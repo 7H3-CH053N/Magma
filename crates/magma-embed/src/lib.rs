@@ -24,12 +24,15 @@ pub use download::{ensure_model, DownloadProgress, ModelFiles, ModelSpec, DEFAUL
 pub use model::Embedder;
 
 use magma_core::Similarity;
-use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 
-/// Where the model and its cache live under the app's data directory.
+/// Where the downloaded weights live under the app's data directory.
+///
+/// Keyed by the weights, not by the vector-space id: how text is cut before it
+/// reaches the model changes the vectors but not the files, and a user should
+/// not re-download half a gigabyte because a truncation limit moved.
 pub fn model_dir(app_data: &Path) -> PathBuf {
-    app_data.join("models").join(DEFAULT_MODEL.id)
+    app_data.join("models").join(DEFAULT_MODEL.weights_dir)
 }
 
 /// The vector cache for one vault.
@@ -98,36 +101,82 @@ pub fn index_vault(
     let mut todo = model.missing(&texts);
     // Encode similar lengths together. A batch is padded to its longest member
     // and attention costs the square of that length, so one long passage among
-    // fifteen short ones makes the other fifteen cost as much as it does.
+    // seven short ones makes the other seven cost what it does.
     todo.sort_by_key(|t| t.len());
 
     let mut done = total - todo.len();
     on_progress(IndexProgress { done, total });
 
-    // One forward pass does not keep a modern processor busy, so batches run
-    // side by side. This was the difference between three hours and a coffee
-    // break on the vault that prompted it.
-    let lanes = rayon::current_num_threads().max(1);
-    for group in todo.chunks(INDEX_BATCH * lanes) {
-        let vectors: Vec<Vec<f32>> = group
-            .par_chunks(INDEX_BATCH)
-            .map(|batch| model.inner().embed_passages(batch))
-            .collect::<Result<Vec<_>, String>>()?
-            .into_iter()
-            .flatten()
-            .collect();
+    let lanes = lane_count();
+    for group in todo.chunks(INDEX_BATCH * lanes * 4) {
+        let per_lane = group.len().div_ceil(lanes);
+        let (tx, rx) = std::sync::mpsc::channel::<usize>();
+
+        // Plain scoped threads rather than a work-stealing pool. The encoder
+        // parallelises inside itself; nesting one pool in another oversubscribes
+        // the machine and makes progress impossible to reason about.
+        let parts: Vec<Result<Vec<Vec<f32>>, String>> = std::thread::scope(|scope| {
+            let workers: Vec<_> = group
+                .chunks(per_lane.max(1))
+                .map(|slice| {
+                    let tx = tx.clone();
+                    let encoder = model.inner();
+                    scope.spawn(move || {
+                        let mut out = Vec::with_capacity(slice.len());
+                        for batch in slice.chunks(INDEX_BATCH) {
+                            out.extend(encoder.embed_passages(batch)?);
+                            // Report per batch, not per group. Minutes without a
+                            // moving number is indistinguishable from a hang,
+                            // and this project has now learned that three times.
+                            let _ = tx.send(batch.len());
+                        }
+                        Ok(out)
+                    })
+                })
+                .collect();
+            drop(tx);
+
+            for encoded in rx {
+                done += encoded;
+                on_progress(IndexProgress { done, total });
+            }
+
+            workers
+                .into_iter()
+                .map(|w| {
+                    w.join()
+                        .unwrap_or_else(|_| Err("an indexing thread died".into()))
+                })
+                .collect()
+        });
+
+        let mut vectors = Vec::with_capacity(group.len());
+        for part in parts {
+            vectors.extend(part?);
+        }
         model.insert_many(group, vectors)?;
-        done += group.len();
-        on_progress(IndexProgress { done, total });
         model.save_if_due()?;
     }
     model.save()?;
     Ok(total)
 }
 
-/// Passages per forward pass. Larger batches waste more on padding; smaller
-/// ones spend more of their time on setup.
-const INDEX_BATCH: usize = 8;
+/// How many passages are encoded side by side.
+///
+/// Capped well below the core count on purpose. Each lane holds its own
+/// attention matrices, so lanes multiply memory as readily as they divide time,
+/// and the first attempt at this — one lane per core — drove a real machine
+/// into swap and looked like a freeze. Four is enough to use a laptop without
+/// taking it over.
+fn lane_count() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2)
+        .clamp(1, 4)
+}
+
+/// Passages per forward pass.
+const INDEX_BATCH: usize = 4;
 
 /// Every passage of the vault, in the exact form retrieval will ask for.
 ///
