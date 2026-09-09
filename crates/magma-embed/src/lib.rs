@@ -18,10 +18,15 @@
 mod cache;
 mod download;
 mod model;
+mod reranker;
 
 pub use cache::Cached;
-pub use download::{ensure_model, DownloadProgress, ModelFiles, ModelSpec, DEFAULT_MODEL};
+pub use download::{
+    ensure_model, ensure_rerank, probe_size, DownloadProgress, ModelFiles, ModelSpec, RerankFiles,
+    DEFAULT_MODEL, RERANK_MODEL,
+};
 pub use model::Embedder;
+pub use reranker::Reranker;
 
 use magma_core::Similarity;
 use std::path::{Path, PathBuf};
@@ -111,6 +116,58 @@ pub fn open(app_data: &Path, vault: &Path) -> Result<Option<Cached<Embedder>>, S
     let files = ModelFiles::in_dir(&dir);
     let embedder = Embedder::load(&files, DEFAULT_MODEL.id)?;
     Ok(Some(Cached::open(embedder, cache_path(app_data, vault))))
+}
+
+/// Where the reranker's weights live. Separate from the encoder's, because they
+/// are separate downloads and either may be absent.
+pub fn rerank_dir(app_data: &Path) -> PathBuf {
+    app_data.join("models").join(RERANK_MODEL.weights_dir)
+}
+
+/// True when the reranker is on disk.
+pub fn rerank_ready(app_data: &Path) -> bool {
+    Reranker::is_present(&rerank_dir(app_data))
+}
+
+/// Load the reranker, checking that it actually ranks before handing it over.
+///
+/// `Ok(None)` when it has not been downloaded — the ordinary state, and
+/// retrieval simply keeps the fused order. An `Err` means it is there and
+/// unusable, which is worth saying rather than silently ignoring: the user paid
+/// half a gigabyte for it.
+pub fn open_rerank(app_data: &Path) -> Result<Option<Reranker>, String> {
+    let dir = rerank_dir(app_data);
+    let Some(files) = RerankFiles::in_dir(&dir) else {
+        return Ok(None);
+    };
+    let model = Reranker::load(&files, RERANK_MODEL.id)?;
+    // Before anyone's search depends on it. A reranker has the last word on
+    // the order, so one with its labels the wrong way round would put the worst
+    // candidate first and still look like a working feature.
+    reranker::self_check(&model)?;
+    Ok(Some(model))
+}
+
+/// Download the reranker if it is not there yet.
+pub fn fetch_rerank(
+    app_data: &Path,
+    on_progress: &mut dyn FnMut(DownloadProgress),
+) -> Result<(), String> {
+    ensure_rerank(&rerank_dir(app_data), &RERANK_MODEL, on_progress).map(|_| ())
+}
+
+/// What each download really costs, asked of the server.
+///
+/// `None` means the server would not say, and a caller should show that as
+/// unknown rather than quoting a number nobody measured. The figures in the
+/// specs are guesses written without network access.
+pub fn download_size(spec: &ModelSpec) -> Option<u64> {
+    let names: &[&str] = if spec.id == RERANK_MODEL.id {
+        &["model.safetensors", "pytorch_model.bin"]
+    } else {
+        &["model.safetensors"]
+    };
+    probe_size(spec, names)
 }
 
 /// How far along indexing is, for a progress bar.

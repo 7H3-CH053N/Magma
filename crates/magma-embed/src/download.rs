@@ -68,6 +68,137 @@ pub const DEFAULT_MODEL: ModelSpec = ModelSpec {
     approx_bytes: 471_000_000,
 };
 
+/// Which weights to rerank with.
+///
+/// A separate download, and separate on purpose: someone who already waited for
+/// half a gigabyte of encoder should not have to fetch it again to try this,
+/// and someone who does not want a slower query should not have to fetch this
+/// at all.
+///
+/// Multilingual, because the vault is German and its prompts and technical
+/// terms are English — the pair this has to bridge is precisely "lockigen
+/// schwarzen Haaren" against "curly black long hair".
+pub const RERANK_MODEL: ModelSpec = ModelSpec {
+    repo: "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
+    revision: "main",
+    id: "mmarco-mminilmv2-l12-t320",
+    weights_dir: "mmarco-mMiniLMv2-L12",
+    // A guess, and labelled as one: huggingface.co could not be reached from
+    // where this was written, so nothing here was verified. Do not show this
+    // number to anyone — call [`probe_size`], which asks the server, and fall
+    // back to this only when the network will not answer.
+    approx_bytes: 470_000_000,
+};
+
+/// The two names a set of weights may go by.
+///
+/// Newer repositories publish safetensors; older sentence-transformers ones
+/// still ship only a pickle. Which of the two this particular repository has
+/// could not be checked from where this was written, so both are handled rather
+/// than one being assumed and failing after half a gigabyte of download.
+const WEIGHT_NAMES: [&str; 2] = ["model.safetensors", "pytorch_model.bin"];
+
+/// The files a reranker needs, and which kind of weights it found.
+pub struct RerankFiles {
+    pub config: PathBuf,
+    pub tokenizer: PathBuf,
+    pub weights: PathBuf,
+    pub weights_are_safetensors: bool,
+}
+
+impl RerankFiles {
+    /// What is on disk, or `None` when something is missing.
+    pub fn in_dir(dir: &Path) -> Option<Self> {
+        let config = dir.join("config.json");
+        let tokenizer = dir.join("tokenizer.json");
+        if !config.is_file() || !tokenizer.is_file() {
+            return None;
+        }
+        let (weights, safetensors) = WEIGHT_NAMES
+            .iter()
+            .map(|n| (dir.join(n), *n == WEIGHT_NAMES[0]))
+            .find(|(p, _)| p.is_file())?;
+        Some(Self {
+            config,
+            tokenizer,
+            weights,
+            weights_are_safetensors: safetensors,
+        })
+    }
+}
+
+/// Fetch the reranker, whichever of the two weight formats the repository has.
+pub fn ensure_rerank(
+    dir: &Path,
+    spec: &ModelSpec,
+    on_progress: &mut dyn FnMut(DownloadProgress),
+) -> Result<RerankFiles, String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    if let Some(files) = RerankFiles::in_dir(dir) {
+        return Ok(files);
+    }
+
+    for name in ["config.json", "tokenizer.json"] {
+        let target = dir.join(name);
+        if target.is_file() {
+            continue;
+        }
+        fetch(&url_for(spec, name), &target, name, on_progress)?;
+    }
+
+    if WEIGHT_NAMES.iter().all(|n| !dir.join(n).is_file()) {
+        // Try each in turn. A repository has one or the other, and asking for
+        // the wrong one is a 404, not a corrupt download.
+        let mut trouble = Vec::new();
+        for name in WEIGHT_NAMES {
+            match fetch(&url_for(spec, name), &dir.join(name), name, on_progress) {
+                Ok(()) => break,
+                Err(e) => trouble.push(e),
+            }
+        }
+        if WEIGHT_NAMES.iter().all(|n| !dir.join(n).is_file()) {
+            return Err(format!(
+                "no weights could be fetched: {}",
+                trouble.join("; ")
+            ));
+        }
+    }
+
+    RerankFiles::in_dir(dir).ok_or_else(|| "reranker files are still missing".to_string())
+}
+
+/// What a download will really cost, asked of the server rather than guessed.
+///
+/// `None` when the network will not say, which a caller should show as unknown
+/// rather than substituting a number nobody measured.
+pub fn probe_size(spec: &ModelSpec, weight_names: &[&str]) -> Option<u64> {
+    let agent = agent();
+    let mut total = 0u64;
+    for name in ["config.json", "tokenizer.json"] {
+        total += size_of(&agent, &url_for(spec, name))?;
+    }
+    // Whichever set of weights exists; the first that answers is the one that
+    // would be downloaded.
+    let weights = weight_names
+        .iter()
+        .find_map(|n| size_of(&agent, &url_for(spec, n)))?;
+    Some(total + weights)
+}
+
+fn size_of(agent: &ureq::Agent, url: &str) -> Option<u64> {
+    let response = agent.head(url).call().ok()?;
+    // Hugging Face serves large files through LFS: `content-length` can be the
+    // size of the pointer, and the real one comes in its own header.
+    response
+        .header("x-linked-size")
+        .or_else(|| response.header("content-length"))
+        .and_then(|v| v.parse().ok())
+}
+
+fn url_for(spec: &ModelSpec, name: &str) -> String {
+    format!("{HOST}/{}/resolve/{}/{name}", spec.repo, spec.revision)
+}
+
 /// The three files an encoder needs on disk.
 pub struct ModelFiles {
     pub config: PathBuf,
@@ -128,8 +259,7 @@ pub fn ensure_model(
         if target.is_file() {
             continue;
         }
-        let url = format!("{HOST}/{}/resolve/{}/{name}", spec.repo, spec.revision);
-        fetch(&url, &target, name, on_progress)?;
+        fetch(&url_for(spec, name), &target, name, on_progress)?;
     }
 
     let files = ModelFiles::in_dir(dir);
@@ -139,13 +269,8 @@ pub fn ensure_model(
     Ok(files)
 }
 
-fn fetch(
-    url: &str,
-    target: &Path,
-    name: &str,
-    on_progress: &mut dyn FnMut(DownloadProgress),
-) -> Result<(), String> {
-    let agent = ureq::AgentBuilder::new()
+fn agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(20))
         // Half a gigabyte over a slow line takes a while, and a read timeout
         // measures the gap between bytes rather than the whole transfer, so
@@ -156,9 +281,16 @@ fn fetch(
             env!("CARGO_PKG_VERSION"),
             " (+https://github.com/7H3-CH053N/Magma)"
         ))
-        .build();
+        .build()
+}
 
-    let response = agent
+fn fetch(
+    url: &str,
+    target: &Path,
+    name: &str,
+    on_progress: &mut dyn FnMut(DownloadProgress),
+) -> Result<(), String> {
+    let response = agent()
         .get(url)
         .call()
         .map_err(|e| format!("could not fetch {name}: {e}"))?;

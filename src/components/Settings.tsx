@@ -25,6 +25,7 @@ import {
   mcpConfig,
   modelStatus,
   downloadModel,
+  downloadReranker,
   onModelProgress,
   indexVault,
   onIndexProgress,
@@ -148,6 +149,7 @@ export default function Settings({
   const [modelBusy, setModelBusy] = useState(false);
   const [modelErr, setModelErr] = useState<string | null>(null);
   const [modelProg, setModelProg] = useState<ModelProgress | null>(null);
+  const [rerankBusy, setRerankBusy] = useState(false);
 
   useEffect(() => {
     if (hasTauri) modelStatus().then(setModel).catch(() => {});
@@ -209,6 +211,25 @@ export default function Settings({
       // Unsubscribe whatever happened, or a second attempt stacks listeners.
       if (stop) stop();
       setModelBusy(false);
+      setModelProg(null);
+    }
+  }
+
+  async function fetchReranker() {
+    setRerankBusy(true);
+    setModelErr(null);
+    setModelProg(null);
+    let stop: (() => void) | null = null;
+    try {
+      stop = await onModelProgress(setModelProg);
+      await downloadReranker();
+      setModel(await modelStatus());
+    } catch (e) {
+      setModelErr(String(e));
+    } finally {
+      // Unsubscribe whatever happened, or a second attempt stacks listeners.
+      if (stop) stop();
+      setRerankBusy(false);
       setModelProg(null);
     }
   }
@@ -879,9 +900,11 @@ export default function Settings({
               >
                 {modelBusy
                   ? t("settings.semanticBusy")
-                  : t("settings.semanticDownload", {
-                      size: model ? String(Math.round(model.approxBytes / 1_000_000)) : "?",
-                    })}
+                  : model?.bytes
+                    ? t("settings.semanticDownload", {
+                        size: String(Math.round(model.bytes / 1_000_000)),
+                      })
+                    : t("settings.semanticDownloadUnknown")}
               </button>
               {modelProg && (
                 <div className="mt-2">
@@ -910,6 +933,34 @@ export default function Settings({
                 <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">{modelErr}</p>
               )}
             </>
+          )}
+        </section>
+
+        <section className="mb-6">
+          <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-magma-muted">
+            {t("settings.rerankTitle")}
+          </label>
+          <p className="mb-2 text-xs leading-relaxed text-magma-muted">
+            {t("settings.rerankBody")}
+          </p>
+          {model?.rerankReady ? (
+            <p className="text-xs text-green-600 dark:text-green-400">
+              {t("settings.rerankReady", { model: model.rerankModel })}
+            </p>
+          ) : (
+            <button
+              onClick={fetchReranker}
+              disabled={rerankBusy || modelBusy || !hasTauri}
+              className="rounded-lg border border-black/10 px-3 py-1.5 text-sm text-magma-muted transition hover:border-black/20 hover:text-magma-ink disabled:opacity-50 dark:border-white/15 dark:hover:border-white/30"
+            >
+              {rerankBusy
+                ? t("settings.semanticBusy")
+                : model?.rerankBytes
+                  ? t("settings.rerankDownload", {
+                      size: String(Math.round(model.rerankBytes / 1_000_000)),
+                    })
+                  : t("settings.rerankDownloadUnknown")}
+            </button>
           )}
         </section>
 

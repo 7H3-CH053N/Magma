@@ -26,13 +26,25 @@ struct Server {
     /// The embedding model, when one is loaded. `None` keeps retrieval lexical,
     /// which is the ordinary state of a fresh install.
     model: Option<Box<dyn core::Similarity>>,
+    /// The reranker, when one is loaded. Independent of the model above: either
+    /// may be present without the other.
+    rerank: Option<Box<dyn core::Rerank>>,
+}
+
+impl Server {
+    fn models(&self) -> core::Models<'_> {
+        core::Models {
+            similarity: self.model.as_deref(),
+            rerank: self.rerank.as_deref(),
+        }
+    }
 }
 
 /// Serve the MCP protocol over stdio until stdin closes. Shared by the
 /// `magma-mcp` binary and the Magma desktop app (`magma --mcp <vault>`), so a
 /// user never has to install a separate server to connect Claude.
 pub fn serve_stdio(vault: PathBuf, allow_write: bool) {
-    serve_stdio_with(vault, allow_write, None)
+    serve_stdio_with(vault, allow_write, None, None)
 }
 
 /// As [`serve_stdio`], with an embedding model for `retrieve` to rank meaning
@@ -42,6 +54,7 @@ pub fn serve_stdio_with(
     vault: PathBuf,
     allow_write: bool,
     model: Option<Box<dyn core::Similarity>>,
+    rerank: Option<Box<dyn core::Rerank>>,
 ) {
     let client = std::env::var("MAGMA_MCP_CLIENT")
         .ok()
@@ -52,6 +65,7 @@ pub fn serve_stdio_with(
         allow_write,
         client,
         model,
+        rerank,
     };
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
@@ -182,7 +196,7 @@ impl Server {
                     v,
                     &q,
                     limit,
-                    self.model.as_deref(),
+                    self.models(),
                     wants.then_some(&mut report),
                 )
                 .map_err(io)?;
@@ -389,7 +403,7 @@ fn tools_spec() -> Value {
         },
         {
             "name": "retrieve",
-            "description": "Retrieve the passages of the vault that best answer a question, ranked across every note. Prefer this over search_notes when you are about to answer from the vault: search_notes returns whole notes that contain a word, this returns the specific paragraphs that bear on the question, each with the note, heading and line it came from. Cite those. `offline` counts notes whose contents were not on disk and could not be read, so a low number of results can be explained rather than guessed at.",
+            "description": "Retrieve the passages of the vault that best answer a question, ranked across every note. Prefer this over search_notes when you are about to answer from the vault: search_notes returns whole notes that contain a word, this returns the specific paragraphs that bear on the question, each with the note, heading and line it came from. Cite those. `offline` counts notes whose contents were not on disk and could not be read, so a low number of results can be explained rather than guessed at. `semantic` says whether meaning was ranked alongside words, `reranked` whether a second model reread the leading candidates; both can be false on a machine where those models are not installed, and the same question then answers differently.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -614,6 +628,7 @@ mod tests {
             allow_write: true,
             client: Some("test".to_string()),
             model: None,
+            rerank: None,
         }
     }
 
@@ -761,6 +776,7 @@ mod tests {
             allow_write: false,
             client: None,
             model: None,
+            rerank: None,
         };
         for tool in ["delete_note", "delete_folder", "rename_note"] {
             assert!(

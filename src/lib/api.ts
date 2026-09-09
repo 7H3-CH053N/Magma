@@ -562,8 +562,16 @@ export type ModelStatus = {
   /** True when the weights are on disk and retrieval can rank meaning. */
   ready: boolean;
   model: string;
-  /** Roughly what the download costs, shown before the button rather than after. */
-  approxBytes: number;
+  /**
+   * What the download costs, asked of the server rather than guessed.
+   * Absent when the server would not say — show that as unknown instead of
+   * substituting a number nobody measured.
+   */
+  bytes?: number;
+  /** The reranker is a separate download and answers separately. */
+  rerankReady: boolean;
+  rerankModel: string;
+  rerankBytes?: number;
 };
 
 export type ModelProgress = {
@@ -579,6 +587,11 @@ export async function modelStatus(): Promise<ModelStatus> {
 
 export async function downloadModel(vault: string): Promise<void> {
   return invoke<void>("download_model", { vault });
+}
+
+/** Fetch the reranker. Reports through the same progress event. */
+export async function downloadReranker(): Promise<void> {
+  return invoke<void>("download_reranker");
 }
 
 export async function onModelProgress(

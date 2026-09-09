@@ -170,19 +170,69 @@ struct ModelStatus {
     ready: bool,
     /// Which encoder, so the panel can name it rather than say "the model".
     model: String,
-    /// Roughly what downloading it costs. Shown *before* the button, because
-    /// this is not a decision to spring on someone over a phone connection.
-    approx_bytes: u64,
+    /// What downloading it costs, asked of the server. Shown *before* the
+    /// button, because this is not a decision to spring on someone over a phone
+    /// connection.
+    ///
+    /// `None` when the server would not say. The panel then says so instead of
+    /// showing a figure: the numbers written into the specs were guessed
+    /// without network access, and a guess presented as a size is worse than
+    /// no size.
+    bytes: Option<u64>,
+    /// True when the reranker is on disk. Separate download, separate answer.
+    rerank_ready: bool,
+    rerank_model: String,
+    rerank_bytes: Option<u64>,
 }
 
 #[tauri::command]
 async fn model_status() -> Result<ModelStatus, String> {
     let dir = app_data_dir().ok_or("no application data folder")?;
-    Ok(ModelStatus {
-        ready: magma_embed::is_ready(&dir),
-        model: magma_embed::DEFAULT_MODEL.id.to_string(),
-        approx_bytes: magma_embed::DEFAULT_MODEL.approx_bytes,
+    // Two HEAD requests apiece, and only when something is still missing —
+    // there is nothing to weigh up about a download that already happened.
+    let ready = magma_embed::is_ready(&dir);
+    let rerank_ready = magma_embed::rerank_ready(&dir);
+    let (bytes, rerank_bytes) = tauri::async_runtime::spawn_blocking(move || {
+        (
+            (!ready)
+                .then(|| magma_embed::download_size(&magma_embed::DEFAULT_MODEL))
+                .flatten(),
+            (!rerank_ready)
+                .then(|| magma_embed::download_size(&magma_embed::RERANK_MODEL))
+                .flatten(),
+        )
     })
+    .await
+    .unwrap_or((None, None));
+
+    Ok(ModelStatus {
+        ready,
+        model: magma_embed::DEFAULT_MODEL.id.to_string(),
+        bytes,
+        rerank_ready,
+        rerank_model: magma_embed::RERANK_MODEL.id.to_string(),
+        rerank_bytes,
+    })
+}
+
+/// Download the reranker, then prove it actually ranks before calling it ready.
+#[tauri::command]
+async fn download_reranker(app: tauri::AppHandle) -> Result<(), String> {
+    let dir = app_data_dir().ok_or("no application data folder")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        magma_embed::fetch_rerank(&dir, &mut |p| {
+            let _ = app.emit(MODEL_PROGRESS_EVENT, p);
+        })?;
+        // A reranker has the last word on the order. One with its labels the
+        // wrong way round would put the worst candidate first and still look
+        // like a working feature, so it does not count as ready until it has
+        // shown it prefers the passage that answers the question.
+        magma_embed::open_rerank(&dir)?
+            .ok_or("the reranker is still not on disk after downloading")?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("download task failed: {e}"))?
 }
 
 /// The event indexing reports on. Encoding a vault takes minutes, and this
@@ -1036,7 +1086,14 @@ pub fn run() {
             // model inside a tool call with a timeout, so the call died and
             // nothing was kept. Filling the cache is what "index" is for.
             .map(|m| Box::new(m.lookup_only(true)) as Box<dyn vault::Similarity>);
-        magma_mcp::serve_stdio_with(vault, allow_write, model);
+        // The reranker, if it is there and if it passes its own check. Same
+        // reasoning: a server that refuses to start is worse than one that
+        // ranks a little less well, and `reranked` on every answer says which
+        // was the case.
+        let rerank = app_data_dir()
+            .and_then(|dir| magma_embed::open_rerank(&dir).ok().flatten())
+            .map(|r| Box::new(r) as Box<dyn vault::Rerank>);
+        magma_mcp::serve_stdio_with(vault, allow_write, model, rerank);
         return;
     }
 
@@ -1068,6 +1125,7 @@ pub fn run() {
             import_wordpress,
             model_status,
             download_model,
+            download_reranker,
             index_vault,
             save_asset,
             build_graph,

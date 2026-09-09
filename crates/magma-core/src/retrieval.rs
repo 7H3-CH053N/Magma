@@ -61,6 +61,14 @@ const B: f32 = 0.75;
 /// the thing.
 const CONTEXT_REPEATS: usize = 1;
 
+/// How many of the fused candidates are read properly by a reranker.
+///
+/// The same depth the fusion looks to, and for the same reason: past it a
+/// passage was never in contention. It is also the cost — one forward pass per
+/// passage, at query time, so this is seconds rather than the milliseconds a
+/// vector lookup takes.
+const RERANK_DEPTH: usize = FUSION_DEPTH;
+
 /// How far down each ranking the fusion looks. Beyond this a hit is noise in
 /// one list and absent from the other, and letting it in only dilutes.
 const FUSION_DEPTH: usize = 50;
@@ -124,6 +132,47 @@ pub trait Similarity: Send + Sync {
     }
 }
 
+/// Reads a question and a passage *together* and says how well one answers the
+/// other.
+///
+/// The difference from [`Similarity`] is the whole point. A similarity model
+/// turns a passage into a vector once, in advance, knowing nothing about any
+/// question — which is what makes searching a vault a lookup instead of a
+/// thirty-minute wait. The price is that the passage's vector must stand for
+/// everything it might ever be asked, and a small one flattens into gist: on a
+/// real vault the top sixteen for "the image prompt with the Italian woman with
+/// curly black hair" were sixteen image-prompt notes, the right one sixteenth.
+/// Topic, perfectly. Detail, not at all.
+///
+/// This sees both sides at once and can therefore weigh "curly black long hair"
+/// against "lockigen schwarzen Haaren". It cannot be precomputed, so it runs
+/// over a few dozen candidates at query time rather than over the vault, and
+/// costs seconds where the other costs nothing.
+pub trait Rerank: Send + Sync {
+    fn id(&self) -> &str;
+    /// One score per passage, in the order given. Higher is better; the scale
+    /// is the model's own and only the order is used.
+    fn scores(&self, query: &str, passages: &[String]) -> Result<Vec<f32>, String>;
+}
+
+/// The optional models retrieval may use. Both absent is the ordinary state of
+/// a fresh install, and everything still works — lexically.
+#[derive(Default, Clone, Copy)]
+pub struct Models<'a> {
+    pub similarity: Option<&'a dyn Similarity>,
+    pub rerank: Option<&'a dyn Rerank>,
+}
+
+impl<'a> Models<'a> {
+    /// Just the embedding half, which is how most callers use this.
+    pub fn with(similarity: &'a dyn Similarity) -> Self {
+        Self {
+            similarity: Some(similarity),
+            rerank: None,
+        }
+    }
+}
+
 /// One retrievable piece of a note.
 #[derive(Serialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -168,6 +217,10 @@ pub struct Retrieval {
     /// search carried on without it. Worth saying out loud: the same query
     /// answers differently, and a caller should not have to guess which it got.
     pub semantic: bool,
+    /// True when a reranker read the leading candidates and reordered them.
+    /// Same reasoning as [`Self::semantic`]: a reranker that failed leaves a
+    /// usable but differently ordered answer, and saying so beats guessing.
+    pub reranked: bool,
 }
 
 /// Split text into comparable terms for retrieval.
@@ -357,7 +410,16 @@ pub fn retrieve_with(
     limit: usize,
     model: Option<&dyn Similarity>,
 ) -> std::io::Result<Retrieval> {
-    retrieve_explained(vault, query, limit, model, None)
+    retrieve_explained(
+        vault,
+        query,
+        limit,
+        Models {
+            similarity: model,
+            rerank: None,
+        },
+        None,
+    )
 }
 
 /// What each half of the ranking thought, before they were fused.
@@ -387,6 +449,9 @@ pub struct Explanation {
     pub embedded: usize,
     /// How many passages there were to rank.
     pub passages: usize,
+    /// How many of the leading candidates a reranker read properly. Zero when
+    /// there is no reranker, or when it failed and the fused order stood.
+    pub reranked: usize,
     /// Which note to report on in detail. *Input*, set by the caller before
     /// the call; matched case-insensitively against the note's path as a
     /// substring, so `magma 0.1.4` finds `Projekte/Magma/Projekt/Magma 0.1.4.md`.
@@ -531,9 +596,10 @@ pub fn retrieve_explained(
     vault: &Path,
     query: &str,
     limit: usize,
-    model: Option<&dyn Similarity>,
+    models: Models,
     mut explain: Option<&mut Explanation>,
 ) -> std::io::Result<Retrieval> {
+    let model = models.similarity;
     let terms = tokenize(query);
     let notes = vault::list_notes(vault)?;
 
@@ -596,6 +662,7 @@ pub fn retrieve_explained(
         notes_scanned,
         offline,
         semantic: false,
+        reranked: false,
     };
     if terms.is_empty() || candidates.is_empty() {
         return Ok(out);
@@ -688,6 +755,48 @@ pub fn retrieve_explained(
         None => scored,
     };
 
+    // Recall first, precision second: fusion gathers the plausible few dozen,
+    // the reranker reads them properly. Only the top of the list is reread —
+    // this costs a forward pass per passage, and past the fusion window a
+    // passage was not in contention anyway.
+    let mut did_rerank = false;
+    let ranked = match models.rerank {
+        Some(r) => {
+            let head: Vec<String> = ranked
+                .iter()
+                .take(RERANK_DEPTH)
+                .map(|(_, i)| {
+                    let c = &candidates[*i];
+                    embedding_text(&c.path, &c.chunk)
+                })
+                .collect();
+            match r.scores(query, &head) {
+                Ok(scores) if scores.len() == head.len() => {
+                    did_rerank = true;
+                    if let Some(report) = explain.as_mut() {
+                        report.reranked = head.len();
+                    }
+                    let mut top: Vec<(f32, usize)> = scores
+                        .into_iter()
+                        .zip(ranked.iter().take(RERANK_DEPTH).map(|(_, i)| *i))
+                        .collect();
+                    top.sort_by(|a, b| {
+                        b.0.partial_cmp(&a.0)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                            .then_with(|| a.1.cmp(&b.1))
+                    });
+                    top.extend(ranked.into_iter().skip(RERANK_DEPTH));
+                    top
+                }
+                // A reranker that fails or miscounts leaves the fused order
+                // alone. Worse ordering, never fewer answers.
+                _ => ranked,
+            }
+        }
+        None => ranked,
+    };
+
+    out.reranked = did_rerank;
     out.passages = spread(ranked, &candidates, limit)
         .into_iter()
         .map(|(score, i)| {
@@ -1581,6 +1690,151 @@ mod tests {
         assert_eq!(tokenize(composed), tokenize(decomposed));
     }
 
+    // ---- The reranker ----
+
+    /// Prefers whatever contains the word it was built with, ignoring how the
+    /// fusion felt about it.
+    struct Prefers(&'static str);
+    impl Rerank for Prefers {
+        fn id(&self) -> &str {
+            "prefers"
+        }
+        fn scores(&self, _: &str, passages: &[String]) -> Result<Vec<f32>, String> {
+            Ok(passages
+                .iter()
+                .map(|p| p.to_lowercase().matches(self.0).count() as f32)
+                .collect())
+        }
+    }
+
+    #[test]
+    fn a_reranker_reorders_what_fusion_gathered() {
+        let dir = fixture("rerank");
+        let query = "farbe rot notarisierung";
+        let first = |models: Models| -> String {
+            retrieve_explained(&dir, query, 5, models, None)
+                .unwrap()
+                .passages[0]
+                .path
+                .clone()
+        };
+
+        // Without one, the fused order stands and it is not this note.
+        let plain = first(Models::default());
+        assert_ne!(plain, "Signieren.md", "the baseline this test rests on");
+
+        let reranked = first(Models {
+            similarity: None,
+            rerank: Some(&Prefers("notarisierung")),
+        });
+        assert_eq!(reranked, "Signieren.md", "the reranker did not take effect");
+    }
+
+    #[test]
+    fn a_reranker_can_only_reorder_what_it_was_given() {
+        // Worth pinning, because it bounds what this can ever fix. The reranker
+        // reads the leading candidates; a passage neither half found is not
+        // among them and no amount of reading brings it back. Recall stays the
+        // job of the two halves.
+        let dir = fixture("rerankbounds");
+        // "Farbe" is nowhere near this query, so nothing gathers that note.
+        let got = retrieve_explained(
+            &dir,
+            "notarisierung warteschlange",
+            5,
+            Models {
+                similarity: None,
+                rerank: Some(&Prefers("farbe")),
+            },
+            None,
+        )
+        .unwrap();
+        let paths: Vec<&str> = got.passages.iter().map(|p| p.path.as_str()).collect();
+        assert!(
+            !paths.contains(&"Graph/Farben.md"),
+            "a reranker must not conjure candidates: {paths:?}"
+        );
+        assert!(got.reranked, "it still ran, on what there was");
+    }
+
+    #[test]
+    fn a_failing_reranker_costs_order_not_answers() {
+        struct Broken;
+        impl Rerank for Broken {
+            fn id(&self) -> &str {
+                "broken"
+            }
+            fn scores(&self, _: &str, _: &[String]) -> Result<Vec<f32>, String> {
+                Err("weights not loaded".into())
+            }
+        }
+        struct Short;
+        impl Rerank for Short {
+            fn id(&self) -> &str {
+                "short"
+            }
+            fn scores(&self, _: &str, passages: &[String]) -> Result<Vec<f32>, String> {
+                // The dangerous shape: fewer scores than passages would pair
+                // every passage with someone else's judgement.
+                Ok(vec![1.0; passages.len().saturating_sub(1)])
+            }
+        }
+
+        let dir = fixture("rerankbroken");
+        let query = "farbe rot notarisierung";
+        let baseline = retrieve_explained(&dir, query, 5, Models::default(), None).unwrap();
+        let key = |r: &Retrieval| -> Vec<(String, usize)> {
+            r.passages
+                .iter()
+                .map(|p| (p.path.clone(), p.line))
+                .collect()
+        };
+
+        for bad in [&Broken as &dyn Rerank, &Short as &dyn Rerank] {
+            let got = retrieve_explained(
+                &dir,
+                query,
+                5,
+                Models {
+                    similarity: None,
+                    rerank: Some(bad),
+                },
+                None,
+            )
+            .unwrap();
+            assert!(!got.reranked, "{} must admit it did not run", bad.id());
+            assert_eq!(key(&got), key(&baseline), "{}", bad.id());
+        }
+    }
+
+    #[test]
+    fn the_explanation_says_how_many_were_reread() {
+        let dir = fixture("rerankcount");
+        let mut report = Explanation::default();
+        let got = retrieve_explained(
+            &dir,
+            "farbe rot notarisierung",
+            5,
+            Models {
+                similarity: None,
+                rerank: Some(&Prefers("notarisierung")),
+            },
+            Some(&mut report),
+        )
+        .unwrap();
+        assert!(got.reranked);
+        assert!(report.reranked > 0);
+        assert!(
+            report.reranked <= RERANK_DEPTH,
+            "reread {} of at most {RERANK_DEPTH}",
+            report.reranked
+        );
+
+        let mut none = Explanation::default();
+        retrieve_explained(&dir, "farbe", 5, Models::default(), Some(&mut none)).unwrap();
+        assert_eq!(none.reranked, 0, "nothing reread means nothing claimed");
+    }
+
     // ---- The explanation ----
 
     #[test]
@@ -1595,7 +1849,7 @@ mod tests {
             &dir,
             "beglaubigung durch den hersteller",
             5,
-            Some(&ToyModel),
+            Models::with(&ToyModel),
             Some(&mut report),
         )
         .unwrap();
@@ -1623,7 +1877,7 @@ mod tests {
             &dir,
             "farbe rot notarisierung",
             1,
-            Some(&ToyModel),
+            Models::with(&ToyModel),
             Some(&mut report),
         )
         .unwrap();
@@ -1681,7 +1935,14 @@ mod tests {
 
         let dir = fixture("explaincoverage");
         let mut full = Explanation::default();
-        retrieve_explained(&dir, "notarisierung", 5, Some(&Answers), Some(&mut full)).unwrap();
+        retrieve_explained(
+            &dir,
+            "notarisierung",
+            5,
+            Models::with(&Answers),
+            Some(&mut full),
+        )
+        .unwrap();
         assert!(full.passages > 0);
         assert_eq!(
             full.embedded, full.passages,
@@ -1693,7 +1954,7 @@ mod tests {
             &dir,
             "notarisierung",
             5,
-            Some(&HalfIndexed),
+            Models::with(&HalfIndexed),
             Some(&mut holes),
         )
         .unwrap();
@@ -1765,7 +2026,7 @@ mod tests {
             &dir,
             "notarisierung",
             5,
-            Some(&NearNotarisation),
+            Models::with(&NearNotarisation),
             Some(&mut report),
         )
         .unwrap();
@@ -1827,7 +2088,14 @@ mod tests {
                 about: Some("magma 0.1.4".into()),
                 ..Default::default()
             };
-            retrieve_explained(&dir, "notarisierung", 5, Some(model), Some(&mut report)).unwrap();
+            retrieve_explained(
+                &dir,
+                "notarisierung",
+                5,
+                Models::with(model),
+                Some(&mut report),
+            )
+            .unwrap();
             report.note[0].clone()
         };
 
@@ -1891,7 +2159,14 @@ mod tests {
             about: Some("magma 0.1.4".into()),
             ..Default::default()
         };
-        retrieve_explained(&dir, "updater", 5, Some(&Dilutes), Some(&mut report)).unwrap();
+        retrieve_explained(
+            &dir,
+            "updater",
+            5,
+            Models::with(&Dilutes),
+            Some(&mut report),
+        )
+        .unwrap();
 
         let ranked = report
             .note
@@ -1955,7 +2230,14 @@ mod tests {
             about: Some("magma 0.1.4".into()),
             ..Default::default()
         };
-        retrieve_explained(&dir, "notarisierung", 5, None, Some(&mut report)).unwrap();
+        retrieve_explained(
+            &dir,
+            "notarisierung",
+            5,
+            Models::default(),
+            Some(&mut report),
+        )
+        .unwrap();
         let ranked = &report.note[0];
         // Empty rather than zeros: a zero is a measurement, and none was made.
         assert!(ranked.variants.is_empty());
@@ -1970,7 +2252,7 @@ mod tests {
             &dir,
             "notarisierung",
             5,
-            Some(&NearNotarisation),
+            Models::with(&NearNotarisation),
             Some(&mut report),
         )
         .unwrap();
@@ -1992,7 +2274,14 @@ mod tests {
             );
         }
         let mut report = Explanation::default();
-        retrieve_explained(&dir, "notarisierung", 5, None, Some(&mut report)).unwrap();
+        retrieve_explained(
+            &dir,
+            "notarisierung",
+            5,
+            Models::default(),
+            Some(&mut report),
+        )
+        .unwrap();
         assert_eq!(
             report.lexical.len(),
             FUSION_DEPTH,
@@ -2008,7 +2297,14 @@ mod tests {
         // read as "the model agreed", which is the opposite of the truth.
         let dir = fixture("explainlexical");
         let mut report = Explanation::default();
-        retrieve_explained(&dir, "notarisierung", 5, None, Some(&mut report)).unwrap();
+        retrieve_explained(
+            &dir,
+            "notarisierung",
+            5,
+            Models::default(),
+            Some(&mut report),
+        )
+        .unwrap();
         assert!(!report.lexical.is_empty());
         assert!(report.meaning.is_empty());
         assert_eq!(report.embedded, 0);

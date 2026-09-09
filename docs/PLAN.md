@@ -349,6 +349,39 @@ für jede ihrer Passagen Rang und Wert in beiden Hälften, aus wie vielen, **ohn
 Abschnitt**. Ohne das sah „knapp hinter dem Fenster" genauso aus wie „nirgends
 in der Nähe", und die beiden verlangen entgegengesetzte Reparaturen.
 
+### Was Phase 3 nicht kann, und was daraus folgt
+
+Drei Gegentests auf dem echten Vault nach der Umstellung: Die Namensfrage
+(`llmfit`) liefert Rang 1 und 2 — die Wortsuche ist unbeschädigt. Zwei
+Detailfragen fallen durch, und zwar identisch: Ziel jeweils auf
+`meaningRank 17` von 7082, in keinem Top-8.
+
+Das ist **nicht** die Fusion. Eine Passage auf semantischem Rang 17 bekommt
+`1/77`; jede Passage auf den semantischen Rängen 1–16 bekommt mindestens
+`1/76`. Sechzehn stehen also allein dadurch davor, egal was die Wortsuche sagt.
+In acht Plätze passt das nie — auch reine Vektorsuche mit `limit 8` verfehlte
+sie.
+
+Der Grund steht in der Liste selbst: Auf die Frage nach dem Bildprompt mit der
+Italienerin mit lockigen schwarzen Haaren waren die ersten sechzehn Treffer
+**sechzehn Bildprompt-Notizen**. Kein Ausreißer. Das Modell trifft das *Thema*
+perfekt und die *Merkmale* gar nicht — die bekannte Eigenschaft kleiner
+Bi-Encoder, die eine Passage einmal vorab in einen Vektor pressen müssen, ohne
+die Frage zu kennen. Und die Wortsuche, die „curly black long hair" sofort
+fände, scheitert an der Sprachgrenze: deutscher Vault, englische Prompts.
+
+**Beide Hälften versagen hier aus jeweils dem Grund, aus dem die andere gebaut
+wurde.** Deshalb eine dritte Stufe: ein Cross-Encoder, der Frage und Passage
+*gemeinsam* liest und die besten fünfzig neu sortiert. Er kann nicht
+vorberechnet werden — das ist der Preis, ein bis drei Sekunden pro Abfrage —
+und er kann nur umsortieren, was die beiden Hälften gefunden haben. Trefferquote
+bleibt ihre Aufgabe, Genauigkeit wird seine.
+
+Eigener Download, unabhängig vom Encoder. Und er zählt erst als bereit, wenn er
+seinen Selbsttest besteht: Ein Cross-Encoder mit vertauschten Labels setzt den
+schlechtesten Kandidaten nach vorn und sieht dabei aus wie ein funktionierendes
+Feature.
+
 **Phase 4 — Zugang für beliebige Modelle, lokal.** Über stdio funktioniert das
 heute schon mit allem, was MCP spricht und auf demselben Rechner läuft, also
 auch mit einem lokalen Modell in LM Studio oder Ollama. Ergänzend ein
