@@ -427,23 +427,72 @@ pub struct PassageRank {
     /// False when the model had no vector for this passage, so its zero cosine
     /// means "never indexed" rather than "unrelated".
     pub embedded: bool,
-    /// The same passage measured against the same question with its note path
-    /// *not* prepended, encoded on the spot.
+    /// The same passage against the same question, with each candidate shape of
+    /// context in front of it, encoded on the spot. Empty without a model.
     ///
-    /// [`embedding_text`] puts the note's name and folders in front of every
-    /// passage, because a body often leaves its subject implicit. On a thirteen
-    /// word passage that is half the text, and cosines in this space sit in a
-    /// band so narrow that a hundredth separates hundreds of ranks. So the
-    /// question is whether the context that rescues short notes is drowning
-    /// them, and it is worth a number: removing it costs a full re-index of
-    /// every passage in the vault.
+    /// [`embedding_text`] currently puts the note's whole path and the heading
+    /// in front of every passage, because a body often leaves its subject
+    /// implicit — a note called `Alexander Mut.md` may never repeat the name.
+    /// That was measured and it was right. But on a thirteen-word passage the
+    /// path is half the encoded text, and cosines here sit in a band so narrow
+    /// that a hundredth separates hundreds of ranks, so the same context that
+    /// rescues one note can drown another.
     ///
-    /// `None` without a model, or when the model could not answer.
-    pub cosine_text_only: Option<f32>,
-    /// Where [`Self::cosine_text_only`] would place this passage among the
-    /// others as they are now. See [`Meanings::rank_of`] — a first-order
-    /// estimate, since a real change would move every passage, not one.
-    pub rank_if_text_only: Option<usize>,
+    /// Which shape to keep is therefore not a matter of argument: changing it
+    /// re-encodes every passage in the vault, and choosing wrong costs that
+    /// twice. So all of them are measured at once, the current one included,
+    /// and the numbers decide.
+    pub variants: Vec<ContextVariant>,
+}
+
+/// One candidate shape of context, measured.
+#[derive(Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextVariant {
+    /// What went in front of the passage text.
+    pub context: String,
+    pub cosine: f32,
+    /// Where this cosine would place the passage among the others as they
+    /// stand. See [`Meanings::rank_of`]: a first-order estimate, because a real
+    /// change would move every passage and not just this one. It separates
+    /// "this would be near the top" from "this barely moves", which is what the
+    /// decision needs; it does not predict the rank after the change.
+    pub rank: usize,
+}
+
+/// The candidate shapes, in the order they are reported.
+///
+/// The current one is in the list on purpose: a column of numbers with nothing
+/// to compare against is not a measurement.
+fn context_variants(path: &str, chunk: &Chunk) -> Vec<(String, String)> {
+    let stem = path.trim_end_matches(".md");
+    let name = stem.rsplit('/').next().unwrap_or(stem);
+    let heading = &chunk.heading;
+    let text = &chunk.text;
+    let with = |lead: &str| {
+        if lead.is_empty() {
+            text.clone()
+        } else {
+            format!("{lead}\n{text}")
+        }
+    };
+    let joined = |a: &str, b: &str| match (a.is_empty(), b.is_empty()) {
+        (true, _) => b.to_string(),
+        (_, true) => a.to_string(),
+        _ => format!("{a} / {b}"),
+    };
+    vec![
+        ("nothing".to_string(), with("")),
+        ("heading".to_string(), with(heading)),
+        (
+            "note name and heading".to_string(),
+            with(&joined(name, heading)),
+        ),
+        (
+            "full path and heading (current)".to_string(),
+            embedding_text(path, chunk),
+        ),
+    ]
 }
 
 /// At most this many passages of one note are reported. A diagnostic should
@@ -708,31 +757,52 @@ fn passage_ranks<T>(
         .take(REPORTED_PASSAGES)
         .collect();
 
-    // What the passage would look like to the model without its note path in
-    // front of it. Encoded now, for these few passages only: the whole point is
-    // that this text is not in the index and cannot be looked up.
-    let bare: Vec<Option<f32>> = match (model, semantic) {
+    // Every candidate shape of context for every reported passage, encoded in
+    // one batch: at most eighty short texts, and they are by definition not in
+    // the index, so they cannot be looked up.
+    let measured: Vec<Vec<ContextVariant>> = match (model, semantic) {
         (Some(m), Some(meanings)) => {
-            let texts: Vec<String> = picked
+            let shapes: Vec<Vec<(String, String)>> = picked
                 .iter()
-                .map(|(_, c)| parts(c).1.text.clone())
+                .map(|(_, c)| {
+                    let (path, chunk) = parts(c);
+                    context_variants(path, chunk)
+                })
+                .collect();
+            let texts: Vec<String> = shapes
+                .iter()
+                .flat_map(|v| v.iter().map(|(_, t)| t.clone()))
                 .collect();
             match m.embed_fresh(&texts) {
-                Ok(vectors) if vectors.len() == texts.len() => vectors
-                    .iter()
-                    .map(|v| Some(cosine(&meanings.query, v)))
-                    .collect(),
+                Ok(vectors) if vectors.len() == texts.len() => {
+                    let mut it = vectors.into_iter();
+                    shapes
+                        .iter()
+                        .map(|v| {
+                            v.iter()
+                                .map(|(label, _)| {
+                                    let c = cosine(&meanings.query, &it.next().unwrap_or_default());
+                                    ContextVariant {
+                                        context: label.clone(),
+                                        cosine: c,
+                                        rank: meanings.rank_of(c),
+                                    }
+                                })
+                                .collect()
+                        })
+                        .collect()
+                }
                 // A model that cannot answer costs a measurement, not a result.
-                _ => vec![None; picked.len()],
+                _ => vec![Vec::new(); picked.len()],
             }
         }
-        _ => vec![None; picked.len()],
+        _ => vec![Vec::new(); picked.len()],
     };
 
     picked
         .into_iter()
-        .zip(bare)
-        .map(|((i, c), bare)| {
+        .zip(measured)
+        .map(|((i, c), variants)| {
             let (path, chunk) = parts(c);
             let (lexical_rank, lexical_score) = match lex.get(&i) {
                 Some((rank, score)) => (Some(*rank), *score),
@@ -756,8 +826,7 @@ fn passage_ranks<T>(
                 embedded: semantic
                     .map(|m| m.embedded.get(i).copied().unwrap_or(false))
                     .unwrap_or(false),
-                cosine_text_only: bare,
-                rank_if_text_only: bare.zip(semantic).map(|(c, m)| m.rank_of(c)),
+                variants,
             }
         })
         .collect()
@@ -1773,7 +1842,7 @@ mod tests {
             write(
                 &dir,
                 &format!("Kurz {i}.md"),
-                &format!("Updater {}\n", "fuellwort ".repeat(21)),
+                &format!("Updater {}\n", "fuellwort ".repeat(23)),
             );
         }
         write(
@@ -1796,17 +1865,41 @@ mod tests {
             .iter()
             .find(|p| p.heading == "Mitgewirkt")
             .expect("the passage under the heading asked about");
-        let bare = ranked.cosine_text_only.expect("the model answered");
+
+        let by = |what: &str| {
+            ranked
+                .variants
+                .iter()
+                .find(|v| v.context.starts_with(what))
+                .unwrap_or_else(|| panic!("no variant {what:?} in {:?}", ranked.variants))
+        };
+        let bare = by("nothing");
+        let current = by("full path");
+
+        // The current shape must be in the list, and it must agree with what
+        // the ranking actually used — otherwise the comparison is between a
+        // measurement and a guess.
+        assert_eq!(current.rank, ranked.meaning_rank.unwrap());
         assert!(
-            bare > ranked.cosine,
-            "with path {:.4}, without {bare:.4}",
-            ranked.cosine
+            bare.cosine > current.cosine,
+            "with path {:.4}, without {:.4}",
+            current.cosine,
+            bare.cosine
         );
         assert!(
-            ranked.rank_if_text_only.unwrap() < ranked.meaning_rank.unwrap(),
-            "rank {:?} would become {:?}",
-            ranked.meaning_rank,
-            ranked.rank_if_text_only
+            bare.rank < current.rank,
+            "rank {} would become {}",
+            current.rank,
+            bare.rank
+        );
+        // Dropping the folders alone should already recover most of it here:
+        // this path says "Magma" twice before the passage begins.
+        let short = by("note name");
+        assert!(
+            short.rank < current.rank,
+            "note name and heading: {} vs {}",
+            short.rank,
+            current.rank
         );
     }
 
@@ -1819,9 +1912,8 @@ mod tests {
         };
         retrieve_explained(&dir, "notarisierung", 5, None, Some(&mut report)).unwrap();
         let ranked = &report.note[0];
-        // Absent rather than zero: zero is a measurement, and none was made.
-        assert_eq!(ranked.cosine_text_only, None);
-        assert_eq!(ranked.rank_if_text_only, None);
+        // Empty rather than zeros: a zero is a measurement, and none was made.
+        assert!(ranked.variants.is_empty());
         assert_eq!(ranked.meaning_rank, None);
     }
 

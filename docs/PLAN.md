@@ -273,11 +273,31 @@ Gemessen auf dem echten Vault, 852 Notizen, 7082 Passagen:
   Mitgewirkt") steht sie auf Rang 1. Ihr Vektor ist also in Ordnung, und die
   Kürzung auf 256 Token hat sie nicht verstümmelt.
 
-Bleibt eine Zahl: Stand sie knapp hinter dem Fusionsfenster oder nirgends in
-der Nähe? Beides sieht in einer bei 50 abgeschnittenen Liste gleich aus und
-verlangt entgegengesetzte Reparaturen. Dafür nimmt `explain` jetzt eine Notiz
-entgegen (`explain_note`) und meldet für jede ihrer Passagen Rang und Wert in
-beiden Hälften, aus wie vielen, **ohne Abschnitt**.
+Gemessen: semantischer Rang **77 von 7082**. Ein größeres Fusionsfenster hätte
+nicht geholfen — bei Tiefe 100 bekäme die Passage 1/138 und läge fusioniert um
+Platz 154, weil RRF einen Treffer, den nur eine Hälfte kennt, zu Recht nicht
+über die Erstplatzierten der anderen hebt.
+
+Der Verdächtige war stattdessen `embedding_text`, also ich selbst: Es stellt
+jeder Passage ihren vollen Notizpfad voran. Bei einer Passage von dreizehn
+Wörtern ist das die Hälfte des kodierten Textes, und die Kosinuswerte liegen so
+eng beieinander, dass 0,0165 in derselben Notiz 644 Ränge ausmachten. Gemessen
+auf dem echten Vault, dieselbe Passage ohne Pfad: **Rang 77 → 6**, und sechs von
+sieben Passagen der Notiz steigen.
+
+Der Pfad kommt trotzdem nicht ersatzlos weg — er wurde selbst gegen einen
+gemessenen Fehler eingebaut (`Alexander Mut.md`, deren Thema nur im Dateinamen
+steht). Und der Pfad dieser Notiz lautet `Projekte/Magma/Projekt/Magma 0.1.4`:
+„Magma" zweimal, „Projekt" zweimal, bevor die Passage anfängt. Verdächtig sind
+also die Ordner, nicht der Name. Weil eine Umstellung jede Passage im Vault neu
+kodiert und eine falsche Wahl das zweimal kostet, misst `explain_note` jetzt
+alle Kandidaten auf einmal — ohne Kontext, nur Überschrift, Notizname und
+Überschrift, voller Pfad wie bisher — und die Zahlen entscheiden.
+
+Möglich wurde das durch `explain_note`: Es nimmt eine Notiz entgegen und meldet
+für jede ihrer Passagen Rang und Wert in beiden Hälften, aus wie vielen, **ohne
+Abschnitt**. Ohne das sah „knapp hinter dem Fenster" genauso aus wie „nirgends
+in der Nähe", und die beiden verlangen entgegengesetzte Reparaturen.
 
 **Phase 4 — Zugang für beliebige Modelle, lokal.** Über stdio funktioniert das
 heute schon mit allem, was MCP spricht und auf demselben Rechner läuft, also
