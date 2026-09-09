@@ -40,15 +40,56 @@ pub fn model_dir(app_data: &Path) -> PathBuf {
 /// Per vault, because two vaults share no passages, and keyed by the vault's
 /// path so switching between them does not throw the other's work away.
 pub fn cache_path(app_data: &Path, vault: &Path) -> PathBuf {
+    app_data
+        .join("vectors")
+        .join(format!("{}-{}.bin", DEFAULT_MODEL.id, vault_key(vault)))
+}
+
+fn vault_key(vault: &Path) -> String {
     let key = vault.to_string_lossy();
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for b in key.as_bytes() {
         hash ^= *b as u64;
         hash = hash.wrapping_mul(0x1000_0000_01b3);
     }
-    app_data
-        .join("vectors")
-        .join(format!("{}-{hash:016x}.bin", DEFAULT_MODEL.id))
+    format!("{hash:016x}")
+}
+
+/// Remove this vault's vectors from spaces that are no longer used, returning
+/// how many files went.
+///
+/// Changing how a passage is cut or labelled changes the id vectors are stamped
+/// with, and with it the file they live in. The old file is then dead weight —
+/// eleven megabytes for a vault this size — and nothing would ever read it
+/// again or ever delete it.
+///
+/// Deliberately not called when opening the model, which happens at startup and
+/// would make this a deletion nobody asked for. It runs at the start of an
+/// indexing run, where the user has just chosen to build the new space and the
+/// old one is superseded by that choice.
+pub fn discard_superseded(app_data: &Path, vault: &Path) -> usize {
+    let dir = app_data.join("vectors");
+    let keep = cache_path(app_data, vault);
+    // The vault's own hash, so another vault's index is never touched.
+    let mine = format!("-{}.bin", vault_key(vault));
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return 0;
+    };
+    let mut gone = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path == keep {
+            continue;
+        }
+        let is_mine = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.ends_with(&mine));
+        if is_mine && std::fs::remove_file(&path).is_ok() {
+            gone += 1;
+        }
+    }
+    gone
 }
 
 /// True when the model is already downloaded, so a caller can tell "off"
@@ -92,6 +133,7 @@ pub fn index_vault(
     on_progress: &mut dyn FnMut(IndexProgress),
 ) -> Result<usize, String> {
     let model = open(app_data, vault)?.ok_or("the model has not been downloaded yet")?;
+    discard_superseded(app_data, vault);
     let texts = passage_texts(vault).map_err(|e| format!("cannot read the vault: {e}"))?;
     let total = texts.len();
 
@@ -292,6 +334,37 @@ mod tests {
         // answer is the same. Retrieval would just quietly get worse.
         let err = self_check(&Noise).unwrap_err();
         assert!(err.contains("separate meaning"), "{err}");
+    }
+
+    #[test]
+    fn an_old_vector_space_is_cleared_out_but_only_for_this_vault() {
+        // Changing how a passage is labelled changes the id, and with it the
+        // file. Nothing would ever read the old one again and nothing would
+        // ever delete it, so it sits there for good.
+        let app = std::env::temp_dir().join("magma-embed-superseded");
+        let _ = std::fs::remove_dir_all(&app);
+        let vault = Path::new("/home/alex/Notizen");
+        let other = Path::new("/home/alex/Archiv");
+        std::fs::create_dir_all(app.join("vectors")).unwrap();
+
+        let current = cache_path(&app, vault);
+        let stale = app
+            .join("vectors")
+            .join(format!("some-older-space-{}.bin", vault_key(vault)));
+        let theirs = cache_path(&app, other);
+        for f in [&current, &stale, &theirs] {
+            std::fs::write(f, b"x").unwrap();
+        }
+
+        assert_eq!(discard_superseded(&app, vault), 1);
+        assert!(current.exists(), "the space in use must survive");
+        assert!(!stale.exists(), "the superseded one must not");
+        assert!(
+            theirs.exists(),
+            "another vault's index is none of our business"
+        );
+
+        let _ = std::fs::remove_dir_all(&app);
     }
 
     #[test]

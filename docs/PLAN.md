@@ -293,14 +293,41 @@ hochgerechnet drei Stunden. Das ist die Zahl, gegen die jede Änderung an
 nebenbei zu machen, billig genug, um sie zu machen, wenn eine Messung sie
 rechtfertigt.
 
-Der Pfad kommt trotzdem nicht ersatzlos weg — er wurde selbst gegen einen
+Der Pfad kam trotzdem nicht ersatzlos weg — er wurde selbst gegen einen
 gemessenen Fehler eingebaut (`Alexander Mut.md`, deren Thema nur im Dateinamen
-steht). Und der Pfad dieser Notiz lautet `Projekte/Magma/Projekt/Magma 0.1.4`:
-„Magma" zweimal, „Projekt" zweimal, bevor die Passage anfängt. Verdächtig sind
-also die Ordner, nicht der Name. Weil eine Umstellung jede Passage im Vault neu
-kodiert und eine falsche Wahl das zweimal kostet, misst `explain_note` jetzt
-alle Kandidaten auf einmal — ohne Kontext, nur Überschrift, Notizname und
-Überschrift, voller Pfad wie bisher — und die Zahlen entscheiden.
+steht). Weil eine Umstellung jede Passage im Vault neu kodiert und eine falsche
+Wahl das zweimal kostet, hat `explain_note` alle Kandidaten auf einmal gemessen.
+Zwei Notizen, zwei Fragen, Rang von 7082:
+
+| vor der Passage | „Mitgewirkt", 13 Wörter | `Alexander Mut`, 13 Wörter |
+|---|---|---|
+| nur die Überschrift | **2** | **1** |
+| nichts | 6 | 35 |
+| Notizname + Überschrift | 31 | 1 |
+| voller Pfad + Überschrift (bis dahin) | 77 | 1 |
+
+**Die Leiter ist nicht monoton, und das ist der Befund.** Ein Wort Überschrift
+schlägt gar keinen Kontext; acht Wörter Pfad machen es viel schlechter. Es geht
+nicht um die Menge, sondern darum, was das Label beschreibt: „Mitgewirkt"
+beschreibt die Passage, `Projekte / Magma / Projekt / Magma 0.1.4` beschreibt
+die Datei — und sagt „Magma" zweimal, bevor die Passage anfängt. Auch der Fall,
+der den Kontext überhaupt erst nötig machte, setzt die Überschrift nach vorn.
+
+Der Kosinus lag dabei über alle vier Varianten zwischen 0,814 und 0,843. Drei
+Hundertstel, fünfundsiebzig Ränge. Deshalb fiel es nie auf: An den Werten sieht
+man es nicht, nur an der Reihenfolge.
+
+`embedding_text` stellt einer Passage daher **ein** Label voran — ihre
+Überschrift, ersatzweise den Notiznamen, wenn sie keine hat. Nie zwei. Der
+Rückfall auf den Namen ist begründet und nicht gemessen; die Begründung ist
+bewusst eng gehalten: Sonst stünde vor der Passage gar nichts, und das ist die
+Zeile „nichts" oben.
+
+Die lexikalische Hälfte behält Name **und** Ordner (`CONTEXT_REPEATS`,
+unverändert). Dass beide Hälften denselben Kontext tragen müssen, folgt aus
+nichts — im Gegenteil: Wörter finden Namen, Bedeutung findet Bedeutung. Dass
+`embedding_text` den Dateinamen trug, war eine per Analogie von der einen auf
+die andere Seite kopierte Reparatur, nie eine gemessene.
 
 Möglich wurde das durch `explain_note`: Es nimmt eine Notiz entgegen und meldet
 für jede ihrer Passagen Rang und Wert in beiden Hälften, aus wie vielen, **ohne

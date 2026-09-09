@@ -54,11 +54,16 @@ pub struct ModelSpec {
 pub const DEFAULT_MODEL: ModelSpec = ModelSpec {
     repo: "intfloat/multilingual-e5-small",
     revision: "main",
-    // The suffix is not decoration. Vectors are stamped with this id, and
-    // truncating at a different length produces different vectors from the same
-    // model; mixing the two would compare passages measured two ways and look
-    // perfectly fine while doing it.
-    id: "multilingual-e5-small-t256",
+    // The suffix is not decoration. Vectors are stamped with this id, and the
+    // same weights produce different vectors when the text reaching them
+    // changes — a different truncation length, a different label in front of
+    // the passage. Mixing two such sets would compare passages measured two
+    // ways and look perfectly fine while doing it.
+    //
+    // `t256` is the truncation. `h` is what precedes a passage: its heading,
+    // since the whole note path was measured on a real vault and found to push
+    // a short passage from rank 2 to rank 77. See `magma_core::embedding_text`.
+    id: "multilingual-e5-small-t256-h",
     weights_dir: "multilingual-e5-small",
     approx_bytes: 471_000_000,
 };

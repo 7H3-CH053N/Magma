@@ -483,15 +483,17 @@ fn context_variants(path: &str, chunk: &Chunk) -> Vec<(String, String)> {
     };
     vec![
         ("nothing".to_string(), with("")),
-        ("heading".to_string(), with(heading)),
         (
             "note name and heading".to_string(),
             with(&joined(name, heading)),
         ),
         (
-            "full path and heading (current)".to_string(),
-            embedding_text(path, chunk),
+            "full path and heading".to_string(),
+            with(&joined(&stem.replace('/', " / "), heading)),
         ),
+        // Always last, and always whatever the ranking actually used, so the
+        // comparison is anchored to the code rather than to a description of it.
+        ("as used now".to_string(), embedding_text(path, chunk)),
     ]
 }
 
@@ -874,19 +876,53 @@ trait HasPath {
     fn path(&self) -> &str;
 }
 
-/// What actually goes to the model for a passage.
+/// What actually goes to the model for a passage: one label, then the text.
 ///
-/// Not the passage text alone. The note's name and the heading above it carry
-/// subject matter a body often leaves implicit, and leaving them out here would
-/// reopen on the semantic side the hole that scoring text alone opened on the
-/// lexical one.
+/// The label is the heading the passage sits under, or the note's name when it
+/// has none. Not the folders, and not the note name on top of a heading — this
+/// used to be the whole path plus the heading, and that was measured on a real
+/// vault and found to be wrong. Asked who helped with the automatic updating,
+/// against the thirteen words under `## Mitgewirkt`:
+///
+/// | in front of the passage      | rank of 7082 |
+/// |------------------------------|--------------|
+/// | the heading                  |            2 |
+/// | nothing                      |            6 |
+/// | note name and heading        |           31 |
+/// | the whole path and heading   |           77 |
+///
+/// The ladder is not monotonic in how much is added, which is the finding. One
+/// word of heading beats no context at all; eight words of path make it far
+/// worse. What matters is what the label describes. `Mitgewirkt` describes the
+/// passage. `Projekte / Magma / Projekt / Magma 0.1.4` describes the file, and
+/// in that particular path says "Magma" twice before the passage begins.
+///
+/// The same four measured against `Alexander Mut.md` — the note that motivated
+/// adding context in the first place — put the heading first as well, and the
+/// bare text at rank 35. So one good label helps in both directions; it was the
+/// pile of them that hurt.
+///
+/// Cosines here span three hundredths across all four, and those three
+/// hundredths are seventy-five ranks. That is why this went unnoticed: the
+/// numbers look fine, only the order is wrong.
+///
+/// The fallback to the note name is reasoned rather than measured, and the
+/// reasoning is deliberately narrow: a passage with no heading would otherwise
+/// carry no label at all, which is the rank-35 column above. One short label,
+/// never two.
+///
+/// This decides how every vector in the vault is computed, so changing it means
+/// re-encoding all of them — see the id in `magma-embed`'s `DEFAULT_MODEL`,
+/// which must change with it or vectors from two different spaces end up in one
+/// file, comparing perfectly happily and meaning nothing.
 pub fn embedding_text(path: &str, chunk: &Chunk) -> String {
-    let name = path.trim_end_matches(".md").replace('/', " / ");
-    if chunk.heading.is_empty() {
-        format!("{name}\n{}", chunk.text)
+    let stem = path.trim_end_matches(".md");
+    let label = if chunk.heading.is_empty() {
+        stem.rsplit('/').next().unwrap_or(stem)
     } else {
-        format!("{name} / {}\n{}", chunk.heading, chunk.text)
-    }
+        &chunk.heading
+    };
+    format!("{label}\n{}", chunk.text)
 }
 
 /// Cosine of every passage against the query, as a ranking, and which of
@@ -1633,7 +1669,7 @@ mod tests {
                 Ok(texts
                     .iter()
                     .map(|t| {
-                        if t.contains("Signieren") {
+                        if t.contains("Zertifikat") {
                             vec![0.0, 0.0]
                         } else {
                             vec![1.0, 0.0]
@@ -1775,7 +1811,7 @@ mod tests {
                 Ok(texts
                     .iter()
                     .map(|t| {
-                        if t.contains("Magma 0.1.4") {
+                        if t.contains("Mitgewirkt") {
                             vec![0.0, 0.0]
                         } else {
                             vec![1.0, 0.0]
@@ -1803,11 +1839,11 @@ mod tests {
     }
 
     #[test]
-    fn the_note_report_measures_the_passage_without_its_path() {
-        // The question this has to settle costs a full re-index of the vault to
-        // act on, so it must not be settled by argument. `embedding_text` puts
-        // the note's path in front of every passage; on a short passage that is
-        // half the text. Whether that helps or drowns it is one number.
+    fn the_shape_in_use_beats_the_one_it_replaced() {
+        // The decision this measurement was built to make, pinned. The vault
+        // said the heading alone ranks a short passage second and the whole
+        // path ranks it seventy-seventh, so the path came out. If someone puts
+        // it back, this is what should stop them.
         struct Dilutes;
         impl Similarity for Dilutes {
             fn id(&self) -> &str {
@@ -1829,15 +1865,12 @@ mod tests {
                     })
                     .collect())
             }
-            fn embed_fresh(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
-                self.embed_passages(texts)
-            }
         }
 
         // Sized so the answer differs: the competing notes are longer than the
-        // passage alone and shorter than the passage with its path in front,
-        // so the path is exactly what decides whether it wins or loses.
-        let dir = tmp_vault("notebare");
+        // passage under its heading and shorter than the passage under its full
+        // path, so the context is exactly what decides whether it wins.
+        let dir = tmp_vault("shapeinuse");
         for i in 0..(FUSION_DEPTH + 10) {
             write(
                 &dir,
@@ -1865,41 +1898,53 @@ mod tests {
             .iter()
             .find(|p| p.heading == "Mitgewirkt")
             .expect("the passage under the heading asked about");
-
         let by = |what: &str| {
             ranked
                 .variants
                 .iter()
-                .find(|v| v.context.starts_with(what))
+                .find(|v| v.context == what)
                 .unwrap_or_else(|| panic!("no variant {what:?} in {:?}", ranked.variants))
         };
-        let bare = by("nothing");
-        let current = by("full path");
+        let current = by("as used now");
+        let old_shape = by("full path and heading");
 
-        // The current shape must be in the list, and it must agree with what
-        // the ranking actually used — otherwise the comparison is between a
-        // measurement and a guess.
+        // The reported "as used now" must be what the ranking really used, or
+        // the whole comparison is between a measurement and a description.
         assert_eq!(current.rank, ranked.meaning_rank.unwrap());
         assert!(
-            bare.cosine > current.cosine,
-            "with path {:.4}, without {:.4}",
-            current.cosine,
-            bare.cosine
-        );
-        assert!(
-            bare.rank < current.rank,
-            "rank {} would become {}",
+            current.rank < old_shape.rank,
+            "as used now {} vs full path {}",
             current.rank,
-            bare.rank
+            old_shape.rank
         );
-        // Dropping the folders alone should already recover most of it here:
-        // this path says "Magma" twice before the passage begins.
-        let short = by("note name");
-        assert!(
-            short.rank < current.rank,
-            "note name and heading: {} vs {}",
-            short.rank,
-            current.rank
+    }
+
+    #[test]
+    fn a_passage_carries_one_label_and_never_two() {
+        // One label, and the note name only when there is no heading. Both
+        // halves of that mattered on the real vault: the heading alone ranked a
+        // passage second where name-and-heading ranked it thirty-first, and a
+        // passage with no label at all fell to thirty-fifth.
+        let under_heading = Chunk {
+            heading: "Mitgewirkt".into(),
+            line: 50,
+            text: "Den Updater hat jemand beigesteuert.".into(),
+        };
+        let text = embedding_text("Projekte/Magma/Projekt/Magma 0.1.4.md", &under_heading);
+        assert_eq!(text, "Mitgewirkt\nDen Updater hat jemand beigesteuert.");
+        assert!(!text.contains("Projekte"), "the folders are gone: {text:?}");
+        assert!(!text.contains("0.1.4"), "and so is the file name: {text:?}");
+
+        let unheaded = Chunk {
+            heading: String::new(),
+            line: 1,
+            text: "Developer im Projekt.".into(),
+        };
+        // Without a heading the note name stands in, so a passage is never
+        // handed to the model with nothing in front of it at all.
+        assert_eq!(
+            embedding_text("Menschen/Alexander Mut.md", &unheaded),
+            "Alexander Mut\nDeveloper im Projekt."
         );
     }
 
