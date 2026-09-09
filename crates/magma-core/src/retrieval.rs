@@ -197,7 +197,20 @@ pub struct Passage {
     /// 1-based line in the note where the passage starts.
     pub line: usize,
     pub text: String,
-    /// BM25 score. Comparable within one result set, meaningless across two.
+    /// How this passage did, on whatever scale last touched the order — and
+    /// [`Retrieval::semantic`] and [`Retrieval::reranked`] say which that was.
+    ///
+    /// Three different things wear this name, which is worth stating rather
+    /// than leaving to be discovered: a BM25 score when words ranked alone
+    /// (positive, unbounded, a few units), a reciprocal-rank sum when the two
+    /// halves were fused (positive, tiny, around 0.03), and a cross-encoder's
+    /// logit when a reranker had the last word — which is the only one that
+    /// goes *negative*, and there negative simply means "judged not to answer
+    /// the question".
+    ///
+    /// Comparable within one result set. Never across two, and never between
+    /// two machines: the same query on a machine without the models answers on
+    /// a different scale entirely.
     pub score: f32,
 }
 
