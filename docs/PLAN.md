@@ -382,6 +382,34 @@ seinen Selbsttest besteht: Ein Cross-Encoder mit vertauschten Labels setzt den
 schlechtesten Kandidaten nach vorn und sieht dabei aus wie ein funktionierendes
 Feature.
 
+Gemessen auf dem echten Vault:
+
+| Frage | vorher | mit Nachsortierung |
+|---|---|---|
+| Bildprompt „Italienerin, lockige schwarze Haare" | nicht unter acht Treffern | **Rang 1** |
+| „Wer hat an der automatischen Aktualisierung mitgeholfen?" | Rang 4 | **Rang 1** |
+| „was ist llmfit" (Wächter, Namensfrage) | Rang 1 und 2 | **unverändert** |
+
+Der Wächter ist der wichtigste der drei. Ein Cross-Encoder fasst *jede* Abfrage
+an, und einer, der Namensfragen verschlechtert, kostet mehr als er bringt.
+
+Der `meaningRank` der Bildprompt-Notiz blieb dabei 17 — der Re-Ranker ändert
+keine Vektoren. Sie stand nicht in den Top 8 und steht jetzt an erster Stelle,
+allein weil ein zweites Modell die fünfzig Kandidaten gelesen hat.
+
+Ein vierter Test war **ungültig, nicht durchgefallen**, und das gehört
+festgehalten, weil es ein wiederkehrender Fehler ist: Die Frage wurde aus einem
+Notiz*titel* abgeleitet, ohne den Inhalt zu kennen. „Ich hab einen API-Key
+gefunden. Was jetzt?" liest sich wie ein Sicherheitsvorfall und ist eine
+Bau-Geschichte. Der Re-Ranker hat die Notiz zurückgewiesen und Notizen über
+Prompt Injection geliefert — für die gestellte Frage die bessere Antwort.
+
+Nebenbei: Das Vorzeichen des Logits trägt Information. In der geglückten Suche
+gewann die richtige Passage mit −0,58 vor −1,7; in der ungültigen lag das ganze
+Feld zwischen −3,5 und −4,1. Ein Ergebnis, das durchweg tief im Negativen liegt,
+heißt „im Vault steht die Antwort nicht". Das wird nicht eingebaut — die Zahl
+steht im Ergebnis, und wer sie liest, sieht es.
+
 **Phase 4 — Zugang für beliebige Modelle, lokal.** Über stdio funktioniert das
 heute schon mit allem, was MCP spricht und auf demselben Rechner läuft, also
 auch mit einem lokalen Modell in LM Studio oder Ollama. Ergänzend ein
