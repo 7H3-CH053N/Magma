@@ -285,6 +285,14 @@ eng beieinander, dass 0,0165 in derselben Notiz 644 Ränge ausmachten. Gemessen
 auf dem echten Vault, dieselbe Passage ohne Pfad: **Rang 77 → 6**, und sechs von
 sieben Passagen der Notiz steigen.
 
+Was ein Indexlauf kostet, ist damit auch gemessen und nicht mehr geschätzt:
+**rund 15 Minuten** für 7082 Passagen auf dem Windows-PC, nach den Korrekturen
+an Speicherbudget und Parallelität. Vorher waren es 592 Passagen in 15 Minuten,
+hochgerechnet drei Stunden. Das ist die Zahl, gegen die jede Änderung an
+`embedding_text` oder an der Modell-ID abzuwägen ist: teuer genug, um sie nicht
+nebenbei zu machen, billig genug, um sie zu machen, wenn eine Messung sie
+rechtfertigt.
+
 Der Pfad kommt trotzdem nicht ersatzlos weg — er wurde selbst gegen einen
 gemessenen Fehler eingebaut (`Alexander Mut.md`, deren Thema nur im Dateinamen
 steht). Und der Pfad dieser Notiz lautet `Projekte/Magma/Projekt/Magma 0.1.4`:
