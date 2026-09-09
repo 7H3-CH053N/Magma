@@ -921,9 +921,24 @@ export default function Settings({
                         })}
                   </p>
                 ) : (
-                  <p className="mt-2 text-xs text-green-600 dark:text-green-400">
-                    {t("settings.indexDone", { count: String(indexDone.passages) })}
-                  </p>
+                  <>
+                    <p className="mt-2 text-xs text-green-600 dark:text-green-400">
+                      {t("settings.indexDone", { count: String(indexDone.passages) })}
+                    </p>
+                    {indexDone.offline > 0 && (
+                      // Success with most of the vault missing is the same trap
+                      // one level up: 29 passages out of 777 notes reads as
+                      // "done" and is not. Whatever was skipped has to be said
+                      // out loud, or the search quietly answers from a fraction
+                      // of the vault and nothing looks wrong.
+                      <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                        {t("settings.indexSkipped", {
+                          offline: String(indexDone.offline),
+                          notes: String(indexDone.notes),
+                        })}
+                      </p>
+                    )}
+                  </>
                 )
               )}
               {modelErr && (
