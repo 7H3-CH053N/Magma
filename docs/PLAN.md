@@ -244,6 +244,20 @@ Phase legt sie an. Semantische Treffer **ergänzen** die lexikalischen, sie
 ersetzen sie nicht: Reine Vektorsuche ist bei Eigennamen, Codebezeichnern und
 exakten Begriffen schlechter als Volltext, und beides steht in echten Notizen.
 
+Ob die Embeddings einem echten deutschen Vault etwas bringen, ist damit noch
+nicht beantwortet. Zwei Synonymfragen auf dem echten Vault gingen daneben, und
+eine Rangliste sagt nicht, warum: Ein Treffer kann fehlen, weil das Modell ihn
+nirgends in der Nähe der Frage sah, oder weil es ihn gut platzierte und die
+Fusion oder die Deckelung pro Notiz ihn wieder herauswarf — das verlangt
+entgegengesetzte Reparaturen. Deshalb hat `retrieve` ein `explain`: die beiden
+Ranglisten getrennt, so weit die Fusion überhaupt hinsieht, und davor
+`embedded` von `passages`. Die Zahl steht dort, weil eine Anfrage den Vault
+nicht kodiert, sondern nachschlägt; eine Passage, die der Indexlauf nie
+erreicht hat, kommt als Nullvektor zurück und bekommt gegen alles die Null.
+In der Rangliste sieht das genauso aus wie ein Modell, das nichts gefunden hat.
+Erst wenn `embedded` nahe bei `passages` liegt, ist die Frage nach der Qualität
+der Embeddings überhaupt gestellt.
+
 **Phase 4 — Zugang für beliebige Modelle, lokal.** Über stdio funktioniert das
 heute schon mit allem, was MCP spricht und auf demselben Rechner läuft, also
 auch mit einem lokalen Modell in LM Studio oder Ollama. Ergänzend ein

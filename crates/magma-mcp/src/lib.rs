@@ -158,8 +158,27 @@ impl Server {
                     .and_then(|l| l.as_u64())
                     .unwrap_or(8)
                     .clamp(1, 50) as usize;
-                let found = core::retrieve_with(v, &q, limit, self.model.as_deref()).map_err(io)?;
-                Ok(json!(found))
+                // Off unless asked for. It is a diagnostic, not part of an
+                // answer: it lists notes the result deliberately left out, and
+                // a model reading it as findings would cite them.
+                let wants = args
+                    .get("explain")
+                    .and_then(|e| e.as_bool())
+                    .unwrap_or(false);
+                let mut report = core::Explanation::default();
+                let found = core::retrieve_explained(
+                    v,
+                    &q,
+                    limit,
+                    self.model.as_deref(),
+                    wants.then_some(&mut report),
+                )
+                .map_err(io)?;
+                let mut out = json!(found);
+                if wants {
+                    out["explain"] = json!(report);
+                }
+                Ok(out)
             }
             "read_note" => {
                 let path = str_arg(args, "path")?;
@@ -363,7 +382,8 @@ fn tools_spec() -> Value {
                 "type": "object",
                 "properties": {
                     "query": { "type": "string", "description": "The question, in the user's own words. Full sentences work better than keywords." },
-                    "limit": { "type": "integer", "description": "How many passages to return. Default 8, maximum 50." }
+                    "limit": { "type": "integer", "description": "How many passages to return. Default 8, maximum 50." },
+                    "explain": { "type": "boolean", "description": "Diagnostic. Adds 'explain' with the notes each half of the ranking found on its own — 'lexical' by word overlap, 'meaning' by embeddings — before the two were fused, best first, as far down as fusion looks, plus 'embedded' of 'passages': how many passages had a vector at all. Read 'embedded' first: well below 'passages' means the vault is only part-indexed, and the 'meaning' list says nothing until that is fixed. Otherwise it tells 'the model never found this note' apart from 'the model found it and fusion dropped it'. These are not results and must not be cited." }
                 },
                 "required": ["query"]
             }
@@ -787,6 +807,45 @@ mod tests {
             .call_tool("retrieve", &json!({ "query": "farben", "limit": 3 }))
             .unwrap();
         assert_eq!(out["passages"].as_array().unwrap().len(), 3);
+        std::fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn retrieve_explains_only_when_asked() {
+        let v = vault();
+        core::write_note(
+            &v,
+            "Signieren.md",
+            "# Signieren\n\nDie p12 kommt aus Meine Zertifikate.\n",
+        )
+        .unwrap();
+        let s = srv(v.clone());
+
+        // The default answer must stay an answer. An extra key full of notes
+        // that were deliberately left out is exactly the kind of thing a model
+        // starts citing.
+        let plain = s
+            .call_tool("retrieve", &json!({ "query": "zertifikate" }))
+            .unwrap();
+        assert!(plain.get("explain").is_none(), "{plain}");
+
+        let explained = s
+            .call_tool(
+                "retrieve",
+                &json!({ "query": "zertifikate", "explain": true }),
+            )
+            .unwrap();
+        let lexical = explained["explain"]["lexical"].as_array().unwrap();
+        assert_eq!(lexical[0], "Signieren.md", "{explained}");
+        // No model in this server, so nothing measured meaning — and that has
+        // to read as "not measured", not as agreement.
+        assert!(explained["explain"]["meaning"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert_eq!(explained["explain"]["embedded"], 0);
+        assert!(explained["explain"]["passages"].as_u64().unwrap() > 0);
+
         std::fs::remove_dir_all(&v).ok();
     }
 

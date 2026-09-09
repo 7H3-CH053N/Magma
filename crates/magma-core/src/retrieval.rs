@@ -345,6 +345,46 @@ pub fn retrieve_with(
     limit: usize,
     model: Option<&dyn Similarity>,
 ) -> std::io::Result<Retrieval> {
+    retrieve_explained(vault, query, limit, model, None)
+}
+
+/// What each half of the ranking thought, before they were fused.
+///
+/// For answering "is this the model or is this my wiring" with a number instead
+/// of a hypothesis. A passage can be missing from a result for two very
+/// different reasons — the model placed it nowhere near the query, or it placed
+/// it well and fusion or the per-note cap dropped it — and those call for
+/// opposite fixes.
+#[derive(Serialize, Debug, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Explanation {
+    /// Note paths in the order words ranked them, best first.
+    pub lexical: Vec<String>,
+    /// Note paths in the order meaning ranked them. Empty without a model.
+    pub meaning: Vec<String>,
+    /// How many passages the model actually had a vector for.
+    ///
+    /// Without this the meaning half cannot be read at all. A query does not
+    /// encode the vault — that would take minutes inside a tool call — so it
+    /// looks up vectors that indexing put there, and a passage indexing never
+    /// reached comes back as a zero vector, which scores zero against
+    /// everything. That is indistinguishable, in the ranking, from a model that
+    /// looked and found nothing. Here it is one number apart: `embedded` well
+    /// below `passages` means the index has holes, not that the model is
+    /// useless.
+    pub embedded: usize,
+    /// How many passages there were to rank.
+    pub passages: usize,
+}
+
+/// As [`retrieve_with`], also reporting how each half ranked things.
+pub fn retrieve_explained(
+    vault: &Path,
+    query: &str,
+    limit: usize,
+    model: Option<&dyn Similarity>,
+    mut explain: Option<&mut Explanation>,
+) -> std::io::Result<Retrieval> {
     let terms = tokenize(query);
     let notes = vault::list_notes(vault)?;
 
@@ -464,17 +504,26 @@ pub fn retrieve_with(
                 .iter()
                 .map(|c| embedding_text(&c.path, &c.chunk))
                 .collect();
-            semantic_ranking(m, query, &texts).map(|mut sem| {
+            semantic_ranking(m, query, &texts).map(|(mut sem, embedded)| {
                 sem.sort_by(tie);
-                sem
+                (sem, embedded)
             })
         }
         None => None,
     };
 
+    if let Some(report) = explain.as_mut() {
+        report.lexical = name_ranks(&scored, &candidates);
+        report.passages = candidates.len();
+    }
+
     let ranked: Vec<(f32, usize)> = match &semantic {
-        Some(sem) => {
+        Some((sem, embedded)) => {
             out.semantic = true;
+            if let Some(report) = explain.as_mut() {
+                report.meaning = name_ranks(sem, &candidates);
+                report.embedded = *embedded;
+            }
             fuse(&scored, sem)
         }
         None => scored,
@@ -495,6 +544,25 @@ pub fn retrieve_with(
         })
         .collect();
     Ok(out)
+}
+
+/// The note behind each rank, deduplicated, so a list of a hundred passages
+/// reads as the handful of notes it actually came from.
+///
+/// Cut at [`FUSION_DEPTH`] passages — not to keep the answer short, but because
+/// that is exactly the window fusion looks at. A note ranked below it was not
+/// dropped by fusion or by the cap; fusion never saw it. Reporting further
+/// would suggest a near miss where there was none.
+fn name_ranks<T: HasPath>(ranked: &[(f32, usize)], of: &[T]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    ranked
+        .iter()
+        .take(FUSION_DEPTH)
+        .filter_map(|(_, i)| {
+            let path = of[*i].path();
+            seen.insert(path).then(|| path.to_string())
+        })
+        .collect()
 }
 
 /// Take the best `limit`, but not more than [`MAX_PER_NOTE`] from any one note
@@ -554,13 +622,16 @@ pub fn embedding_text(path: &str, chunk: &Chunk) -> String {
     }
 }
 
-/// Cosine of every passage against the query, as a ranking. `None` when the
-/// model could not answer, which leaves the search lexical rather than empty.
+/// Cosine of every passage against the query, as a ranking, and how many of
+/// those passages the model had an answer for.
+///
+/// `None` when the model could not answer at all, which leaves the search
+/// lexical rather than empty.
 fn semantic_ranking(
     model: &dyn Similarity,
     query: &str,
     texts: &[String],
-) -> Option<Vec<(f32, usize)>> {
+) -> Option<(Vec<(f32, usize)>, usize)> {
     let q = model.embed_query(query).ok()?;
     let vectors = model.embed_passages(texts).ok()?;
     // A model that returns the wrong number of vectors is broken in a way that
@@ -568,13 +639,22 @@ fn semantic_ranking(
     if vectors.len() != texts.len() {
         return None;
     }
-    Some(
+    // An all-zero vector is not a position, it is a blank: a cache asked for a
+    // passage it never encoded hands one back rather than stalling the query.
+    // It scores zero against everything, so counting them is the only way to
+    // tell "not indexed" from "not related".
+    let embedded = vectors
+        .iter()
+        .filter(|v| v.iter().any(|x| *x != 0.0))
+        .count();
+    Some((
         vectors
             .iter()
             .enumerate()
             .map(|(i, v)| (cosine(&q, v), i))
             .collect(),
-    )
+        embedded,
+    ))
 }
 
 fn cosine(a: &[f32], b: &[f32]) -> f32 {
@@ -1199,5 +1279,168 @@ mod tests {
         let decomposed = "u\u{308}ber";
         assert_ne!(composed, decomposed);
         assert_eq!(tokenize(composed), tokenize(decomposed));
+    }
+
+    // ---- The explanation ----
+
+    #[test]
+    fn the_explanation_keeps_the_two_halves_apart() {
+        // The question the diagnostic exists for. "Beglaubigung" is nowhere in
+        // this vault, so words cannot reach Signieren.md at all; meaning can.
+        // If the two lists ever came back the same, the report would be
+        // describing the fused order and could not tell the halves apart.
+        let dir = fixture("explainhalves");
+        let mut report = Explanation::default();
+        let got = retrieve_explained(
+            &dir,
+            "beglaubigung durch den hersteller",
+            5,
+            Some(&ToyModel),
+            Some(&mut report),
+        )
+        .unwrap();
+        assert!(got.semantic);
+        assert_eq!(
+            report.meaning.first().map(String::as_str),
+            Some("Signieren.md"),
+            "meaning: {:?}",
+            report.meaning
+        );
+        assert!(
+            !report.lexical.contains(&"Signieren.md".to_string()),
+            "words should not have reached it: {:?}",
+            report.lexical
+        );
+    }
+
+    #[test]
+    fn the_explanation_reaches_past_what_came_back() {
+        // Its whole use is answering where a note landed when it did *not*
+        // make the result. A report cut to `limit` could never do that.
+        let dir = fixture("explaindepth");
+        let mut report = Explanation::default();
+        let got = retrieve_explained(
+            &dir,
+            "farbe rot notarisierung",
+            1,
+            Some(&ToyModel),
+            Some(&mut report),
+        )
+        .unwrap();
+        assert_eq!(got.passages.len(), 1);
+        assert!(
+            report.lexical.len() > 1 && report.meaning.len() > 1,
+            "lexical {:?}, meaning {:?}",
+            report.lexical,
+            report.meaning
+        );
+    }
+
+    #[test]
+    fn the_explanation_counts_the_passages_the_model_answered_for() {
+        // The confound that would otherwise make the meaning half unreadable.
+        // Queries look vectors up rather than computing them, so a passage the
+        // indexing run never reached comes back blank and scores zero against
+        // everything — which in the ranking looks exactly like a model that
+        // found nothing. One number separates the two.
+        struct Answers;
+        impl Similarity for Answers {
+            fn id(&self) -> &str {
+                "answers"
+            }
+            fn embed_query(&self, _: &str) -> Result<Vec<f32>, String> {
+                Ok(vec![1.0, 0.0])
+            }
+            fn embed_passages(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+                Ok(vec![vec![1.0, 0.0]; texts.len()])
+            }
+        }
+        struct HalfIndexed;
+        impl Similarity for HalfIndexed {
+            fn id(&self) -> &str {
+                "half"
+            }
+            fn embed_query(&self, _: &str) -> Result<Vec<f32>, String> {
+                Ok(vec![1.0, 0.0])
+            }
+            fn embed_passages(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+                // Blanks for everything from one note, as a cache does for a
+                // note an interrupted run never got to.
+                Ok(texts
+                    .iter()
+                    .map(|t| {
+                        if t.contains("Signieren") {
+                            vec![0.0, 0.0]
+                        } else {
+                            vec![1.0, 0.0]
+                        }
+                    })
+                    .collect())
+            }
+        }
+
+        let dir = fixture("explaincoverage");
+        let mut full = Explanation::default();
+        retrieve_explained(&dir, "notarisierung", 5, Some(&Answers), Some(&mut full)).unwrap();
+        assert!(full.passages > 0);
+        assert_eq!(
+            full.embedded, full.passages,
+            "a model that answers for everything must read as complete"
+        );
+
+        let mut holes = Explanation::default();
+        retrieve_explained(
+            &dir,
+            "notarisierung",
+            5,
+            Some(&HalfIndexed),
+            Some(&mut holes),
+        )
+        .unwrap();
+        assert_eq!(holes.passages, full.passages);
+        assert!(
+            holes.embedded < holes.passages,
+            "{} of {} reported as embedded",
+            holes.embedded,
+            holes.passages
+        );
+    }
+
+    #[test]
+    fn the_explanation_stops_where_fusion_stops() {
+        // Beyond the fusion window a rank is not a near miss, it is a place
+        // nothing ever looked. Reporting it would invite reading a hundredth
+        // place as "almost".
+        let dir = tmp_vault("explainwindow");
+        for i in 0..(FUSION_DEPTH + 20) {
+            write(
+                &dir,
+                &format!("Notiz {i}.md"),
+                "Die Notarisierung wartet.
+",
+            );
+        }
+        let mut report = Explanation::default();
+        retrieve_explained(&dir, "notarisierung", 5, None, Some(&mut report)).unwrap();
+        assert_eq!(
+            report.lexical.len(),
+            FUSION_DEPTH,
+            "reported {} notes of {} scoring",
+            report.lexical.len(),
+            FUSION_DEPTH + 20
+        );
+    }
+
+    #[test]
+    fn without_a_model_the_meaning_half_is_empty_rather_than_copied() {
+        // An empty list says "not measured". A copy of the lexical one would
+        // read as "the model agreed", which is the opposite of the truth.
+        let dir = fixture("explainlexical");
+        let mut report = Explanation::default();
+        retrieve_explained(&dir, "notarisierung", 5, None, Some(&mut report)).unwrap();
+        assert!(!report.lexical.is_empty());
+        assert!(report.meaning.is_empty());
+        assert_eq!(report.embedded, 0);
+        assert!(report.passages > 0, "the vault was still scanned");
     }
 }

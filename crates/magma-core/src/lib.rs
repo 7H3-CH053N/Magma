@@ -31,7 +31,8 @@ pub use links::{
 };
 pub use related::{related_notes, RelatedNote};
 pub use retrieval::{
-    chunk_note, embedding_text, retrieve, retrieve_with, Chunk, Passage, Retrieval, Similarity,
+    chunk_note, embedding_text, retrieve, retrieve_explained, retrieve_with, Chunk, Explanation,
+    Passage, Retrieval, Similarity,
 };
 pub use vault::{
     append_note, create_folder, create_note, create_note_in, delete_folder, delete_note,
