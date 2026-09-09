@@ -44,7 +44,9 @@ pub struct ModelSpec {
     /// fed to the model does not make Magma fetch half a gigabyte it already
     /// has.
     pub weights_dir: &'static str,
-    /// Roughly what the download costs, for telling the user before they start.
+    /// The fallback size, for when the server will not say what a download
+    /// costs. [`probe_size`] asks it; this is only what stands in when that
+    /// fails, and a figure here may never have been checked against anything.
     pub approx_bytes: u64,
 }
 
@@ -64,6 +66,9 @@ pub const DEFAULT_MODEL: ModelSpec = ModelSpec {
     // since the whole note path was measured on a real vault and found to push
     // a short passage from rank 2 to rank 77. See `magma_core::embedding_text`.
     id: "multilingual-e5-small-t256-h",
+    // Unverified, unlike the reranker's below: this one was guessed before
+    // there was any way to ask, and by the time there was, the model was long
+    // downloaded and the panel no longer asks about it.
     weights_dir: "multilingual-e5-small",
     approx_bytes: 471_000_000,
 };
@@ -83,11 +88,11 @@ pub const RERANK_MODEL: ModelSpec = ModelSpec {
     revision: "main",
     id: "mmarco-mminilmv2-l12-t320",
     weights_dir: "mmarco-mMiniLMv2-L12",
-    // A guess, and labelled as one: huggingface.co could not be reached from
-    // where this was written, so nothing here was verified. Do not show this
-    // number to anyone — call [`probe_size`], which asks the server, and fall
-    // back to this only when the network will not answer.
-    approx_bytes: 470_000_000,
+    // Measured on a real machine: 650 MB, against the 470 guessed here first —
+    // thirty-eight percent out, which is why the panel asks [`probe_size`]
+    // rather than reading this. It is the fallback for when the network will
+    // not answer, nothing more.
+    approx_bytes: 650_000_000,
 };
 
 /// The two names a set of weights may go by.
