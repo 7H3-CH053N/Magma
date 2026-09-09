@@ -891,9 +891,20 @@ export default function Settings({
                 </div>
               )}
               {indexDone !== null && !indexBusy && (
-                <p className="mt-2 text-xs text-green-600 dark:text-green-400">
-                  {t("settings.indexDone", { count: String(indexDone) })}
-                </p>
+                indexDone === 0 ? (
+                  // Not a success. A vault the user just pointed at holding no
+                  // passages is the most informative thing this can report, and
+                  // it has to name the folder it read — the app's open vault and
+                  // the one in the settings file are not always the same, and a
+                  // green "0 indexed" hides exactly that.
+                  <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                    {t("settings.indexEmpty", { vault: vault ?? "?" })}
+                  </p>
+                ) : (
+                  <p className="mt-2 text-xs text-green-600 dark:text-green-400">
+                    {t("settings.indexDone", { count: String(indexDone) })}
+                  </p>
+                )
               )}
               {modelErr && (
                 <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">{modelErr}</p>
