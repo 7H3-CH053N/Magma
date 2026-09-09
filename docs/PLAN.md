@@ -404,11 +404,20 @@ gefunden. Was jetzt?" liest sich wie ein Sicherheitsvorfall und ist eine
 Bau-Geschichte. Der Re-Ranker hat die Notiz zurückgewiesen und Notizen über
 Prompt Injection geliefert — für die gestellte Frage die bessere Antwort.
 
-Nebenbei: Das Vorzeichen des Logits trägt Information. In der geglückten Suche
-gewann die richtige Passage mit −0,58 vor −1,7; in der ungültigen lag das ganze
-Feld zwischen −3,5 und −4,1. Ein Ergebnis, das durchweg tief im Negativen liegt,
-heißt „im Vault steht die Antwort nicht". Das wird nicht eingebaut — die Zahl
-steht im Ergebnis, und wer sie liest, sieht es.
+Nebenbei, und schärfer als zuerst notiert: Nicht das **Vorzeichen** des Logits
+trägt die Information, sondern der **Abstand** zum Rest.
+
+| Frage | Spitze | dahinter | traf zu |
+|---|---|---|---|
+| „Was sagte Musk in Davos 2026?" | +7,12 | +1,20 | ja |
+| „Wer hat mitgeholfen?" | −0,58 | −1,7 | ja |
+| die ungültige Frage | −3,5 | −4,1 | nichts passte |
+
+Die mittlere Zeile ist der Grund, hier keinen Schwellwert einzubauen: Eine Regel
+„negativ heißt nichts gefunden" hätte bei null geschnitten und die *richtige*
+Antwort verworfen. Ein Ergebnis ohne Abstand nach oben heißt „im Vault steht die
+Antwort nicht" — und das steht als Zahl im Ergebnis, wo es jeder liest, statt
+als erfundene Grenze im Code.
 
 **Phase 4 — Zugang für beliebige Modelle, lokal.** Über stdio funktioniert das
 heute schon mit allem, was MCP spricht und auf demselben Rechner läuft, also
