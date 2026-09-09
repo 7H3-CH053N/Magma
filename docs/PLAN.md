@@ -329,6 +329,21 @@ nichts — im Gegenteil: Wörter finden Namen, Bedeutung findet Bedeutung. Dass
 `embedding_text` den Dateinamen trug, war eine per Analogie von der einen auf
 die andere Seite kopierte Reparatur, nie eine gemessene.
 
+### Ergebnis nach der Umstellung
+
+Neu indiziert, 7082 von 7082 Passagen, dieselbe Frage wie vorher:
+
+- „Mitgewirkt" auf **semantischem Rang 1** statt 77. Die Schätzung erster
+  Ordnung hatte 2 gesagt, lag also leicht zu vorsichtig.
+- **Lexikalischer Rang 4935.** Die Wortsuche findet diese Passage praktisch
+  nicht; alles, was sie nach vorn bringt, kommt aus der Bedeutungshälfte. Das
+  ist die Lücke aus Punkt 2 oben, zum ersten Mal messbar geschlossen.
+- Im Ergebnis selbst steht sie auf **Rang 4 von acht**, vorher gar nicht.
+  Darüber stehen drei Passagen, die *beide* Hälften finden — RRF hebt
+  Übereinstimmung über einen Fund aus nur einer Liste, und das ist so gewollt.
+- Gegentest `Alexander Mut.md`: semantisch **und** lexikalisch weiter Rang 1.
+  Der Umbau hat nichts eingetauscht.
+
 Möglich wurde das durch `explain_note`: Es nimmt eine Notiz entgegen und meldet
 für jede ihrer Passagen Rang und Wert in beiden Hälften, aus wie vielen, **ohne
 Abschnitt**. Ohne das sah „knapp hinter dem Fenster" genauso aus wie „nirgends

@@ -40,6 +40,19 @@ neu kompilierter Regex liefert dasselbe nur siebzigmal langsamer. „CI grün"
 heißt, es kompiliert und die vorhandenen Tests laufen. Es heißt nicht, es ist
 richtig.
 
+Zwei Sonderformen, beide hier passiert:
+
+**Eine Reparatur gilt nur auf der Seite, auf der sie gemessen wurde.** Der
+Dateiname-Kontext war gegen einen echten Fehler der Wortsuche gebaut und wurde
+per Analogie auf die Embedding-Seite kopiert. Dort hat er eine Passage von Rang
+2 auf Rang 77 gedrückt — sieben Monate lang unbemerkt, weil kein Test die
+Reihenfolge prüft.
+
+**Wenn eine Änderung nur die Reihenfolge verschiebt und nicht die Werte, sieht
+niemand etwas.** Die Kosinuswerte lagen über alle Varianten zwischen 0,814 und
+0,843. Drei Hundertstel, fünfundsiebzig Ränge. Wer auf die Zahlen schaut, sieht
+nichts Auffälliges.
+
 Daraus die Regel: **Bei jedem Fix dieser Art nachweisen, dass der neue Test
 ohne den Fix umfällt.** Sonst ist es ein Test, der nichts prüft. Und nach dem
 Einfügen in eine Testdatei die Testzahl *und* die Namensliste prüfen, nicht nur
