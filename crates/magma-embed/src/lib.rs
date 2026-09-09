@@ -185,6 +185,28 @@ pub fn download_size(spec: &ModelSpec) -> Option<u64> {
     probe_size(spec, names)
 }
 
+/// What an indexing run saw, stage by stage.
+///
+/// Returned rather than a bare count because a count of zero is the one answer
+/// that explains nothing. A vault of nine hundred notes indexed no passages
+/// once, and from the outside "0" was indistinguishable between the listing
+/// coming back empty, every file being unreadable, and the chunker producing
+/// nothing — three faults with three different repairs. These four numbers
+/// separate them without another round of guessing.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexReport {
+    /// Notes the vault listed.
+    pub notes: usize,
+    /// Of those, how many gave back no text at all.
+    pub unreadable: usize,
+    /// Of the unreadable, how many are cloud placeholders rather than empty or
+    /// refused — the difference between "not on this disk" and "not allowed".
+    pub offline: usize,
+    /// Passages the notes were cut into, which is what gets encoded.
+    pub passages: usize,
+}
+
 /// How far along indexing is, for a progress bar.
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -203,10 +225,12 @@ pub fn index_vault(
     app_data: &Path,
     vault: &Path,
     on_progress: &mut dyn FnMut(IndexProgress),
-) -> Result<usize, String> {
+) -> Result<IndexReport, String> {
     let model = open(app_data, vault)?.ok_or("the model has not been downloaded yet")?;
     discard_superseded(app_data, vault);
-    let texts = passage_texts(vault).map_err(|e| format!("cannot read the vault: {e}"))?;
+    let (mut report, texts) =
+        passage_texts(vault).map_err(|e| format!("cannot read the vault: {e}"))?;
+    report.passages = texts.len();
     let total = texts.len();
 
     // Drop vectors for passages that no longer exist, or the file only grows.
@@ -272,7 +296,7 @@ pub fn index_vault(
         model.save_if_due()?;
     }
     model.save()?;
-    Ok(total)
+    Ok(report)
 }
 
 /// How many passages are encoded side by side.
@@ -296,18 +320,33 @@ const INDEX_BATCH: usize = 4;
 ///
 /// It has to be the *same* text, or the cache keys will not match and the
 /// indexing run would leave a query no better off than before.
-fn passage_texts(vault: &Path) -> std::io::Result<Vec<String>> {
+fn passage_texts(vault: &Path) -> std::io::Result<(IndexReport, Vec<String>)> {
     let mut out = Vec::new();
-    for note in magma_core::list_notes(vault)? {
-        let content = magma_core::vault::read_for_scan(&vault.join(&note.path));
+    let notes = magma_core::list_notes(vault)?;
+    let mut report = IndexReport {
+        notes: notes.len(),
+        unreadable: 0,
+        offline: 0,
+        passages: 0,
+    };
+    for note in notes {
+        let full = vault.join(&note.path);
+        let content = magma_core::vault::read_for_scan(&full);
         if content.is_empty() {
+            // Counted, not swallowed. A note that reads as nothing is either a
+            // cloud placeholder, a file the process may not open, or genuinely
+            // empty, and only the first of those says so about itself.
+            report.unreadable += 1;
+            if magma_core::vault::is_offline(&full) {
+                report.offline += 1;
+            }
             continue;
         }
         for chunk in magma_core::chunk_note(&content) {
             out.push(magma_core::embedding_text(&note.path, &chunk));
         }
     }
-    Ok(out)
+    Ok((report, out))
 }
 
 /// Download the model if it is not there yet.
@@ -437,6 +476,27 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&app);
+    }
+
+    #[test]
+    fn an_indexing_run_reports_what_it_saw_at_each_stage() {
+        // The measurement that ends the guessing. A vault of nine hundred notes
+        // indexed nothing once, and "0" alone could not say whether the listing
+        // came back empty, the files could not be opened, or the chunker
+        // produced nothing.
+        let dir = std::env::temp_dir().join("magma-embed-report");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Voll.md"), "# Voll\n\nHier steht Text.\n").unwrap();
+        std::fs::write(dir.join("Leer.md"), "").unwrap();
+
+        let (report, texts) = passage_texts(&dir).unwrap();
+        assert_eq!(report.notes, 2, "both notes were listed");
+        assert_eq!(report.unreadable, 1, "the empty one gave back no text");
+        assert_eq!(report.offline, 0, "and it is not a cloud placeholder");
+        assert!(!texts.is_empty(), "the other one produced passages");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

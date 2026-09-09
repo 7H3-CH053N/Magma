@@ -251,7 +251,10 @@ const INDEX_PROGRESS_EVENT: &str = "index-progress";
 
 /// Encode every passage of the vault, so searching stays a lookup.
 #[tauri::command]
-async fn index_vault(app: tauri::AppHandle, vault: String) -> Result<usize, String> {
+async fn index_vault(
+    app: tauri::AppHandle,
+    vault: String,
+) -> Result<magma_embed::IndexReport, String> {
     let dir = app_data_dir().ok_or("no application data folder")?;
     tauri::async_runtime::spawn_blocking(move || {
         magma_embed::index_vault(&dir, &PathBuf::from(&vault), &mut |p| {

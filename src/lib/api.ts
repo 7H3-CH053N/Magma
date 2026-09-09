@@ -614,9 +614,24 @@ export async function onModelProgress(
 
 export type IndexProgress = { done: number; total: number };
 
+/**
+ * What an indexing run saw, stage by stage.
+ *
+ * A bare count of zero explains nothing: an empty listing, unreadable files and
+ * a chunker producing nothing all look the same from outside, and they want
+ * different repairs.
+ */
+export type IndexReport = {
+  notes: number;
+  unreadable: number;
+  /** Of the unreadable, those that are cloud placeholders. */
+  offline: number;
+  passages: number;
+};
+
 /** Encode every passage of the vault. Minutes on a real vault, once. */
-export async function indexVault(vault: string): Promise<number> {
-  return invoke<number>("index_vault", { vault });
+export async function indexVault(vault: string): Promise<IndexReport> {
+  return invoke<IndexReport>("index_vault", { vault });
 }
 
 export async function onIndexProgress(

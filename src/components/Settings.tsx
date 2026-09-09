@@ -32,6 +32,7 @@ import {
   onIndexProgress,
   type IndexProgress,
   type DownloadSizes,
+  type IndexReport,
   type ModelStatus,
   type ModelProgress,
   type AppUpdate,
@@ -165,7 +166,7 @@ export default function Settings({
 
   const [indexBusy, setIndexBusy] = useState(false);
   const [indexProg, setIndexProg] = useState<IndexProgress | null>(null);
-  const [indexDone, setIndexDone] = useState<number | null>(null);
+  const [indexDone, setIndexDone] = useState<IndexReport | null>(null);
   // Start time and where the bar stood then, so the estimate is built from this
   // run's own rate rather than from passages already in the cache.
   const [indexStart, setIndexStart] = useState<{ at: number; done: number } | null>(null);
@@ -891,18 +892,25 @@ export default function Settings({
                 </div>
               )}
               {indexDone !== null && !indexBusy && (
-                indexDone === 0 ? (
+                indexDone.passages === 0 ? (
                   // Not a success. A vault the user just pointed at holding no
                   // passages is the most informative thing this can report, and
-                  // it has to name the folder it read — the app's open vault and
-                  // the one in the settings file are not always the same, and a
-                  // green "0 indexed" hides exactly that.
+                  // it was dressed up as the happy path. It names the folder it
+                  // read, because the vault the app has open and the one in the
+                  // settings file need not be the same — and it names what it
+                  // saw at each stage, because "0" alone cannot tell an empty
+                  // listing from files it could not open.
                   <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-                    {t("settings.indexEmpty", { vault: vault ?? "?" })}
+                    {t("settings.indexEmpty", { vault: vault ?? "?" })}{" "}
+                    {t("settings.indexSaw", {
+                      notes: String(indexDone.notes),
+                      unreadable: String(indexDone.unreadable),
+                      offline: String(indexDone.offline),
+                    })}
                   </p>
                 ) : (
                   <p className="mt-2 text-xs text-green-600 dark:text-green-400">
-                    {t("settings.indexDone", { count: String(indexDone) })}
+                    {t("settings.indexDone", { count: String(indexDone.passages) })}
                   </p>
                 )
               )}
