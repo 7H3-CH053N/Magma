@@ -110,6 +110,18 @@ pub trait Similarity: Send + Sync {
     /// Embed passages, as one batch: at these sizes a forward pass costs mostly
     /// setup, so one call for many beats many calls for one.
     fn embed_passages(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String>;
+
+    /// Embed passages that were never indexed, computing them now.
+    ///
+    /// [`Self::embed_passages`] may be a cache that only looks things up — a
+    /// query cannot encode a vault inside a tool call — and such a cache
+    /// answers an unknown text with a blank rather than stalling. That is right
+    /// for a query and useless for a measurement, which needs the vector of a
+    /// text that by definition is not in the index. Only the diagnostics use
+    /// this, and only for a handful of passages at a time.
+    fn embed_fresh(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+        self.embed_passages(texts)
+    }
 }
 
 /// One retrievable piece of a note.
@@ -415,16 +427,53 @@ pub struct PassageRank {
     /// False when the model had no vector for this passage, so its zero cosine
     /// means "never indexed" rather than "unrelated".
     pub embedded: bool,
+    /// The same passage measured against the same question with its note path
+    /// *not* prepended, encoded on the spot.
+    ///
+    /// [`embedding_text`] puts the note's name and folders in front of every
+    /// passage, because a body often leaves its subject implicit. On a thirteen
+    /// word passage that is half the text, and cosines in this space sit in a
+    /// band so narrow that a hundredth separates hundreds of ranks. So the
+    /// question is whether the context that rescues short notes is drowning
+    /// them, and it is worth a number: removing it costs a full re-index of
+    /// every passage in the vault.
+    ///
+    /// `None` without a model, or when the model could not answer.
+    pub cosine_text_only: Option<f32>,
+    /// Where [`Self::cosine_text_only`] would place this passage among the
+    /// others as they are now. See [`Meanings::rank_of`] — a first-order
+    /// estimate, since a real change would move every passage, not one.
+    pub rank_if_text_only: Option<usize>,
 }
 
 /// At most this many passages of one note are reported. A diagnostic should
 /// not return a whole note.
 const REPORTED_PASSAGES: usize = 20;
 
-/// A semantic ranking: every passage by cosine against the query, and which of
-/// them the model had a vector for at all. The second half is not optional —
-/// a passage nobody encoded and a passage placed far away both score zero.
-type Meanings = (Vec<(f32, usize)>, Vec<bool>);
+/// What the meaning half produced for one query.
+struct Meanings {
+    /// The query's own vector, kept so a diagnostic can measure another text
+    /// against the same question without encoding it twice.
+    query: Vec<f32>,
+    /// Every passage by cosine, sorted best first once ranking is done.
+    ranked: Vec<(f32, usize)>,
+    /// Which passages the model had a vector for at all. Not optional: a
+    /// passage nobody encoded and a passage placed far away both score zero.
+    embedded: Vec<bool>,
+}
+
+impl Meanings {
+    /// Where a cosine would fall in this ranking, 1-based.
+    ///
+    /// A first-order estimate, and worth saying so: it places one changed
+    /// passage among all the others as they are, while a real change to how
+    /// passages are encoded would move every one of them. Good enough to tell
+    /// "this would be near the top" from "this would barely move", which is
+    /// what it is for.
+    fn rank_of(&self, cosine: f32) -> usize {
+        self.ranked.partition_point(|(c, _)| *c > cosine) + 1
+    }
+}
 
 /// As [`retrieve_with`], also reporting how each half ranked things.
 pub fn retrieve_explained(
@@ -553,9 +602,9 @@ pub fn retrieve_explained(
                 .iter()
                 .map(|c| embedding_text(&c.path, &c.chunk))
                 .collect();
-            semantic_ranking(m, query, &texts).map(|(mut sem, embedded)| {
-                sem.sort_by(tie);
-                (sem, embedded)
+            semantic_ranking(m, query, &texts).map(|mut sem| {
+                sem.ranked.sort_by(tie);
+                sem
             })
         }
         None => None,
@@ -571,18 +620,19 @@ pub fn retrieve_explained(
                 |c| (c.path.as_str(), &c.chunk),
                 &scored,
                 semantic.as_ref(),
+                model,
             );
         }
     }
 
     let ranked: Vec<(f32, usize)> = match &semantic {
-        Some((sem, embedded)) => {
+        Some(sem) => {
             out.semantic = true;
             if let Some(report) = explain.as_mut() {
-                report.meaning = name_ranks(sem, &candidates);
-                report.embedded = embedded.iter().filter(|had| **had).count();
+                report.meaning = name_ranks(&sem.ranked, &candidates);
+                report.embedded = sem.embedded.iter().filter(|had| **had).count();
             }
-            fuse(&scored, sem)
+            fuse(&scored, &sem.ranked)
         }
         None => scored,
     };
@@ -635,6 +685,7 @@ fn passage_ranks<T>(
     parts: impl Fn(&T) -> (&str, &Chunk),
     lexical: &[(f32, usize)],
     semantic: Option<&Meanings>,
+    model: Option<&dyn Similarity>,
 ) -> Vec<PassageRank> {
     let needle = about.to_lowercase();
     // Rank by index, so a passage can be looked up rather than searched for
@@ -644,17 +695,44 @@ fn passage_ranks<T>(
         lex.insert(*idx, (rank + 1, *score));
     }
     let mut sem: HashMap<usize, (usize, f32)> = HashMap::new();
-    if let Some((ranked, _)) = semantic {
-        for (rank, (score, idx)) in ranked.iter().enumerate() {
+    if let Some(m) = semantic {
+        for (rank, (score, idx)) in m.ranked.iter().enumerate() {
             sem.insert(*idx, (rank + 1, *score));
         }
     }
 
-    of.iter()
+    let picked: Vec<(usize, &T)> = of
+        .iter()
         .enumerate()
         .filter(|(_, c)| parts(c).0.to_lowercase().contains(&needle))
         .take(REPORTED_PASSAGES)
-        .map(|(i, c)| {
+        .collect();
+
+    // What the passage would look like to the model without its note path in
+    // front of it. Encoded now, for these few passages only: the whole point is
+    // that this text is not in the index and cannot be looked up.
+    let bare: Vec<Option<f32>> = match (model, semantic) {
+        (Some(m), Some(meanings)) => {
+            let texts: Vec<String> = picked
+                .iter()
+                .map(|(_, c)| parts(c).1.text.clone())
+                .collect();
+            match m.embed_fresh(&texts) {
+                Ok(vectors) if vectors.len() == texts.len() => vectors
+                    .iter()
+                    .map(|v| Some(cosine(&meanings.query, v)))
+                    .collect(),
+                // A model that cannot answer costs a measurement, not a result.
+                _ => vec![None; picked.len()],
+            }
+        }
+        _ => vec![None; picked.len()],
+    };
+
+    picked
+        .into_iter()
+        .zip(bare)
+        .map(|((i, c), bare)| {
             let (path, chunk) = parts(c);
             let (lexical_rank, lexical_score) = match lex.get(&i) {
                 Some((rank, score)) => (Some(*rank), *score),
@@ -676,8 +754,10 @@ fn passage_ranks<T>(
                 meaning_of: sem.len(),
                 cosine,
                 embedded: semantic
-                    .map(|(_, had)| had.get(i).copied().unwrap_or(false))
+                    .map(|m| m.embedded.get(i).copied().unwrap_or(false))
                     .unwrap_or(false),
+                cosine_text_only: bare,
+                rank_if_text_only: bare.zip(semantic).map(|(c, m)| m.rank_of(c)),
             }
         })
         .collect()
@@ -761,14 +841,15 @@ fn semantic_ranking(model: &dyn Similarity, query: &str, texts: &[String]) -> Op
         .iter()
         .map(|v| v.iter().any(|x| *x != 0.0))
         .collect();
-    Some((
-        vectors
+    Some(Meanings {
+        ranked: vectors
             .iter()
             .enumerate()
             .map(|(i, v)| (cosine(&q, v), i))
             .collect(),
         embedded,
-    ))
+        query: q,
+    })
 }
 
 fn cosine(a: &[f32], b: &[f32]) -> f32 {
@@ -1650,6 +1731,98 @@ mod tests {
         assert_eq!(far.cosine, blank.cosine, "both are zero, that is the point");
         assert!(far.embedded, "placed far away, but placed");
         assert!(!blank.embedded, "never encoded, so never placed");
+    }
+
+    #[test]
+    fn the_note_report_measures_the_passage_without_its_path() {
+        // The question this has to settle costs a full re-index of the vault to
+        // act on, so it must not be settled by argument. `embedding_text` puts
+        // the note's path in front of every passage; on a short passage that is
+        // half the text. Whether that helps or drowns it is one number.
+        struct Dilutes;
+        impl Similarity for Dilutes {
+            fn id(&self) -> &str {
+                "dilutes"
+            }
+            fn embed_query(&self, _: &str) -> Result<Vec<f32>, String> {
+                Ok(vec![1.0, 0.0])
+            }
+            fn embed_passages(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+                // On topic along the first axis, everything else along the
+                // second: more surrounding words means a smaller cosine, which
+                // is dilution in its plainest form.
+                Ok(texts
+                    .iter()
+                    .map(|t| {
+                        let lower = t.to_lowercase();
+                        let hits = lower.matches("updater").count() as f32;
+                        vec![hits, word_count(t) as f32]
+                    })
+                    .collect())
+            }
+            fn embed_fresh(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+                self.embed_passages(texts)
+            }
+        }
+
+        // Sized so the answer differs: the competing notes are longer than the
+        // passage alone and shorter than the passage with its path in front,
+        // so the path is exactly what decides whether it wins or loses.
+        let dir = tmp_vault("notebare");
+        for i in 0..(FUSION_DEPTH + 10) {
+            write(
+                &dir,
+                &format!("Kurz {i}.md"),
+                &format!("Updater {}\n", "fuellwort ".repeat(21)),
+            );
+        }
+        write(
+            &dir,
+            "Projekte/Magma/Projekt/Magma 0.1.4.md",
+            &format!(
+                "## Mitgewirkt\n\nDen Updater hat jemand beigesteuert {}\n",
+                "dazu ".repeat(16)
+            ),
+        );
+
+        let mut report = Explanation {
+            about: Some("magma 0.1.4".into()),
+            ..Default::default()
+        };
+        retrieve_explained(&dir, "updater", 5, Some(&Dilutes), Some(&mut report)).unwrap();
+
+        let ranked = report
+            .note
+            .iter()
+            .find(|p| p.heading == "Mitgewirkt")
+            .expect("the passage under the heading asked about");
+        let bare = ranked.cosine_text_only.expect("the model answered");
+        assert!(
+            bare > ranked.cosine,
+            "with path {:.4}, without {bare:.4}",
+            ranked.cosine
+        );
+        assert!(
+            ranked.rank_if_text_only.unwrap() < ranked.meaning_rank.unwrap(),
+            "rank {:?} would become {:?}",
+            ranked.meaning_rank,
+            ranked.rank_if_text_only
+        );
+    }
+
+    #[test]
+    fn without_a_model_there_is_nothing_to_measure_against() {
+        let dir = out_of_window_vault("notebarenone");
+        let mut report = Explanation {
+            about: Some("magma 0.1.4".into()),
+            ..Default::default()
+        };
+        retrieve_explained(&dir, "notarisierung", 5, None, Some(&mut report)).unwrap();
+        let ranked = &report.note[0];
+        // Absent rather than zero: zero is a measurement, and none was made.
+        assert_eq!(ranked.cosine_text_only, None);
+        assert_eq!(ranked.rank_if_text_only, None);
+        assert_eq!(ranked.meaning_rank, None);
     }
 
     #[test]

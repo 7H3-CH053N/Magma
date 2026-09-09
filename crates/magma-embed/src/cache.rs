@@ -214,6 +214,18 @@ impl<S: Similarity> Similarity for Cached<S> {
         self.inner.embed_query(text)
     }
 
+    /// Straight past the cache, in both directions.
+    ///
+    /// Not looked up, because the caller is asking precisely about text that is
+    /// not in the index; and not stored, because these are hypothetical texts —
+    /// keeping them would grow the file with vectors no query will ever ask
+    /// for. This is the one path that encodes while [`Self::lookup_only`] is
+    /// set, which is why it is a separate method rather than a flag: a query
+    /// must never reach it by accident.
+    fn embed_fresh(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+        self.inner.embed_passages(texts)
+    }
+
     fn embed_passages(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
         // Which of these have never been seen. Kept in order, and deduplicated,
         // because a vault happily contains the same paragraph twice.
@@ -567,5 +579,37 @@ mod tests {
         let cache = Cached::open(Counting::new("m"), path.clone());
         cache.save().unwrap();
         assert!(!path.exists(), "an empty cache wrote a file");
+    }
+
+    #[test]
+    fn a_lookup_only_cache_still_answers_a_fresh_measurement() {
+        // The wiring the whole diagnostic hangs on. Queries run against a cache
+        // that only looks things up, because encoding a vault inside a tool
+        // call takes minutes — and an unknown text comes back blank. The
+        // measurement asks about text that is *by definition* not in the index,
+        // so if it went down the same path it would report zeros and read as
+        // "the model places this nowhere", which is the exact false conclusion
+        // this was built to prevent.
+        let path = tmp("freshlookup").join("vectors.bin");
+        let cache = Cached::open(Counting::new("m"), path).lookup_only(true);
+        let text = vec!["nie indiziert".to_string()];
+
+        let looked_up = cache.embed_passages(&text).unwrap();
+        assert!(
+            looked_up[0].iter().all(|x| *x == 0.0),
+            "a query must not encode: {:?}",
+            looked_up[0]
+        );
+
+        let fresh = cache.embed_fresh(&text).unwrap();
+        assert!(
+            fresh[0].iter().any(|x| *x != 0.0),
+            "the measurement must encode: {:?}",
+            fresh[0]
+        );
+
+        // And it stays out of the file: these are hypothetical texts, and no
+        // query will ever ask for them.
+        assert_eq!(cache.len(), 0);
     }
 }
