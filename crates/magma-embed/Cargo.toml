@@ -1,0 +1,16 @@
+[package]
+name = "magma-embed"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+description = "Local sentence embeddings for Magma — the model half of hybrid retrieval, kept out of magma-core so nothing else pays for it."
+
+[dependencies]
+magma-core = { path = "../magma-core" }
+candle-core = "0.9"
+candle-nn = "0.9"
+candle-transformers = "0.9"
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
+ureq = { version = "2", default-features = false, features = ["tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

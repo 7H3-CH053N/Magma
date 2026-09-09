@@ -557,4 +557,88 @@ export async function installAppUpdate(
   await relaunch();
 }
 
+/** What the settings panel knows about semantic search. */
+export type ModelStatus = {
+  /** True when the weights are on disk and retrieval can rank meaning. */
+  ready: boolean;
+  model: string;
+  /** The reranker is a separate download and answers separately. */
+  rerankReady: boolean;
+  rerankModel: string;
+};
+
+/**
+ * What each download would cost, asked of the server rather than guessed.
+ *
+ * Separate from {@link ModelStatus} because it goes over the network and the
+ * status must not: the status decides which controls appear, so it has to
+ * answer at once. Either figure is absent when the server would not say, and
+ * the panel then leaves the size unstated instead of quoting a number nobody
+ * measured.
+ */
+export type DownloadSizes = {
+  bytes?: number;
+  rerankBytes?: number;
+};
+
+export type ModelProgress = {
+  file: string;
+  done: number;
+  /** Absent when the server did not say how large the file is. */
+  total?: number;
+};
+
+export async function modelStatus(): Promise<ModelStatus> {
+  return invoke<ModelStatus>("model_status");
+}
+
+export async function downloadSizes(): Promise<DownloadSizes> {
+  return invoke<DownloadSizes>("download_sizes");
+}
+
+export async function downloadModel(vault: string): Promise<void> {
+  return invoke<void>("download_model", { vault });
+}
+
+/** Fetch the reranker. Reports through the same progress event. */
+export async function downloadReranker(): Promise<void> {
+  return invoke<void>("download_reranker");
+}
+
+export async function onModelProgress(
+  handler: (p: ModelProgress) => void
+): Promise<() => void> {
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<ModelProgress>("model-progress", (e) => handler(e.payload));
+}
+
+export type IndexProgress = { done: number; total: number };
+
+/**
+ * What an indexing run saw, stage by stage.
+ *
+ * A bare count of zero explains nothing: an empty listing, unreadable files and
+ * a chunker producing nothing all look the same from outside, and they want
+ * different repairs.
+ */
+export type IndexReport = {
+  notes: number;
+  unreadable: number;
+  /** Of the unreadable, those that are cloud placeholders. */
+  offline: number;
+  passages: number;
+};
+
+/** Encode every passage of the vault. Minutes on a real vault, once. */
+export async function indexVault(vault: string): Promise<IndexReport> {
+  return invoke<IndexReport>("index_vault", { vault });
+}
+
+export async function onIndexProgress(
+  handler: (p: IndexProgress) => void
+): Promise<() => void> {
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<IndexProgress>("index-progress", (e) => handler(e.payload));
+}
+
 export { hasTauri };

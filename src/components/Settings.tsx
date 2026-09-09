@@ -23,6 +23,18 @@ import {
   installCodexMcp,
   installMcp,
   mcpConfig,
+  modelStatus,
+  downloadModel,
+  downloadReranker,
+  downloadSizes,
+  onModelProgress,
+  indexVault,
+  onIndexProgress,
+  type IndexProgress,
+  type DownloadSizes,
+  type IndexReport,
+  type ModelStatus,
+  type ModelProgress,
   type AppUpdate,
   type NoteMeta,
   type RemoteConfig,
@@ -133,6 +145,105 @@ export default function Settings({
       codexMcpConfig(vault).then(setCodexConfigText).catch(() => {});
     }
   }, [vault]);
+
+  // Semantic search: the encoder is an opt-in download, so the panel has to say
+  // what it costs before the button and what it is doing during it.
+  const [model, setModel] = useState<ModelStatus | null>(null);
+  const [modelBusy, setModelBusy] = useState(false);
+  const [modelErr, setModelErr] = useState<string | null>(null);
+  const [modelProg, setModelProg] = useState<ModelProgress | null>(null);
+  const [rerankBusy, setRerankBusy] = useState(false);
+  const [sizes, setSizes] = useState<DownloadSizes | null>(null);
+
+  useEffect(() => {
+    if (!hasTauri) return;
+    // Two calls on purpose. The status is a look at the disk and decides which
+    // controls appear, so it must not wait on anything; the sizes go over the
+    // network and arrive when they arrive, or not at all.
+    modelStatus().then(setModel).catch(() => {});
+    downloadSizes().then(setSizes).catch(() => {});
+  }, []);
+
+  const [indexBusy, setIndexBusy] = useState(false);
+  const [indexProg, setIndexProg] = useState<IndexProgress | null>(null);
+  const [indexDone, setIndexDone] = useState<IndexReport | null>(null);
+  // Start time and where the bar stood then, so the estimate is built from this
+  // run's own rate rather than from passages already in the cache.
+  const [indexStart, setIndexStart] = useState<{ at: number; done: number } | null>(null);
+
+  /** Minutes still to go at the rate this run has managed, or null while unknown. */
+  function indexEta(p: IndexProgress): number | null {
+    if (!indexStart) return null;
+    const encoded = p.done - indexStart.done;
+    const seconds = (Date.now() - indexStart.at) / 1000;
+    // Ten seconds of data is not a rate worth quoting.
+    if (encoded <= 0 || seconds < 10) return null;
+    const left = p.total - p.done;
+    return Math.max(1, Math.round(left / (encoded / seconds) / 60));
+  }
+
+  async function runIndex() {
+    if (!vault) return;
+    setIndexBusy(true);
+    setModelErr(null);
+    setIndexDone(null);
+    let stop: (() => void) | null = null;
+    try {
+      stop = await onIndexProgress((p) => {
+        setIndexStart((s) => s ?? { at: Date.now(), done: p.done });
+        setIndexProg(p);
+      });
+      setIndexDone(await indexVault(vault));
+    } catch (e) {
+      setModelErr(String(e));
+    } finally {
+      if (stop) stop();
+      setIndexBusy(false);
+      setIndexProg(null);
+      setIndexStart(null);
+    }
+  }
+
+  async function fetchModel() {
+    if (!vault) return;
+    setModelBusy(true);
+    setModelErr(null);
+    setModelProg(null);
+    let stop: (() => void) | null = null;
+    try {
+      stop = await onModelProgress(setModelProg);
+      await downloadModel(vault);
+      setModel(await modelStatus());
+      downloadSizes().then(setSizes).catch(() => {});
+    } catch (e) {
+      setModelErr(String(e));
+    } finally {
+      // Unsubscribe whatever happened, or a second attempt stacks listeners.
+      if (stop) stop();
+      setModelBusy(false);
+      setModelProg(null);
+    }
+  }
+
+  async function fetchReranker() {
+    setRerankBusy(true);
+    setModelErr(null);
+    setModelProg(null);
+    let stop: (() => void) | null = null;
+    try {
+      stop = await onModelProgress(setModelProg);
+      await downloadReranker();
+      setModel(await modelStatus());
+      downloadSizes().then(setSizes).catch(() => {});
+    } catch (e) {
+      setModelErr(String(e));
+    } finally {
+      // Unsubscribe whatever happened, or a second attempt stacks listeners.
+      if (stop) stop();
+      setRerankBusy(false);
+      setModelProg(null);
+    }
+  }
 
   // WordPress import state.
   const [impUrl, setImpUrl] = useState("");
@@ -735,6 +846,180 @@ export default function Settings({
         {tab === "claude" && (
         /* Connect Claude and Codex through MCP */
         <>
+        <section className="mb-6">
+          <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-magma-muted">
+            {t("settings.semanticTitle")}
+          </label>
+          <p className="mb-2 text-xs leading-relaxed text-magma-muted">
+            {t("settings.semanticBody")}
+          </p>
+
+          {model?.ready ? (
+            <>
+              <p className="mb-2 text-xs text-green-600 dark:text-green-400">
+                {t("settings.semanticReady", { model: model.model })}
+              </p>
+              <p className="mb-2 text-xs leading-relaxed text-magma-muted">
+                {t("settings.indexBody")}
+              </p>
+              <button
+                onClick={runIndex}
+                disabled={indexBusy || !vault}
+                className="rounded-lg border border-black/10 px-3 py-1.5 text-sm text-magma-muted transition hover:border-black/20 hover:text-magma-ink disabled:opacity-50 dark:border-white/15 dark:hover:border-white/30"
+              >
+                {indexBusy ? t("settings.indexBusy") : t("settings.indexRun")}
+              </button>
+              {indexProg && (
+                <div className="mt-2">
+                  <div className="h-1 w-full overflow-hidden rounded bg-black/10 dark:bg-white/10">
+                    <div
+                      className="h-full bg-magma-accent transition-all"
+                      style={{
+                        width: indexProg.total
+                          ? `${Math.round((indexProg.done / indexProg.total) * 100)}%`
+                          : "0%",
+                      }}
+                    />
+                  </div>
+                  <p className="mt-1 text-xs text-magma-muted">
+                    {t("settings.indexProgress", {
+                      done: String(indexProg.done),
+                      total: String(indexProg.total),
+                    })}
+                    {indexEta(indexProg) !== null &&
+                      " · " + t("settings.indexEta", { minutes: String(indexEta(indexProg)) })}
+                  </p>
+                </div>
+              )}
+              {indexDone !== null && !indexBusy && (
+                indexDone.passages === 0 ? (
+                  // Not a success. A vault the user just pointed at holding no
+                  // passages is the most informative thing this can report, and
+                  // it was dressed up as the happy path. It names the folder it
+                  // read, because the vault the app has open and the one in the
+                  // settings file need not be the same — and it names what it
+                  // saw at each stage, because "0" alone cannot tell an empty
+                  // listing from files it could not open.
+                  <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                    {indexDone.notes > 0 && indexDone.offline === indexDone.notes
+                      ? // Every single note a placeholder is not an ambiguous
+                        // state, it is a diagnosis, and it has one remedy. The
+                        // general message below asks the user to check three
+                        // things; this one already knows which of them it is,
+                        // and hedging here sent a real diagnosis down two wrong
+                        // paths before the counts existed.
+                        t("settings.indexAllOffline", {
+                          notes: String(indexDone.notes),
+                          vault: vault ?? "?",
+                        })
+                      : t("settings.indexEmpty", { vault: vault ?? "?" }) +
+                        " " +
+                        t("settings.indexSaw", {
+                          notes: String(indexDone.notes),
+                          unreadable: String(indexDone.unreadable),
+                          offline: String(indexDone.offline),
+                        })}
+                  </p>
+                ) : (
+                  <>
+                    <p className="mt-2 text-xs text-green-600 dark:text-green-400">
+                      {t("settings.indexDone", { count: String(indexDone.passages) })}
+                    </p>
+                    {indexDone.offline > 0 && (
+                      // Success with most of the vault missing is the same trap
+                      // one level up: 29 passages out of 777 notes reads as
+                      // "done" and is not. Whatever was skipped has to be said
+                      // out loud, or the search quietly answers from a fraction
+                      // of the vault and nothing looks wrong.
+                      <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                        {t("settings.indexSkipped", {
+                          offline: String(indexDone.offline),
+                          notes: String(indexDone.notes),
+                        })}
+                      </p>
+                    )}
+                  </>
+                )
+              )}
+              {modelErr && (
+                <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">{modelErr}</p>
+              )}
+            </>
+          ) : !vault ? (
+            <p className="text-xs text-magma-muted opacity-80">{t("settings.codexMcpNoVault")}</p>
+          ) : (
+            <>
+              <button
+                onClick={fetchModel}
+                disabled={modelBusy || !hasTauri}
+                className="rounded-lg border border-black/10 px-3 py-1.5 text-sm text-magma-muted transition hover:border-black/20 hover:text-magma-ink disabled:opacity-50 dark:border-white/15 dark:hover:border-white/30"
+              >
+                {modelBusy
+                  ? t("settings.semanticBusy")
+                  : sizes?.bytes
+                    ? t("settings.semanticDownload", {
+                        size: String(Math.round(sizes.bytes / 1_000_000)),
+                      })
+                    : t("settings.semanticDownloadUnknown")}
+              </button>
+              {modelProg && (
+                <div className="mt-2">
+                  <div className="h-1 w-full overflow-hidden rounded bg-black/10 dark:bg-white/10">
+                    <div
+                      className="h-full bg-magma-accent transition-all"
+                      style={{
+                        width: modelProg.total
+                          ? `${Math.round((modelProg.done / modelProg.total) * 100)}%`
+                          : "100%",
+                      }}
+                    />
+                  </div>
+                  <p className="mt-1 text-xs text-magma-muted">
+                    {t("settings.semanticProgress", {
+                      file: modelProg.file,
+                      done: String(Math.round(modelProg.done / 1_000_000)),
+                      total: modelProg.total
+                        ? String(Math.round(modelProg.total / 1_000_000))
+                        : "?",
+                    })}
+                  </p>
+                </div>
+              )}
+              {modelErr && (
+                <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">{modelErr}</p>
+              )}
+            </>
+          )}
+        </section>
+
+        <section className="mb-6">
+          <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-magma-muted">
+            {t("settings.rerankTitle")}
+          </label>
+          <p className="mb-2 text-xs leading-relaxed text-magma-muted">
+            {t("settings.rerankBody")}
+          </p>
+          {model?.rerankReady ? (
+            <p className="text-xs text-green-600 dark:text-green-400">
+              {t("settings.rerankReady", { model: model.rerankModel })}
+            </p>
+          ) : (
+            <button
+              onClick={fetchReranker}
+              disabled={rerankBusy || modelBusy || !hasTauri}
+              className="rounded-lg border border-black/10 px-3 py-1.5 text-sm text-magma-muted transition hover:border-black/20 hover:text-magma-ink disabled:opacity-50 dark:border-white/15 dark:hover:border-white/30"
+            >
+              {rerankBusy
+                ? t("settings.semanticBusy")
+                : sizes?.rerankBytes
+                  ? t("settings.rerankDownload", {
+                      size: String(Math.round(sizes.rerankBytes / 1_000_000)),
+                    })
+                  : t("settings.rerankDownloadUnknown")}
+            </button>
+          )}
+        </section>
+
         <section className="mb-6">
           <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-magma-muted">
             {t("settings.connectTitle")}

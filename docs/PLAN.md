@@ -130,7 +130,7 @@ statt Waisen-Notizen abzuladen:
 | M7 | Zweites Gehirn im Alltag | Tagesnotizen + Kalender ✅, Vorlagen mit Platzhaltern ✅, Versionsverlauf mit Diff und Wiederherstellen ✅, ausgehende Links + unverlinkte Erwähnungen ✅, ähnliche Notizen (TF-IDF) ✅ | ✅ |
 | M5 | Packaging | Installer (DMG/MSI), CI-Download-Artefakte ✅, Auto-Update, Code Signing | 🟡 |
 | M6 | Online-/Remote-Vault | Vault auf Webserver (WebDAV): Sync in lokalen Cache, Write-Through beim Speichern, Settings-UI, https-Pflicht | 🟡 erste Version |
-| M8 | Lokales RAG | Index + Watcher, Passagen statt ganzer Notizen, hybride Rangliste, lokale Embeddings, `retrieve` über MCP. Bleibt vollständig lokal. | ⬜ geplant |
+| M8 | Lokales RAG | Index + Watcher, Passagen statt ganzer Notizen, hybride Rangliste, lokale Embeddings, `retrieve` über MCP. Bleibt vollständig lokal. | 🟡 Phase 2 fertig |
 
 ## M8 — Lokales RAG
 
@@ -196,7 +196,10 @@ abgeleitete Information, nie die Quelle.
 Jede Phase ist für sich nützlich. Wer nach Phase 2 aufhört, hat trotzdem etwas
 Besseres als heute.
 
-**Phase 1 — Index, Watcher, Messlatte.** Das ist Issue #18 und die
+**Phase 1 — Index, Watcher, Messlatte.** Die Prüfsammlung steht (siehe unten)
+und läuft als Test in der CI mit; Index und Watcher warten auf die Messung des
+echten Vaults, weil davon abhängt, ob sie überhaupt dringend sind. Das ist
+Issue #18 und die
 Voraussetzung für alles Weitere: In-Memory-Index plus `notify`-Watcher auf
 Dateiänderungen, Notizen werden über einen Hash nur bei echter Änderung neu
 verarbeitet. Schon ohne Embeddings werden Suche und Ähnlichkeit dadurch
@@ -212,12 +215,27 @@ find <vault> -name '*.md' | wc -l
 find <vault> -name '*.md' -print0 | xargs -0 cat | wc -c
 ```
 
-**Phase 2 — Passagen und hybride Rangliste, noch ohne Embeddings.** Notizen an
-Überschriften und Absätzen entlang zerlegen, nicht stur nach Zeichenzahl, mit
-Überlappung an den Schnittstellen. BM25 statt reinem Substring-Match. Neues
-MCP-Werkzeug `retrieve`, das eine Rangliste von Passagen mit Pfad und Position
-zurückgibt statt einer Liste von Dateien. Das allein ist deutlich brauchbarer
-als heute, weil das Modell Kontext bekommt statt Dateinamen.
+**Phase 2 — Passagen und hybride Rangliste, noch ohne Embeddings.** ✅ Notizen
+werden an Überschriften und Absätzen entlang zerlegt, nicht stur nach
+Zeichenzahl, mit Überlappung an den Schnittstellen. BM25 statt reinem
+Substring-Match. Das MCP-Werkzeug `retrieve` gibt eine Rangliste von Passagen
+mit Notiz, Überschrift und Zeile zurück statt einer Liste von Dateien.
+Implementiert in `crates/magma-core/src/retrieval.rs`.
+
+Beim Bauen kam etwas dazu, das in diesem Plan fehlte und wichtiger ist als das
+Synonym-Problem: **deutsche Beugung**. Der Prüfsatz fiel sofort um, weil „wie
+exportiere ich das Zertifikat" eine Notiz mit „die p12 muss aus Meine
+Zertifikate exportiert werden" nicht erreichte. Kein einziges Wort der Frage
+passte. Handgeschriebene Endungsregeln wären dieselbe Falle gewesen wie die
+Stoppwortliste im Begriffsgraphen, also stemmt die Zerlegung jetzt mit Snowball
+(`rust-stemmers`, die vierte Abhängigkeit von `magma-core`).
+
+Was das nachweislich behebt und was nicht, gemessen statt angenommen:
+Substantivformen fallen zusammen (`Zertifikat`/`Zertifikate`/`Zertifikats`,
+`Farbe`/`Farben`), Partizipien auf `-iert` nicht (`exportiere` und
+`exportieren` werden beide zu `exporti`, `exportiert` bleibt stehen), und ein
+Substantiv trifft sein Verb nicht (`Import` gegen `importieren`). Beide Lücken
+sind als Tests festgehalten, damit sie niemand zufällig wiederfindet.
 
 **Phase 3 — Embeddings.** Jetzt erst, und hinter einer Schnittstelle, die es
 noch gar nicht gibt: Der Kommentar in `related.rs` nennt sie `Similarity`, M7
@@ -225,6 +243,181 @@ oben nennt sie `RelatedNote`, tatsächlich existiert keine von beiden. Diese
 Phase legt sie an. Semantische Treffer **ergänzen** die lexikalischen, sie
 ersetzen sie nicht: Reine Vektorsuche ist bei Eigennamen, Codebezeichnern und
 exakten Begriffen schlechter als Volltext, und beides steht in echten Notizen.
+
+Ob die Embeddings einem echten deutschen Vault etwas bringen, ist damit noch
+nicht beantwortet. Zwei Synonymfragen auf dem echten Vault gingen daneben, und
+eine Rangliste sagt nicht, warum: Ein Treffer kann fehlen, weil das Modell ihn
+nirgends in der Nähe der Frage sah, oder weil es ihn gut platzierte und die
+Fusion oder die Deckelung pro Notiz ihn wieder herauswarf — das verlangt
+entgegengesetzte Reparaturen. Deshalb hat `retrieve` ein `explain`: die beiden
+Ranglisten getrennt, so weit die Fusion überhaupt hinsieht, und davor
+`embedded` von `passages`. Die Zahl steht dort, weil eine Anfrage den Vault
+nicht kodiert, sondern nachschlägt; eine Passage, die der Indexlauf nie
+erreicht hat, kommt als Nullvektor zurück und bekommt gegen alles die Null.
+In der Rangliste sieht das genauso aus wie ein Modell, das nichts gefunden hat.
+Erst wenn `embedded` nahe bei `passages` liegt, ist die Frage nach der Qualität
+der Embeddings überhaupt gestellt.
+
+Gemessen auf dem echten Vault, 852 Notizen, 7082 Passagen:
+
+- `embedded` war 7058. Der Index hat keine Löcher; die Vermutung, an der ich
+  zuerst hing, ist damit widerlegt.
+- Die `meaning`-Liste ist **thematisch richtig** und die `lexical`-Liste ist es
+  nicht. Auf „Wer hat an der automatischen Aktualisierung mitgeholfen?" fand
+  die Wortsuche 45 Blogartikel, die Wortstämme teilen und sonst nichts; das
+  Modell fand n8n Sync-Automation, „Claude, mein neuer Systemadministrator",
+  „dhw Radio Betrieb" — Notizen, in denen etwas automatisch aktualisiert wird,
+  ohne dass das Wort dort steht. Genau die Lücke, für die Phase 3 gebaut wurde.
+- Die eine Notiz, die die Frage beantwortet, stand trotzdem in keiner der
+  beiden Listen. Mit ihren *eigenen* Wörtern gefragt („Updater beigesteuert,
+  Mitgewirkt") steht sie auf Rang 1. Ihr Vektor ist also in Ordnung, und die
+  Kürzung auf 256 Token hat sie nicht verstümmelt.
+
+Gemessen: semantischer Rang **77 von 7082**. Ein größeres Fusionsfenster hätte
+nicht geholfen — bei Tiefe 100 bekäme die Passage 1/138 und läge fusioniert um
+Platz 154, weil RRF einen Treffer, den nur eine Hälfte kennt, zu Recht nicht
+über die Erstplatzierten der anderen hebt.
+
+Der Verdächtige war stattdessen `embedding_text`, also ich selbst: Es stellt
+jeder Passage ihren vollen Notizpfad voran. Bei einer Passage von dreizehn
+Wörtern ist das die Hälfte des kodierten Textes, und die Kosinuswerte liegen so
+eng beieinander, dass 0,0165 in derselben Notiz 644 Ränge ausmachten. Gemessen
+auf dem echten Vault, dieselbe Passage ohne Pfad: **Rang 77 → 6**, und sechs von
+sieben Passagen der Notiz steigen.
+
+Was ein Indexlauf kostet, ist damit auch gemessen und nicht mehr geschätzt:
+**rund 15 Minuten** für 7082 Passagen auf dem Windows-PC, nach den Korrekturen
+an Speicherbudget und Parallelität. Vorher waren es 592 Passagen in 15 Minuten,
+hochgerechnet drei Stunden. Das ist die Zahl, gegen die jede Änderung an
+`embedding_text` oder an der Modell-ID abzuwägen ist: teuer genug, um sie nicht
+nebenbei zu machen, billig genug, um sie zu machen, wenn eine Messung sie
+rechtfertigt.
+
+Der Pfad kam trotzdem nicht ersatzlos weg — er wurde selbst gegen einen
+gemessenen Fehler eingebaut (`Alexander Mut.md`, deren Thema nur im Dateinamen
+steht). Weil eine Umstellung jede Passage im Vault neu kodiert und eine falsche
+Wahl das zweimal kostet, hat `explain_note` alle Kandidaten auf einmal gemessen.
+Zwei Notizen, zwei Fragen, Rang von 7082:
+
+| vor der Passage | „Mitgewirkt", 13 Wörter | `Alexander Mut`, 13 Wörter |
+|---|---|---|
+| nur die Überschrift | **2** | **1** |
+| nichts | 6 | 35 |
+| Notizname + Überschrift | 31 | 1 |
+| voller Pfad + Überschrift (bis dahin) | 77 | 1 |
+
+**Die Leiter ist nicht monoton, und das ist der Befund.** Ein Wort Überschrift
+schlägt gar keinen Kontext; acht Wörter Pfad machen es viel schlechter. Es geht
+nicht um die Menge, sondern darum, was das Label beschreibt: „Mitgewirkt"
+beschreibt die Passage, `Projekte / Magma / Projekt / Magma 0.1.4` beschreibt
+die Datei — und sagt „Magma" zweimal, bevor die Passage anfängt. Auch der Fall,
+der den Kontext überhaupt erst nötig machte, setzt die Überschrift nach vorn.
+
+Der Kosinus lag dabei über alle vier Varianten zwischen 0,814 und 0,843. Drei
+Hundertstel, fünfundsiebzig Ränge. Deshalb fiel es nie auf: An den Werten sieht
+man es nicht, nur an der Reihenfolge.
+
+`embedding_text` stellt einer Passage daher **ein** Label voran — ihre
+Überschrift, ersatzweise den Notiznamen, wenn sie keine hat. Nie zwei. Der
+Rückfall auf den Namen ist begründet und nicht gemessen; die Begründung ist
+bewusst eng gehalten: Sonst stünde vor der Passage gar nichts, und das ist die
+Zeile „nichts" oben.
+
+Die lexikalische Hälfte behält Name **und** Ordner (`CONTEXT_REPEATS`,
+unverändert). Dass beide Hälften denselben Kontext tragen müssen, folgt aus
+nichts — im Gegenteil: Wörter finden Namen, Bedeutung findet Bedeutung. Dass
+`embedding_text` den Dateinamen trug, war eine per Analogie von der einen auf
+die andere Seite kopierte Reparatur, nie eine gemessene.
+
+### Ergebnis nach der Umstellung
+
+Neu indiziert, 7082 von 7082 Passagen, dieselbe Frage wie vorher:
+
+- „Mitgewirkt" auf **semantischem Rang 1** statt 77. Die Schätzung erster
+  Ordnung hatte 2 gesagt, lag also leicht zu vorsichtig.
+- **Lexikalischer Rang 4935.** Die Wortsuche findet diese Passage praktisch
+  nicht; alles, was sie nach vorn bringt, kommt aus der Bedeutungshälfte. Das
+  ist die Lücke aus Punkt 2 oben, zum ersten Mal messbar geschlossen.
+- Im Ergebnis selbst steht sie auf **Rang 4 von acht**, vorher gar nicht.
+  Darüber stehen drei Passagen, die *beide* Hälften finden — RRF hebt
+  Übereinstimmung über einen Fund aus nur einer Liste, und das ist so gewollt.
+- Gegentest `Alexander Mut.md`: semantisch **und** lexikalisch weiter Rang 1.
+  Der Umbau hat nichts eingetauscht.
+
+Möglich wurde das durch `explain_note`: Es nimmt eine Notiz entgegen und meldet
+für jede ihrer Passagen Rang und Wert in beiden Hälften, aus wie vielen, **ohne
+Abschnitt**. Ohne das sah „knapp hinter dem Fenster" genauso aus wie „nirgends
+in der Nähe", und die beiden verlangen entgegengesetzte Reparaturen.
+
+### Was Phase 3 nicht kann, und was daraus folgt
+
+Drei Gegentests auf dem echten Vault nach der Umstellung: Die Namensfrage
+(`llmfit`) liefert Rang 1 und 2 — die Wortsuche ist unbeschädigt. Zwei
+Detailfragen fallen durch, und zwar identisch: Ziel jeweils auf
+`meaningRank 17` von 7082, in keinem Top-8.
+
+Das ist **nicht** die Fusion. Eine Passage auf semantischem Rang 17 bekommt
+`1/77`; jede Passage auf den semantischen Rängen 1–16 bekommt mindestens
+`1/76`. Sechzehn stehen also allein dadurch davor, egal was die Wortsuche sagt.
+In acht Plätze passt das nie — auch reine Vektorsuche mit `limit 8` verfehlte
+sie.
+
+Der Grund steht in der Liste selbst: Auf die Frage nach dem Bildprompt mit der
+Italienerin mit lockigen schwarzen Haaren waren die ersten sechzehn Treffer
+**sechzehn Bildprompt-Notizen**. Kein Ausreißer. Das Modell trifft das *Thema*
+perfekt und die *Merkmale* gar nicht — die bekannte Eigenschaft kleiner
+Bi-Encoder, die eine Passage einmal vorab in einen Vektor pressen müssen, ohne
+die Frage zu kennen. Und die Wortsuche, die „curly black long hair" sofort
+fände, scheitert an der Sprachgrenze: deutscher Vault, englische Prompts.
+
+**Beide Hälften versagen hier aus jeweils dem Grund, aus dem die andere gebaut
+wurde.** Deshalb eine dritte Stufe: ein Cross-Encoder, der Frage und Passage
+*gemeinsam* liest und die besten fünfzig neu sortiert. Er kann nicht
+vorberechnet werden — das ist der Preis, ein bis drei Sekunden pro Abfrage —
+und er kann nur umsortieren, was die beiden Hälften gefunden haben. Trefferquote
+bleibt ihre Aufgabe, Genauigkeit wird seine.
+
+Eigener Download, unabhängig vom Encoder. Und er zählt erst als bereit, wenn er
+seinen Selbsttest besteht: Ein Cross-Encoder mit vertauschten Labels setzt den
+schlechtesten Kandidaten nach vorn und sieht dabei aus wie ein funktionierendes
+Feature.
+
+Gemessen auf dem echten Vault:
+
+| Frage | vorher | mit Nachsortierung |
+|---|---|---|
+| Bildprompt „Italienerin, lockige schwarze Haare" | nicht unter acht Treffern | **Rang 1** |
+| „Wer hat an der automatischen Aktualisierung mitgeholfen?" | Rang 4 | **Rang 1** |
+| „was ist llmfit" (Wächter, Namensfrage) | Rang 1 und 2 | **unverändert** |
+
+Der Wächter ist der wichtigste der drei. Ein Cross-Encoder fasst *jede* Abfrage
+an, und einer, der Namensfragen verschlechtert, kostet mehr als er bringt.
+
+Der `meaningRank` der Bildprompt-Notiz blieb dabei 17 — der Re-Ranker ändert
+keine Vektoren. Sie stand nicht in den Top 8 und steht jetzt an erster Stelle,
+allein weil ein zweites Modell die fünfzig Kandidaten gelesen hat.
+
+Ein vierter Test war **ungültig, nicht durchgefallen**, und das gehört
+festgehalten, weil es ein wiederkehrender Fehler ist: Die Frage wurde aus einem
+Notiz*titel* abgeleitet, ohne den Inhalt zu kennen. „Ich hab einen API-Key
+gefunden. Was jetzt?" liest sich wie ein Sicherheitsvorfall und ist eine
+Bau-Geschichte. Der Re-Ranker hat die Notiz zurückgewiesen und Notizen über
+Prompt Injection geliefert — für die gestellte Frage die bessere Antwort.
+
+Nebenbei, und schärfer als zuerst notiert: Nicht das **Vorzeichen** des Logits
+trägt die Information, sondern der **Abstand** zum Rest.
+
+| Frage | Spitze | dahinter | traf zu |
+|---|---|---|---|
+| „Was sagte Musk in Davos 2026?" | +7,12 | +1,20 | ja |
+| „Wer hat mitgeholfen?" | −0,58 | −1,7 | ja |
+| die ungültige Frage | −3,5 | −4,1 | nichts passte |
+
+Die mittlere Zeile ist der Grund, hier keinen Schwellwert einzubauen: Eine Regel
+„negativ heißt nichts gefunden" hätte bei null geschnitten und die *richtige*
+Antwort verworfen. Ein Ergebnis ohne Abstand nach oben heißt „im Vault steht die
+Antwort nicht" — und das steht als Zahl im Ergebnis, wo es jeder liest, statt
+als erfundene Grenze im Code.
 
 **Phase 4 — Zugang für beliebige Modelle, lokal.** Über stdio funktioniert das
 heute schon mit allem, was MCP spricht und auf demselben Rechner läuft, also

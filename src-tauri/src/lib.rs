@@ -158,6 +158,134 @@ async fn list_folders(vault: String) -> Result<Vec<String>, String> {
 /// draws the bar; a blog import is otherwise minutes of nothing.
 const IMPORT_PROGRESS_EVENT: &str = "import-progress";
 
+/// The event the model download reports on. Half a gigabyte with no bar is
+/// indistinguishable from a hang, which this project has already learned once.
+const MODEL_PROGRESS_EVENT: &str = "model-progress";
+
+/// What the settings panel needs to know about semantic search.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelStatus {
+    /// True when the weights are on disk and retrieval can rank meaning.
+    ready: bool,
+    /// Which encoder, so the panel can name it rather than say "the model".
+    model: String,
+    /// True when the reranker is on disk. Separate download, separate answer.
+    rerank_ready: bool,
+    rerank_model: String,
+}
+
+#[tauri::command]
+async fn model_status() -> Result<ModelStatus, String> {
+    // Disk only, and deliberately: this decides which controls the panel shows,
+    // so it must answer at once. It used to probe download sizes here, which on
+    // a machine where a model is missing meant up to six HEAD requests before
+    // returning — and until it returned, the panel showed "download the model"
+    // and no index button at all. On a fresh install that is exactly the state,
+    // and it looks precisely like indexing being broken.
+    let dir = app_data_dir().ok_or("no application data folder")?;
+    Ok(ModelStatus {
+        ready: magma_embed::is_ready(&dir),
+        model: magma_embed::DEFAULT_MODEL.id.to_string(),
+        rerank_ready: magma_embed::rerank_ready(&dir),
+        rerank_model: magma_embed::RERANK_MODEL.id.to_string(),
+    })
+}
+
+/// What each download would cost, asked of the server.
+///
+/// Its own command because it goes over the network and [`model_status`] must
+/// not. The panel renders from the status and fills these in when they arrive,
+/// or leaves the size unstated if they never do.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadSizes {
+    bytes: Option<u64>,
+    rerank_bytes: Option<u64>,
+}
+
+#[tauri::command]
+async fn download_sizes() -> Result<DownloadSizes, String> {
+    let dir = app_data_dir().ok_or("no application data folder")?;
+    let ready = magma_embed::is_ready(&dir);
+    let rerank_ready = magma_embed::rerank_ready(&dir);
+    // Nothing to weigh up about a download that already happened.
+    Ok(tauri::async_runtime::spawn_blocking(move || DownloadSizes {
+        bytes: (!ready)
+            .then(|| magma_embed::download_size(&magma_embed::DEFAULT_MODEL))
+            .flatten(),
+        rerank_bytes: (!rerank_ready)
+            .then(|| magma_embed::download_size(&magma_embed::RERANK_MODEL))
+            .flatten(),
+    })
+    .await
+    .unwrap_or(DownloadSizes {
+        bytes: None,
+        rerank_bytes: None,
+    }))
+}
+
+/// Download the reranker, then prove it actually ranks before calling it ready.
+#[tauri::command]
+async fn download_reranker(app: tauri::AppHandle) -> Result<(), String> {
+    let dir = app_data_dir().ok_or("no application data folder")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        magma_embed::fetch_rerank(&dir, &mut |p| {
+            let _ = app.emit(MODEL_PROGRESS_EVENT, p);
+        })?;
+        // A reranker has the last word on the order. One with its labels the
+        // wrong way round would put the worst candidate first and still look
+        // like a working feature, so it does not count as ready until it has
+        // shown it prefers the passage that answers the question.
+        magma_embed::open_rerank(&dir)?
+            .ok_or("the reranker is still not on disk after downloading")?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("download task failed: {e}"))?
+}
+
+/// The event indexing reports on. Encoding a vault takes minutes, and this
+/// project has already learned twice what minutes of silence look like.
+const INDEX_PROGRESS_EVENT: &str = "index-progress";
+
+/// Encode every passage of the vault, so searching stays a lookup.
+#[tauri::command]
+async fn index_vault(
+    app: tauri::AppHandle,
+    vault: String,
+) -> Result<magma_embed::IndexReport, String> {
+    let dir = app_data_dir().ok_or("no application data folder")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        magma_embed::index_vault(&dir, &PathBuf::from(&vault), &mut |p| {
+            let _ = app.emit(INDEX_PROGRESS_EVENT, p);
+        })
+    })
+    .await
+    .map_err(|e| format!("indexing task failed: {e}"))?
+}
+
+/// Download the embedding model, then prove it works before calling it ready.
+#[tauri::command]
+async fn download_model(app: tauri::AppHandle, vault: String) -> Result<(), String> {
+    let dir = app_data_dir().ok_or("no application data folder")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        magma_embed::fetch(&dir, &mut |p| {
+            // Best-effort: a progress event that cannot be delivered must never
+            // abort the download it is only describing.
+            let _ = app.emit(MODEL_PROGRESS_EVENT, p);
+        })?;
+        // Half a gigabyte that loads and returns noise would just make search
+        // quietly worse, so it does not count as ready until it has shown it
+        // can tell two meanings apart.
+        let model = magma_embed::open(&dir, &PathBuf::from(&vault))?
+            .ok_or("the model is still not on disk after downloading")?;
+        magma_embed::self_check(&model)
+    })
+    .await
+    .map_err(|e| format!("download task failed: {e}"))?
+}
+
 /// Import a WordPress blog into a folder, returning how many notes were written.
 #[tauri::command]
 async fn import_wordpress(
@@ -466,6 +594,14 @@ fn djb2(s: &str) -> u64 {
 // localStorage: clearing the app's web data (or a WebView reset on update)
 // would otherwise dump you back on the "open a vault" screen with no idea
 // which folder it was.
+
+/// The folder Magma keeps its own files in: settings, and everything derived
+/// from a vault — the embedding model and its vectors. Never inside the vault:
+/// a folder of markdown has to stay a folder of markdown, and a WebDAV vault or
+/// a second editor would trip over anything else in there.
+fn app_data_dir() -> Option<PathBuf> {
+    app_settings_path().and_then(|p| p.parent().map(|d| d.to_path_buf()))
+}
 
 /// Magma's own config file: `<config dir>/Magma/settings.json`.
 fn app_settings_path() -> Option<PathBuf> {
@@ -951,7 +1087,26 @@ pub fn run() {
             std::env::var("MAGMA_MCP_ALLOW_WRITE").ok().as_deref(),
             Some("0") | Some("false") | Some("no")
         );
-        magma_mcp::serve_stdio(PathBuf::from(vault), allow_write);
+        let vault = PathBuf::from(vault);
+        // Rank meaning alongside words when the user has downloaded the model.
+        // A failure here is not fatal: an MCP server that refuses to start is
+        // far worse than one whose retrieval is lexical, and the result says
+        // which it was through `semantic` on every answer.
+        let model = app_data_dir()
+            .and_then(|dir| magma_embed::open(&dir, &vault).ok().flatten())
+            // Lookup only. A search must never encode: doing it on demand made
+            // the first call after a restart run the whole vault through the
+            // model inside a tool call with a timeout, so the call died and
+            // nothing was kept. Filling the cache is what "index" is for.
+            .map(|m| Box::new(m.lookup_only(true)) as Box<dyn vault::Similarity>);
+        // The reranker, if it is there and if it passes its own check. Same
+        // reasoning: a server that refuses to start is worse than one that
+        // ranks a little less well, and `reranked` on every answer says which
+        // was the case.
+        let rerank = app_data_dir()
+            .and_then(|dir| magma_embed::open_rerank(&dir).ok().flatten())
+            .map(|r| Box::new(r) as Box<dyn vault::Rerank>);
+        magma_mcp::serve_stdio_with(vault, allow_write, model, rerank);
         return;
     }
 
@@ -981,6 +1136,11 @@ pub fn run() {
             move_folder,
             list_folders,
             import_wordpress,
+            model_status,
+            download_sizes,
+            download_model,
+            download_reranker,
+            index_vault,
             save_asset,
             build_graph,
             concept_graph,

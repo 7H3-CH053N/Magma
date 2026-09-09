@@ -23,12 +23,39 @@ struct Server {
     vault: PathBuf,
     allow_write: bool,
     client: Option<String>,
+    /// The embedding model, when one is loaded. `None` keeps retrieval lexical,
+    /// which is the ordinary state of a fresh install.
+    model: Option<Box<dyn core::Similarity>>,
+    /// The reranker, when one is loaded. Independent of the model above: either
+    /// may be present without the other.
+    rerank: Option<Box<dyn core::Rerank>>,
+}
+
+impl Server {
+    fn models(&self) -> core::Models<'_> {
+        core::Models {
+            similarity: self.model.as_deref(),
+            rerank: self.rerank.as_deref(),
+        }
+    }
 }
 
 /// Serve the MCP protocol over stdio until stdin closes. Shared by the
 /// `magma-mcp` binary and the Magma desktop app (`magma --mcp <vault>`), so a
 /// user never has to install a separate server to connect Claude.
 pub fn serve_stdio(vault: PathBuf, allow_write: bool) {
+    serve_stdio_with(vault, allow_write, None, None)
+}
+
+/// As [`serve_stdio`], with an embedding model for `retrieve` to rank meaning
+/// alongside words. The desktop app passes one when the user has downloaded it;
+/// the standalone binary never does, so it stays free of that dependency.
+pub fn serve_stdio_with(
+    vault: PathBuf,
+    allow_write: bool,
+    model: Option<Box<dyn core::Similarity>>,
+    rerank: Option<Box<dyn core::Rerank>>,
+) {
     let client = std::env::var("MAGMA_MCP_CLIENT")
         .ok()
         .map(|c| c.trim().to_lowercase())
@@ -37,6 +64,8 @@ pub fn serve_stdio(vault: PathBuf, allow_write: bool) {
         vault,
         allow_write,
         client,
+        model,
+        rerank,
     };
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
@@ -132,6 +161,50 @@ impl Server {
                 let q = str_arg(args, "query")?;
                 let hits = core::search(v, &q).map_err(io)?;
                 Ok(json!(hits))
+            }
+            // Retrieval, as opposed to search: passages ranked against each
+            // other across the vault, so an answer is built from the right few
+            // hundred words rather than from whole notes that merely match.
+            "retrieve" => {
+                let q = str_arg(args, "query")?;
+                let limit = args
+                    .get("limit")
+                    .and_then(|l| l.as_u64())
+                    .unwrap_or(8)
+                    .clamp(1, 50) as usize;
+                // Off unless asked for. It is a diagnostic, not part of an
+                // answer: it lists notes the result deliberately left out, and
+                // a model reading it as findings would cite them.
+                let about = args
+                    .get("explain_note")
+                    .and_then(|n| n.as_str())
+                    .map(str::trim)
+                    .filter(|n| !n.is_empty())
+                    .map(str::to_string);
+                // Naming a note is itself the request; asking for the detail
+                // and getting no report back would read as "not found".
+                let wants = about.is_some()
+                    || args
+                        .get("explain")
+                        .and_then(|e| e.as_bool())
+                        .unwrap_or(false);
+                let mut report = core::Explanation {
+                    about,
+                    ..Default::default()
+                };
+                let found = core::retrieve_explained(
+                    v,
+                    &q,
+                    limit,
+                    self.models(),
+                    wants.then_some(&mut report),
+                )
+                .map_err(io)?;
+                let mut out = json!(found);
+                if wants {
+                    out["explain"] = json!(report);
+                }
+                Ok(out)
             }
             "read_note" => {
                 let path = str_arg(args, "path")?;
@@ -325,6 +398,20 @@ fn tools_spec() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": { "query": { "type": "string" } },
+                "required": ["query"]
+            }
+        },
+        {
+            "name": "retrieve",
+            "description": "Retrieve the passages of the vault that best answer a question, ranked across every note. Prefer this over search_notes when you are about to answer from the vault: search_notes returns whole notes that contain a word, this returns the specific paragraphs that bear on the question, each with the note, heading and line it came from. Cite those. `offline` counts notes whose contents were not on disk and could not be read, so a low number of results can be explained rather than guessed at. `semantic` says whether meaning was ranked alongside words, `reranked` whether a second model reread the leading candidates; both can be false on a machine where those models are not installed, and the same question then answers differently.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "The question, in the user's own words. Full sentences work better than keywords." },
+                    "limit": { "type": "integer", "description": "How many passages to return. Default 8, maximum 50." },
+                    "explain_note": { "type": "string", "description": "Diagnostic. Part of a note's path, case-insensitive, e.g. 'magma 0.1.4'. Adds 'note' to 'explain': every passage of that note with the rank each half of the ranking actually gave it, out of how many, uncut — the one thing the lists above cannot say, because they stop where fusion stops and a note just outside that window looks the same as one nowhere near. Each passage also carries 'variants': the same passage measured against the same question with each candidate shape of context in front of it — nothing, the heading, the note name and heading, and the full path and heading as used now — with the rank each would give it. Compare the rows to see whether that context is helping the passage or drowning it. Implies explain." },
+                    "explain": { "type": "boolean", "description": "Diagnostic. Adds 'explain' with the notes each half of the ranking found on its own — 'lexical' by word overlap, 'meaning' by embeddings — before the two were fused, best first, as far down as fusion looks, plus 'embedded' of 'passages': how many passages had a vector at all. Read 'embedded' first: well below 'passages' means the vault is only part-indexed, and the 'meaning' list says nothing until that is fixed. Otherwise it tells 'the model never found this note' apart from 'the model found it and fusion dropped it'. These are not results and must not be cited." }
+                },
                 "required": ["query"]
             }
         },
@@ -540,6 +627,8 @@ mod tests {
             vault: v,
             allow_write: true,
             client: Some("test".to_string()),
+            model: None,
+            rerank: None,
         }
     }
 
@@ -686,6 +775,8 @@ mod tests {
             vault: v.clone(),
             allow_write: false,
             client: None,
+            model: None,
+            rerank: None,
         };
         for tool in ["delete_note", "delete_folder", "rename_note"] {
             assert!(
@@ -702,6 +793,120 @@ mod tests {
     }
 
     #[test]
+    fn retrieve_returns_passages_with_provenance() {
+        let v = vault();
+        core::write_note(
+            &v,
+            "Signieren.md",
+            "# Signieren\n\n## Zertifikat\n\nDie p12 kommt aus Meine Zertifikate.\n\n## Notarisierung\n\nApple laesst sich Zeit damit.\n",
+        )
+        .unwrap();
+        let s = srv(v.clone());
+
+        let out = s
+            .call_tool(
+                "retrieve",
+                &json!({ "query": "wo kommt das zertifikat her" }),
+            )
+            .unwrap();
+        let first = &out["passages"][0];
+        assert_eq!(first["path"], "Signieren.md");
+        // Provenance travels with the passage, or a citation cannot be checked.
+        assert_eq!(first["heading"], "Zertifikat");
+        assert!(first["line"].as_u64().unwrap() > 1);
+        // A passage, not the note: the other section stays behind.
+        assert!(!first["text"].as_str().unwrap().contains("Apple"));
+
+        std::fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn retrieve_respects_its_limit() {
+        let v = vault();
+        for i in 0..12 {
+            core::write_note(
+                &v,
+                &format!("N{i}.md"),
+                &format!("# N{i}\n\nEine Notiz ueber Farben.\n"),
+            )
+            .unwrap();
+        }
+        let s = srv(v.clone());
+        let out = s
+            .call_tool("retrieve", &json!({ "query": "farben", "limit": 3 }))
+            .unwrap();
+        assert_eq!(out["passages"].as_array().unwrap().len(), 3);
+        std::fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn retrieve_explains_only_when_asked() {
+        let v = vault();
+        core::write_note(
+            &v,
+            "Signieren.md",
+            "# Signieren\n\nDie p12 kommt aus Meine Zertifikate.\n",
+        )
+        .unwrap();
+        let s = srv(v.clone());
+
+        // The default answer must stay an answer. An extra key full of notes
+        // that were deliberately left out is exactly the kind of thing a model
+        // starts citing.
+        let plain = s
+            .call_tool("retrieve", &json!({ "query": "zertifikate" }))
+            .unwrap();
+        assert!(plain.get("explain").is_none(), "{plain}");
+
+        let explained = s
+            .call_tool(
+                "retrieve",
+                &json!({ "query": "zertifikate", "explain": true }),
+            )
+            .unwrap();
+        let lexical = explained["explain"]["lexical"].as_array().unwrap();
+        assert_eq!(lexical[0], "Signieren.md", "{explained}");
+        // No model in this server, so nothing measured meaning — and that has
+        // to read as "not measured", not as agreement.
+        assert!(explained["explain"]["meaning"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert_eq!(explained["explain"]["embedded"], 0);
+        assert!(explained["explain"]["passages"].as_u64().unwrap() > 0);
+
+        std::fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn naming_a_note_is_enough_to_ask_for_the_detail() {
+        let v = vault();
+        core::write_note(
+            &v,
+            "Projekte/Magma 0.1.4.md",
+            "# Magma 0.1.4\n\n## Mitgewirkt\n\nDen Updater hat jemand beigesteuert.\n",
+        )
+        .unwrap();
+        let s = srv(v.clone());
+
+        // Without `explain: true` beside it. Naming the note is the request,
+        // and an empty answer to it would read as "that note does not exist".
+        let out = s
+            .call_tool(
+                "retrieve",
+                &json!({ "query": "updater", "explain_note": "magma 0.1.4" }),
+            )
+            .unwrap();
+        let note = out["explain"]["note"].as_array().unwrap();
+        assert_eq!(note.len(), 1, "{out}");
+        assert_eq!(note[0]["path"], "Projekte/Magma 0.1.4.md");
+        assert_eq!(note[0]["lexicalRank"], 1);
+        assert!(note[0]["words"].as_u64().unwrap() > 0);
+
+        std::fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
     fn structure_tools_are_advertised() {
         let names: Vec<String> = tools_spec()
             .as_array()
@@ -710,6 +915,7 @@ mod tests {
             .map(|t| t["name"].as_str().unwrap().to_string())
             .collect();
         for expected in [
+            "retrieve",
             "list_folders",
             "list_notes",
             "create_folder",

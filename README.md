@@ -62,6 +62,40 @@ takes two commands and produces exactly these installers.
 Your notes stay `.md` files on your disk. Magma keeps its own bookkeeping (the
 version history) in a hidden `.magma` folder inside the vault, and nothing else.
 
+> **Keep the vault out of iCloud Drive — or at least out of "Optimise Mac
+> Storage".** This is the one setup that breaks Magma quietly, and it looks like
+> a bug in Magma when it happens.
+>
+> When iCloud is short of space it *evicts* file contents and leaves the names
+> behind, flagged `dataless`. Reading such a file makes macOS fetch it, which
+> blocks for as long as that takes — so Magma deliberately does not: a scan
+> across a whole vault would otherwise stall on the first evicted note. It reads
+> them as empty and counts them instead.
+>
+> What that looks like: the sidebar lists every note, because a title falls back
+> to the file name. Opening one works, because opening *one* file downloads it.
+> But indexing reports no passages, and search finds nothing. Nothing appears
+> broken; the notes are simply not on the machine.
+>
+> **`~/Documents` is the trap**, because it looks local. With *Desktop &
+> Documents Folders* switched on in iCloud settings, it is not. To check:
+>
+> ```sh
+> ls -lRO ~/path/to/vault | grep -c dataless
+> ```
+>
+> Anything above `0` is a note whose contents are elsewhere. `brctl download
+> <folder>` queues them (it returns immediately — it does not wait), and
+> `find <folder> -name '*.md' -exec cat {} + > /dev/null` forces the download
+> and blocks until it is done. The lasting fix is *System Settings → Apple
+> Account → iCloud → iCloud Drive → Optimise Mac Storage → off*, or a vault
+> outside iCloud altogether.
+>
+> Magma reports what it skipped rather than hiding it — an indexing run says how
+> many notes were placeholders, and every `retrieve` carries an `offline` count.
+> The same applies on Windows to OneDrive's *Files On-Demand*, which Magma
+> detects the same way.
+
 ---
 
 ## Why Magma
