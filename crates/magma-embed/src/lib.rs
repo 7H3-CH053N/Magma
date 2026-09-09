@@ -50,6 +50,21 @@ pub fn cache_path(app_data: &Path, vault: &Path) -> PathBuf {
         .join(format!("{}-{}.bin", DEFAULT_MODEL.id, vault_key(vault)))
 }
 
+/// A short, stable name for a vault path, for the cache file it owns.
+///
+/// FNV-1a in shape, and **not** FNV-1a in fact: the multiplier below is
+/// `0x1000_0000_01b3`, while the real prime is `0x100_0000_01b3` — one nibble
+/// shorter. That was a typo, and it stays. Nothing here needs FNV's properties;
+/// it needs a deterministic name, and it has one. Correcting the constant would
+/// rename every existing cache file, orphaning every index anyone has built —
+/// and orphaning it invisibly, because the cleanup in [`discard_superseded`]
+/// matches on this very suffix and would no longer recognise the old file as
+/// belonging to the vault.
+///
+/// Recorded because it cost an hour once: a cache file name was compared
+/// against a hash computed with the real prime, they differed, and that was
+/// read as evidence that the app had indexed some other folder. It had not.
+/// Verify against this function, never against a reimplementation of FNV.
 fn vault_key(vault: &Path) -> String {
     let key = vault.to_string_lossy();
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
@@ -422,6 +437,20 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&app);
+    }
+
+    #[test]
+    fn a_vaults_cache_name_is_pinned_to_a_known_value() {
+        // Pinned deliberately. The multiplier in `vault_key` is a mistyped FNV
+        // prime, and someone will one day notice and "fix" it — which renames
+        // every cache file on every machine and orphans every index built so
+        // far, silently. This is the test that stops them, and the comment on
+        // `vault_key` says why the typo stays.
+        assert_eq!(
+            vault_key(Path::new("/Users/alexjanuschewsky/Documents/Magma")),
+            "e0ca9f1e047817e3",
+            "the cache file name changed; every existing index would be orphaned"
+        );
     }
 
     #[test]
