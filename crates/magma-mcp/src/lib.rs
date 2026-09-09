@@ -161,11 +161,23 @@ impl Server {
                 // Off unless asked for. It is a diagnostic, not part of an
                 // answer: it lists notes the result deliberately left out, and
                 // a model reading it as findings would cite them.
-                let wants = args
-                    .get("explain")
-                    .and_then(|e| e.as_bool())
-                    .unwrap_or(false);
-                let mut report = core::Explanation::default();
+                let about = args
+                    .get("explain_note")
+                    .and_then(|n| n.as_str())
+                    .map(str::trim)
+                    .filter(|n| !n.is_empty())
+                    .map(str::to_string);
+                // Naming a note is itself the request; asking for the detail
+                // and getting no report back would read as "not found".
+                let wants = about.is_some()
+                    || args
+                        .get("explain")
+                        .and_then(|e| e.as_bool())
+                        .unwrap_or(false);
+                let mut report = core::Explanation {
+                    about,
+                    ..Default::default()
+                };
                 let found = core::retrieve_explained(
                     v,
                     &q,
@@ -383,6 +395,7 @@ fn tools_spec() -> Value {
                 "properties": {
                     "query": { "type": "string", "description": "The question, in the user's own words. Full sentences work better than keywords." },
                     "limit": { "type": "integer", "description": "How many passages to return. Default 8, maximum 50." },
+                    "explain_note": { "type": "string", "description": "Diagnostic. Part of a note's path, case-insensitive, e.g. 'magma 0.1.4'. Adds 'note' to 'explain': every passage of that note with the rank each half of the ranking actually gave it, out of how many, uncut — the one thing the lists above cannot say, because they stop where fusion stops and a note just outside that window looks the same as one nowhere near. Implies explain." },
                     "explain": { "type": "boolean", "description": "Diagnostic. Adds 'explain' with the notes each half of the ranking found on its own — 'lexical' by word overlap, 'meaning' by embeddings — before the two were fused, best first, as far down as fusion looks, plus 'embedded' of 'passages': how many passages had a vector at all. Read 'embedded' first: well below 'passages' means the vault is only part-indexed, and the 'meaning' list says nothing until that is fixed. Otherwise it tells 'the model never found this note' apart from 'the model found it and fusion dropped it'. These are not results and must not be cited." }
                 },
                 "required": ["query"]
@@ -845,6 +858,34 @@ mod tests {
             .is_empty());
         assert_eq!(explained["explain"]["embedded"], 0);
         assert!(explained["explain"]["passages"].as_u64().unwrap() > 0);
+
+        std::fs::remove_dir_all(&v).ok();
+    }
+
+    #[test]
+    fn naming_a_note_is_enough_to_ask_for_the_detail() {
+        let v = vault();
+        core::write_note(
+            &v,
+            "Projekte/Magma 0.1.4.md",
+            "# Magma 0.1.4\n\n## Mitgewirkt\n\nDen Updater hat jemand beigesteuert.\n",
+        )
+        .unwrap();
+        let s = srv(v.clone());
+
+        // Without `explain: true` beside it. Naming the note is the request,
+        // and an empty answer to it would read as "that note does not exist".
+        let out = s
+            .call_tool(
+                "retrieve",
+                &json!({ "query": "updater", "explain_note": "magma 0.1.4" }),
+            )
+            .unwrap();
+        let note = out["explain"]["note"].as_array().unwrap();
+        assert_eq!(note.len(), 1, "{out}");
+        assert_eq!(note[0]["path"], "Projekte/Magma 0.1.4.md");
+        assert_eq!(note[0]["lexicalRank"], 1);
+        assert!(note[0]["words"].as_u64().unwrap() > 0);
 
         std::fs::remove_dir_all(&v).ok();
     }

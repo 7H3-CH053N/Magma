@@ -258,6 +258,27 @@ In der Rangliste sieht das genauso aus wie ein Modell, das nichts gefunden hat.
 Erst wenn `embedded` nahe bei `passages` liegt, ist die Frage nach der Qualität
 der Embeddings überhaupt gestellt.
 
+Gemessen auf dem echten Vault, 852 Notizen, 7082 Passagen:
+
+- `embedded` war 7058. Der Index hat keine Löcher; die Vermutung, an der ich
+  zuerst hing, ist damit widerlegt.
+- Die `meaning`-Liste ist **thematisch richtig** und die `lexical`-Liste ist es
+  nicht. Auf „Wer hat an der automatischen Aktualisierung mitgeholfen?" fand
+  die Wortsuche 45 Blogartikel, die Wortstämme teilen und sonst nichts; das
+  Modell fand n8n Sync-Automation, „Claude, mein neuer Systemadministrator",
+  „dhw Radio Betrieb" — Notizen, in denen etwas automatisch aktualisiert wird,
+  ohne dass das Wort dort steht. Genau die Lücke, für die Phase 3 gebaut wurde.
+- Die eine Notiz, die die Frage beantwortet, stand trotzdem in keiner der
+  beiden Listen. Mit ihren *eigenen* Wörtern gefragt („Updater beigesteuert,
+  Mitgewirkt") steht sie auf Rang 1. Ihr Vektor ist also in Ordnung, und die
+  Kürzung auf 256 Token hat sie nicht verstümmelt.
+
+Bleibt eine Zahl: Stand sie knapp hinter dem Fusionsfenster oder nirgends in
+der Nähe? Beides sieht in einer bei 50 abgeschnittenen Liste gleich aus und
+verlangt entgegengesetzte Reparaturen. Dafür nimmt `explain` jetzt eine Notiz
+entgegen (`explain_note`) und meldet für jede ihrer Passagen Rang und Wert in
+beiden Hälften, aus wie vielen, **ohne Abschnitt**.
+
 **Phase 4 — Zugang für beliebige Modelle, lokal.** Über stdio funktioniert das
 heute schon mit allem, was MCP spricht und auf demselben Rechner läuft, also
 auch mit einem lokalen Modell in LM Studio oder Ollama. Ergänzend ein

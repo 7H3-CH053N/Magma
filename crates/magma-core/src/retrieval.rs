@@ -375,7 +375,56 @@ pub struct Explanation {
     pub embedded: usize,
     /// How many passages there were to rank.
     pub passages: usize,
+    /// Which note to report on in detail. *Input*, set by the caller before
+    /// the call; matched case-insensitively against the note's path as a
+    /// substring, so `magma 0.1.4` finds `Projekte/Magma/Projekt/Magma 0.1.4.md`.
+    ///
+    /// The one thing the two lists above cannot say. They stop at
+    /// [`FUSION_DEPTH`], and a note below that is simply absent — rank 51 and
+    /// rank five thousand look exactly alike, while they mean opposite things:
+    /// a window that is too narrow, or a model that never came close.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub about: Option<String>,
+    /// Every passage of the note named in [`Self::about`], with where each half
+    /// of the ranking actually put it.
+    pub note: Vec<PassageRank>,
 }
+
+/// Where one passage landed in each half, in full, without a cutoff.
+#[derive(Serialize, Debug, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PassageRank {
+    pub path: String,
+    pub heading: String,
+    pub line: usize,
+    /// Words in the passage. The model reads at most 256 tokens, and German
+    /// compounds split generously, so a long passage may have had its tail cut
+    /// *for meaning* while words still saw all of it.
+    pub words: usize,
+    /// Place among the passages words scored at all, best is 1. `None` when the
+    /// query shares no term with it, which is not a bad rank but no rank.
+    pub lexical_rank: Option<usize>,
+    /// How many passages words scored at all.
+    pub lexical_of: usize,
+    pub lexical_score: f32,
+    /// Place among every passage by cosine, best is 1. `None` without a model.
+    pub meaning_rank: Option<usize>,
+    /// How many passages the meaning half ranked, which is all of them.
+    pub meaning_of: usize,
+    pub cosine: f32,
+    /// False when the model had no vector for this passage, so its zero cosine
+    /// means "never indexed" rather than "unrelated".
+    pub embedded: bool,
+}
+
+/// At most this many passages of one note are reported. A diagnostic should
+/// not return a whole note.
+const REPORTED_PASSAGES: usize = 20;
+
+/// A semantic ranking: every passage by cosine against the query, and which of
+/// them the model had a vector for at all. The second half is not optional —
+/// a passage nobody encoded and a passage placed far away both score zero.
+type Meanings = (Vec<(f32, usize)>, Vec<bool>);
 
 /// As [`retrieve_with`], also reporting how each half ranked things.
 pub fn retrieve_explained(
@@ -515,6 +564,15 @@ pub fn retrieve_explained(
     if let Some(report) = explain.as_mut() {
         report.lexical = name_ranks(&scored, &candidates);
         report.passages = candidates.len();
+        if let Some(about) = report.about.clone() {
+            report.note = passage_ranks(
+                &about,
+                &candidates,
+                |c| (c.path.as_str(), &c.chunk),
+                &scored,
+                semantic.as_ref(),
+            );
+        }
     }
 
     let ranked: Vec<(f32, usize)> = match &semantic {
@@ -522,7 +580,7 @@ pub fn retrieve_explained(
             out.semantic = true;
             if let Some(report) = explain.as_mut() {
                 report.meaning = name_ranks(sem, &candidates);
-                report.embedded = *embedded;
+                report.embedded = embedded.iter().filter(|had| **had).count();
             }
             fuse(&scored, sem)
         }
@@ -561,6 +619,66 @@ fn name_ranks<T: HasPath>(ranked: &[(f32, usize)], of: &[T]) -> Vec<String> {
         .filter_map(|(_, i)| {
             let path = of[*i].path();
             seen.insert(path).then(|| path.to_string())
+        })
+        .collect()
+}
+
+/// Where every passage of one note landed in each half, uncut.
+///
+/// The lists above stop at the fusion window because beyond it a rank means
+/// nothing to the result. This does the opposite on purpose: it is asked about
+/// one note, and for that note the difference between just outside the window
+/// and nowhere at all is the whole question.
+fn passage_ranks<T>(
+    about: &str,
+    of: &[T],
+    parts: impl Fn(&T) -> (&str, &Chunk),
+    lexical: &[(f32, usize)],
+    semantic: Option<&Meanings>,
+) -> Vec<PassageRank> {
+    let needle = about.to_lowercase();
+    // Rank by index, so a passage can be looked up rather than searched for
+    // once per candidate.
+    let mut lex: HashMap<usize, (usize, f32)> = HashMap::new();
+    for (rank, (score, idx)) in lexical.iter().enumerate() {
+        lex.insert(*idx, (rank + 1, *score));
+    }
+    let mut sem: HashMap<usize, (usize, f32)> = HashMap::new();
+    if let Some((ranked, _)) = semantic {
+        for (rank, (score, idx)) in ranked.iter().enumerate() {
+            sem.insert(*idx, (rank + 1, *score));
+        }
+    }
+
+    of.iter()
+        .enumerate()
+        .filter(|(_, c)| parts(c).0.to_lowercase().contains(&needle))
+        .take(REPORTED_PASSAGES)
+        .map(|(i, c)| {
+            let (path, chunk) = parts(c);
+            let (lexical_rank, lexical_score) = match lex.get(&i) {
+                Some((rank, score)) => (Some(*rank), *score),
+                None => (None, 0.0),
+            };
+            let (meaning_rank, cosine) = match sem.get(&i) {
+                Some((rank, score)) => (Some(*rank), *score),
+                None => (None, 0.0),
+            };
+            PassageRank {
+                path: path.to_string(),
+                heading: chunk.heading.clone(),
+                line: chunk.line,
+                words: word_count(&chunk.text),
+                lexical_rank,
+                lexical_of: lexical.len(),
+                lexical_score,
+                meaning_rank,
+                meaning_of: sem.len(),
+                cosine,
+                embedded: semantic
+                    .map(|(_, had)| had.get(i).copied().unwrap_or(false))
+                    .unwrap_or(false),
+            }
         })
         .collect()
 }
@@ -622,16 +740,12 @@ pub fn embedding_text(path: &str, chunk: &Chunk) -> String {
     }
 }
 
-/// Cosine of every passage against the query, as a ranking, and how many of
-/// those passages the model had an answer for.
+/// Cosine of every passage against the query, as a ranking, and which of
+/// those passages the model had an answer for at all.
 ///
 /// `None` when the model could not answer at all, which leaves the search
 /// lexical rather than empty.
-fn semantic_ranking(
-    model: &dyn Similarity,
-    query: &str,
-    texts: &[String],
-) -> Option<(Vec<(f32, usize)>, usize)> {
+fn semantic_ranking(model: &dyn Similarity, query: &str, texts: &[String]) -> Option<Meanings> {
     let q = model.embed_query(query).ok()?;
     let vectors = model.embed_passages(texts).ok()?;
     // A model that returns the wrong number of vectors is broken in a way that
@@ -641,12 +755,12 @@ fn semantic_ranking(
     }
     // An all-zero vector is not a position, it is a blank: a cache asked for a
     // passage it never encoded hands one back rather than stalling the query.
-    // It scores zero against everything, so counting them is the only way to
+    // It scores zero against everything, so tracking them is the only way to
     // tell "not indexed" from "not related".
-    let embedded = vectors
+    let embedded: Vec<bool> = vectors
         .iter()
-        .filter(|v| v.iter().any(|x| *x != 0.0))
-        .count();
+        .map(|v| v.iter().any(|x| *x != 0.0))
+        .collect();
     Some((
         vectors
             .iter()
@@ -1404,6 +1518,153 @@ mod tests {
             holes.embedded,
             holes.passages
         );
+    }
+
+    /// Near for anything about notarisation, far for everything else. Enough
+    /// to place one note deliberately outside the fusion window.
+    struct NearNotarisation;
+    impl Similarity for NearNotarisation {
+        fn id(&self) -> &str {
+            "near"
+        }
+        fn embed_query(&self, _: &str) -> Result<Vec<f32>, String> {
+            Ok(vec![1.0, 0.0])
+        }
+        fn embed_passages(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+            Ok(texts
+                .iter()
+                .map(|t| {
+                    if t.to_lowercase().contains("notarisierung") {
+                        vec![1.0, 0.0]
+                    } else {
+                        vec![0.0, 1.0]
+                    }
+                })
+                .collect())
+        }
+    }
+
+    /// A vault where one note is deliberately out of reach: sixty notes answer
+    /// the query by word and by meaning, and the note asked about answers it
+    /// by neither, so it lands past the fusion window on both sides.
+    fn out_of_window_vault(tag: &str) -> std::path::PathBuf {
+        let dir = tmp_vault(tag);
+        for i in 0..(FUSION_DEPTH + 10) {
+            write(
+                &dir,
+                &format!("Notiz {i}.md"),
+                "Die Notarisierung wartet.\n",
+            );
+        }
+        write(
+            &dir,
+            "Projekte/Magma/Projekt/Magma 0.1.4.md",
+            "# Magma 0.1.4\n\n## Mitgewirkt\n\nDen Updater hat jemand anderes beigesteuert.\n",
+        );
+        dir
+    }
+
+    #[test]
+    fn the_note_report_gives_a_rank_the_lists_cannot() {
+        // The measurement the two lists cannot make. They stop at the fusion
+        // window, so a note just outside it and a note nowhere near are both
+        // simply absent — and those mean opposite things: widen the window, or
+        // stop investing in the model. Asked about one note, this says which.
+        let dir = out_of_window_vault("noterank");
+        let mut report = Explanation {
+            about: Some("magma 0.1.4".into()),
+            ..Default::default()
+        };
+        retrieve_explained(
+            &dir,
+            "notarisierung",
+            5,
+            Some(&NearNotarisation),
+            Some(&mut report),
+        )
+        .unwrap();
+
+        let target = "Projekte/Magma/Projekt/Magma 0.1.4.md";
+        assert!(
+            !report.meaning.iter().any(|p| p == target),
+            "the note was supposed to be out of the window: {:?}",
+            report.meaning
+        );
+        assert_eq!(report.note.len(), 1, "{:?}", report.note);
+        let ranked = &report.note[0];
+        assert_eq!(ranked.path, target);
+        // Lowercase and partial, so a path need not be typed out in full.
+        assert_eq!(ranked.heading, "Mitgewirkt");
+        assert!(
+            ranked.meaning_rank.is_some_and(|r| r > FUSION_DEPTH),
+            "meaning rank {:?} of {}",
+            ranked.meaning_rank,
+            ranked.meaning_of
+        );
+        // No shared term with the query at all, which is no rank rather than a
+        // bad one, and the report has to say so instead of guessing a number.
+        assert_eq!(ranked.lexical_rank, None);
+        assert!(ranked.words > 0);
+        assert!(ranked.embedded, "the model answered for it");
+    }
+
+    #[test]
+    fn the_note_report_tells_a_blank_vector_from_a_distant_one() {
+        // Cosine zero has two causes and they want opposite fixes: a passage
+        // the indexing run never reached, and one the model placed far away.
+        // They are the same number, so the number cannot be the answer.
+        struct NeverIndexed;
+        impl Similarity for NeverIndexed {
+            fn id(&self) -> &str {
+                "blank"
+            }
+            fn embed_query(&self, _: &str) -> Result<Vec<f32>, String> {
+                Ok(vec![1.0, 0.0])
+            }
+            fn embed_passages(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+                Ok(texts
+                    .iter()
+                    .map(|t| {
+                        if t.contains("Magma 0.1.4") {
+                            vec![0.0, 0.0]
+                        } else {
+                            vec![1.0, 0.0]
+                        }
+                    })
+                    .collect())
+            }
+        }
+
+        let dir = out_of_window_vault("noteblank");
+        let ask = |model: &dyn Similarity| {
+            let mut report = Explanation {
+                about: Some("magma 0.1.4".into()),
+                ..Default::default()
+            };
+            retrieve_explained(&dir, "notarisierung", 5, Some(model), Some(&mut report)).unwrap();
+            report.note[0].clone()
+        };
+
+        let far = ask(&NearNotarisation);
+        let blank = ask(&NeverIndexed);
+        assert_eq!(far.cosine, blank.cosine, "both are zero, that is the point");
+        assert!(far.embedded, "placed far away, but placed");
+        assert!(!blank.embedded, "never encoded, so never placed");
+    }
+
+    #[test]
+    fn a_note_nobody_asked_about_is_not_reported() {
+        let dir = out_of_window_vault("noteunasked");
+        let mut report = Explanation::default();
+        retrieve_explained(
+            &dir,
+            "notarisierung",
+            5,
+            Some(&NearNotarisation),
+            Some(&mut report),
+        )
+        .unwrap();
+        assert!(report.note.is_empty());
     }
 
     #[test]
