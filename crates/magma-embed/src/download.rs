@@ -66,11 +66,9 @@ pub const DEFAULT_MODEL: ModelSpec = ModelSpec {
     // since the whole note path was measured on a real vault and found to push
     // a short passage from rank 2 to rank 77. See `magma_core::embedding_text`.
     id: "multilingual-e5-small-t256-h",
-    // Unverified, unlike the reranker's below: this one was guessed before
-    // there was any way to ask, and by the time there was, the model was long
-    // downloaded and the panel no longer asks about it.
+    // Measured on disk: 481 MiB, the folder including config and tokenizer.
     weights_dir: "multilingual-e5-small",
-    approx_bytes: 471_000_000,
+    approx_bytes: 505_000_000,
 };
 
 /// Which weights to rerank with.
@@ -88,11 +86,12 @@ pub const RERANK_MODEL: ModelSpec = ModelSpec {
     revision: "main",
     id: "mmarco-mminilmv2-l12-t320",
     weights_dir: "mmarco-mMiniLMv2-L12",
-    // Measured on a real machine: 650 MB, against the 470 guessed here first —
-    // thirty-eight percent out, which is why the panel asks [`probe_size`]
-    // rather than reading this. It is the fallback for when the network will
-    // not answer, nothing more.
-    approx_bytes: 650_000_000,
+    // Measured on disk on a real machine: 481 MiB, the same as the encoder's,
+    // which is no coincidence — both are twelve layers of hidden size 384 over
+    // the same 250k multilingual vocabulary, and that vocabulary is most of the
+    // weight. An earlier note here said 650 on the strength of a remembered
+    // figure; the folder says otherwise, and the folder is the measurement.
+    approx_bytes: 505_000_000,
 };
 
 /// The two names a set of weights may go by.
