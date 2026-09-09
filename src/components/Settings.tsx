@@ -26,10 +26,12 @@ import {
   modelStatus,
   downloadModel,
   downloadReranker,
+  downloadSizes,
   onModelProgress,
   indexVault,
   onIndexProgress,
   type IndexProgress,
+  type DownloadSizes,
   type ModelStatus,
   type ModelProgress,
   type AppUpdate,
@@ -150,9 +152,15 @@ export default function Settings({
   const [modelErr, setModelErr] = useState<string | null>(null);
   const [modelProg, setModelProg] = useState<ModelProgress | null>(null);
   const [rerankBusy, setRerankBusy] = useState(false);
+  const [sizes, setSizes] = useState<DownloadSizes | null>(null);
 
   useEffect(() => {
-    if (hasTauri) modelStatus().then(setModel).catch(() => {});
+    if (!hasTauri) return;
+    // Two calls on purpose. The status is a look at the disk and decides which
+    // controls appear, so it must not wait on anything; the sizes go over the
+    // network and arrive when they arrive, or not at all.
+    modelStatus().then(setModel).catch(() => {});
+    downloadSizes().then(setSizes).catch(() => {});
   }, []);
 
   const [indexBusy, setIndexBusy] = useState(false);
@@ -205,6 +213,7 @@ export default function Settings({
       stop = await onModelProgress(setModelProg);
       await downloadModel(vault);
       setModel(await modelStatus());
+      downloadSizes().then(setSizes).catch(() => {});
     } catch (e) {
       setModelErr(String(e));
     } finally {
@@ -224,6 +233,7 @@ export default function Settings({
       stop = await onModelProgress(setModelProg);
       await downloadReranker();
       setModel(await modelStatus());
+      downloadSizes().then(setSizes).catch(() => {});
     } catch (e) {
       setModelErr(String(e));
     } finally {
@@ -900,9 +910,9 @@ export default function Settings({
               >
                 {modelBusy
                   ? t("settings.semanticBusy")
-                  : model?.bytes
+                  : sizes?.bytes
                     ? t("settings.semanticDownload", {
-                        size: String(Math.round(model.bytes / 1_000_000)),
+                        size: String(Math.round(sizes.bytes / 1_000_000)),
                       })
                     : t("settings.semanticDownloadUnknown")}
               </button>
@@ -955,9 +965,9 @@ export default function Settings({
             >
               {rerankBusy
                 ? t("settings.semanticBusy")
-                : model?.rerankBytes
+                : sizes?.rerankBytes
                   ? t("settings.rerankDownload", {
-                      size: String(Math.round(model.rerankBytes / 1_000_000)),
+                      size: String(Math.round(sizes.rerankBytes / 1_000_000)),
                     })
                   : t("settings.rerankDownloadUnknown")}
             </button>

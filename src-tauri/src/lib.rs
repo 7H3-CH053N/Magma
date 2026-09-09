@@ -170,49 +170,59 @@ struct ModelStatus {
     ready: bool,
     /// Which encoder, so the panel can name it rather than say "the model".
     model: String,
-    /// What downloading it costs, asked of the server. Shown *before* the
-    /// button, because this is not a decision to spring on someone over a phone
-    /// connection.
-    ///
-    /// `None` when the server would not say. The panel then says so instead of
-    /// showing a figure: the numbers written into the specs were guessed
-    /// without network access, and a guess presented as a size is worse than
-    /// no size.
-    bytes: Option<u64>,
     /// True when the reranker is on disk. Separate download, separate answer.
     rerank_ready: bool,
     rerank_model: String,
-    rerank_bytes: Option<u64>,
 }
 
 #[tauri::command]
 async fn model_status() -> Result<ModelStatus, String> {
+    // Disk only, and deliberately: this decides which controls the panel shows,
+    // so it must answer at once. It used to probe download sizes here, which on
+    // a machine where a model is missing meant up to six HEAD requests before
+    // returning — and until it returned, the panel showed "download the model"
+    // and no index button at all. On a fresh install that is exactly the state,
+    // and it looks precisely like indexing being broken.
     let dir = app_data_dir().ok_or("no application data folder")?;
-    // Two HEAD requests apiece, and only when something is still missing —
-    // there is nothing to weigh up about a download that already happened.
+    Ok(ModelStatus {
+        ready: magma_embed::is_ready(&dir),
+        model: magma_embed::DEFAULT_MODEL.id.to_string(),
+        rerank_ready: magma_embed::rerank_ready(&dir),
+        rerank_model: magma_embed::RERANK_MODEL.id.to_string(),
+    })
+}
+
+/// What each download would cost, asked of the server.
+///
+/// Its own command because it goes over the network and [`model_status`] must
+/// not. The panel renders from the status and fills these in when they arrive,
+/// or leaves the size unstated if they never do.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadSizes {
+    bytes: Option<u64>,
+    rerank_bytes: Option<u64>,
+}
+
+#[tauri::command]
+async fn download_sizes() -> Result<DownloadSizes, String> {
+    let dir = app_data_dir().ok_or("no application data folder")?;
     let ready = magma_embed::is_ready(&dir);
     let rerank_ready = magma_embed::rerank_ready(&dir);
-    let (bytes, rerank_bytes) = tauri::async_runtime::spawn_blocking(move || {
-        (
-            (!ready)
-                .then(|| magma_embed::download_size(&magma_embed::DEFAULT_MODEL))
-                .flatten(),
-            (!rerank_ready)
-                .then(|| magma_embed::download_size(&magma_embed::RERANK_MODEL))
-                .flatten(),
-        )
+    // Nothing to weigh up about a download that already happened.
+    Ok(tauri::async_runtime::spawn_blocking(move || DownloadSizes {
+        bytes: (!ready)
+            .then(|| magma_embed::download_size(&magma_embed::DEFAULT_MODEL))
+            .flatten(),
+        rerank_bytes: (!rerank_ready)
+            .then(|| magma_embed::download_size(&magma_embed::RERANK_MODEL))
+            .flatten(),
     })
     .await
-    .unwrap_or((None, None));
-
-    Ok(ModelStatus {
-        ready,
-        model: magma_embed::DEFAULT_MODEL.id.to_string(),
-        bytes,
-        rerank_ready,
-        rerank_model: magma_embed::RERANK_MODEL.id.to_string(),
-        rerank_bytes,
-    })
+    .unwrap_or(DownloadSizes {
+        bytes: None,
+        rerank_bytes: None,
+    }))
 }
 
 /// Download the reranker, then prove it actually ranks before calling it ready.
@@ -1124,6 +1134,7 @@ pub fn run() {
             list_folders,
             import_wordpress,
             model_status,
+            download_sizes,
             download_model,
             download_reranker,
             index_vault,

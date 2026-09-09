@@ -562,15 +562,22 @@ export type ModelStatus = {
   /** True when the weights are on disk and retrieval can rank meaning. */
   ready: boolean;
   model: string;
-  /**
-   * What the download costs, asked of the server rather than guessed.
-   * Absent when the server would not say — show that as unknown instead of
-   * substituting a number nobody measured.
-   */
-  bytes?: number;
   /** The reranker is a separate download and answers separately. */
   rerankReady: boolean;
   rerankModel: string;
+};
+
+/**
+ * What each download would cost, asked of the server rather than guessed.
+ *
+ * Separate from {@link ModelStatus} because it goes over the network and the
+ * status must not: the status decides which controls appear, so it has to
+ * answer at once. Either figure is absent when the server would not say, and
+ * the panel then leaves the size unstated instead of quoting a number nobody
+ * measured.
+ */
+export type DownloadSizes = {
+  bytes?: number;
   rerankBytes?: number;
 };
 
@@ -583,6 +590,10 @@ export type ModelProgress = {
 
 export async function modelStatus(): Promise<ModelStatus> {
   return invoke<ModelStatus>("model_status");
+}
+
+export async function downloadSizes(): Promise<DownloadSizes> {
+  return invoke<DownloadSizes>("download_sizes");
 }
 
 export async function downloadModel(vault: string): Promise<void> {

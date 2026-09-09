@@ -177,7 +177,14 @@ pub fn ensure_rerank(
 /// `None` when the network will not say, which a caller should show as unknown
 /// rather than substituting a number nobody measured.
 pub fn probe_size(spec: &ModelSpec, weight_names: &[&str]) -> Option<u64> {
-    let agent = agent();
+    // Its own agent, with its own patience. A download may wait two minutes
+    // between bytes; asking how large it is may not — a caller wants a label on
+    // a button, and would rather have none than a frozen panel.
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(4))
+        .timeout(Duration::from_secs(8))
+        .user_agent(USER_AGENT)
+        .build();
     let mut total = 0u64;
     for name in ["config.json", "tokenizer.json"] {
         total += size_of(&agent, &url_for(spec, name))?;
@@ -274,6 +281,12 @@ pub fn ensure_model(
     Ok(files)
 }
 
+const USER_AGENT: &str = concat!(
+    "Magma/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://github.com/7H3-CH053N/Magma)"
+);
+
 fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(20))
@@ -281,11 +294,7 @@ fn agent() -> ureq::Agent {
         // measures the gap between bytes rather than the whole transfer, so
         // this is generous without being unbounded.
         .timeout_read(Duration::from_secs(120))
-        .user_agent(concat!(
-            "Magma/",
-            env!("CARGO_PKG_VERSION"),
-            " (+https://github.com/7H3-CH053N/Magma)"
-        ))
+        .user_agent(USER_AGENT)
         .build()
 }
 
