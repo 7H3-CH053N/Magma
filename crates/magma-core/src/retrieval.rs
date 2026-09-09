@@ -65,6 +65,20 @@ const CONTEXT_REPEATS: usize = 1;
 /// one list and absent from the other, and letting it in only dilutes.
 const FUSION_DEPTH: usize = 50;
 
+/// How many passages of one note may stand in a result.
+///
+/// Without a cap a single note takes the whole list. Asked "who is Alexander
+/// Mut", a football article about a different Alexander filled ranks two
+/// through five with four of its own paragraphs and pushed the note that
+/// actually answered the question to seventh. Both halves of the ranking agreed
+/// on it — the name matches by word, and one description of a person sits near
+/// another by meaning — so agreement is not the safeguard here.
+///
+/// Two, because a long note genuinely can hold the best passage and a good
+/// second one, and because a result of eight should still speak about more than
+/// four notes.
+const MAX_PER_NOTE: usize = 2;
+
 /// Reciprocal-rank-fusion constant. 60 is the value the method was published
 /// with and the one search systems use: large enough that the top few ranks are
 /// not wildly more valuable than the next few, small enough that rank still
@@ -343,6 +357,12 @@ pub fn retrieve_with(
         freq: HashMap<String, usize>,
     }
 
+    impl HasPath for Candidate {
+        fn path(&self) -> &str {
+            &self.path
+        }
+    }
+
     let mut candidates: Vec<Candidate> = Vec::new();
     let mut notes_scanned = 0usize;
     let mut offline = 0usize;
@@ -460,9 +480,8 @@ pub fn retrieve_with(
         None => scored,
     };
 
-    out.passages = ranked
+    out.passages = spread(ranked, &candidates, limit)
         .into_iter()
-        .take(limit)
         .map(|(score, i)| {
             let c = &candidates[i];
             Passage {
@@ -476,6 +495,48 @@ pub fn retrieve_with(
         })
         .collect();
     Ok(out)
+}
+
+/// Take the best `limit`, but not more than [`MAX_PER_NOTE`] from any one note
+/// while other notes are still waiting.
+///
+/// Order within the result is untouched: this only decides which passages get
+/// in. If capping leaves the list short — a vault where one note really is the
+/// only answer — the passages held back are added afterwards rather than
+/// returning fewer than asked for.
+fn spread<T>(ranked: Vec<(f32, usize)>, of: &[T], limit: usize) -> Vec<(f32, usize)>
+where
+    T: HasPath,
+{
+    let mut taken: HashMap<&str, usize> = HashMap::new();
+    let mut out = Vec::with_capacity(limit);
+    let mut held = Vec::new();
+    for entry in ranked {
+        if out.len() == limit {
+            break;
+        }
+        let path = of[entry.1].path();
+        let count = taken.entry(path).or_insert(0);
+        if *count < MAX_PER_NOTE {
+            *count += 1;
+            out.push(entry);
+        } else {
+            held.push(entry);
+        }
+    }
+    for entry in held {
+        if out.len() == limit {
+            break;
+        }
+        out.push(entry);
+    }
+    out
+}
+
+/// Lets [`spread`] ask a candidate which note it came from without knowing what
+/// else a candidate carries.
+trait HasPath {
+    fn path(&self) -> &str;
 }
 
 /// What actually goes to the model for a passage.
@@ -823,6 +884,48 @@ mod tests {
     // in its body, so the name exists only as the file's name. Meanwhile "Mut"
     // is an ordinary German word, so notes about courage crowd the results.
     // Scoring passage text alone left the person out entirely.
+    // Straight from a real vault. Asked "who is Alexander Mut", a football
+    // article about a different Alexander took ranks two through five with four
+    // of its own paragraphs, and the note that actually mentions the person's
+    // work fell to seventh. Both halves of the ranking agreed on it, so
+    // agreement was no safeguard.
+    #[test]
+    fn one_note_may_not_take_the_whole_result() {
+        let dir = tmp_vault("spread");
+        write(&dir, "Alexander Mut.md", "Developer im Projekt.\n");
+        write(
+            &dir,
+            "S12/Alexander Schlager.md",
+            "# Alexander Schlager\n\n## Der Sieg\n\nAlexander hielt stark.\n\n## Die Pause\n\nAlexander stand in der Kritik.\n\n## Die Gratwanderung\n\nAlexander bleibt umstritten.\n\n## Der Trainer\n\nAlexander und der Trainer.\n",
+        );
+        write(
+            &dir,
+            "Projekte/Magma.md",
+            "# Magma\n\n## Mitgewirkt\n\nAlexander Mut hat den Updater beigesteuert.\n",
+        );
+        // A fourth source, so five results can be filled without the cap having
+        // to give way. With only three notes the fallback would have to hand a
+        // slot back to the flooding note, and the test would be asserting
+        // something the design deliberately does not promise.
+        write(
+            &dir,
+            "Alex Januschewsky.md",
+            "Kennt Alexander aus dem Netz.\n",
+        );
+
+        let got = retrieve(&dir, "wer ist alexander mut", 5).unwrap();
+        let paths: Vec<&str> = got.passages.iter().map(|p| p.path.as_str()).collect();
+        let flooding = paths
+            .iter()
+            .filter(|p| **p == "S12/Alexander Schlager.md")
+            .count();
+        assert!(flooding <= 2, "one note took {flooding} of five: {paths:?}");
+        assert!(
+            paths.contains(&"Projekte/Magma.md"),
+            "the note that answers it was crowded out: {paths:?}"
+        );
+    }
+
     // ---- The hybrid path ----
 
     /// A stand-in for a real model: a hand-built space just big enough to test
