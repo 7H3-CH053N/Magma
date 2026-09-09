@@ -901,12 +901,24 @@ export default function Settings({
                   // saw at each stage, because "0" alone cannot tell an empty
                   // listing from files it could not open.
                   <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-                    {t("settings.indexEmpty", { vault: vault ?? "?" })}{" "}
-                    {t("settings.indexSaw", {
-                      notes: String(indexDone.notes),
-                      unreadable: String(indexDone.unreadable),
-                      offline: String(indexDone.offline),
-                    })}
+                    {indexDone.notes > 0 && indexDone.offline === indexDone.notes
+                      ? // Every single note a placeholder is not an ambiguous
+                        // state, it is a diagnosis, and it has one remedy. The
+                        // general message below asks the user to check three
+                        // things; this one already knows which of them it is,
+                        // and hedging here sent a real diagnosis down two wrong
+                        // paths before the counts existed.
+                        t("settings.indexAllOffline", {
+                          notes: String(indexDone.notes),
+                          vault: vault ?? "?",
+                        })
+                      : t("settings.indexEmpty", { vault: vault ?? "?" }) +
+                        " " +
+                        t("settings.indexSaw", {
+                          notes: String(indexDone.notes),
+                          unreadable: String(indexDone.unreadable),
+                          offline: String(indexDone.offline),
+                        })}
                   </p>
                 ) : (
                   <p className="mt-2 text-xs text-green-600 dark:text-green-400">
